@@ -1,0 +1,29 @@
+# Example: Ollama's OpenAI-compatible endpoint.
+# Ollama serves every pulled model, so set 'name' explicitly. Pick a model with tool-calling support
+# (shown as "tools" on ollama.com) and raise its context: OLLAMA_CONTEXT_LENGTH=32768 or a Modelfile with
+# "PARAMETER num_ctx 32768". Allow parallel requests with OLLAMA_NUM_PARALLEL.
+#   jig --config profiles/ollama.toml serve
+
+[model]
+base_url = "http://127.0.0.1:11434/v1"
+name = "qwen3:30b"   # any tool-capable model you have pulled
+max_tokens = 8192
+
+[model.sampling]
+temperature = 0.7
+top_p = 0.9
+
+# A smaller model can review actions, which keeps the Sentinel quick:
+# [sentinel]
+# name = "qwen3:4b"
+[sentinel]
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[runtime]
+max_concurrent_tasks = 2
+
+[server]
+port = 8766

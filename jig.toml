@@ -1,0 +1,54 @@
+# Jig configuration. Jig works with any capable local model behind an
+# OpenAI-compatible endpoint that supports tool calling. See profiles/ for
+# examples (llama.cpp, Ollama, LM Studio, vLLM) and copy one over this file,
+# or point JIG_CONFIG / --config at it.
+#
+# Relative paths are resolved against this file's folder.
+# Environment overrides: JIG_CONFIG, JIG_MODEL_BASE_URL, JIG_MODEL_NAME,
+# JIG_DATA_DIR, JIG_SANDBOX_DIR, JIG_HOST, JIG_PORT.
+
+[model]
+base_url = "http://127.0.0.1:8080/v1"
+# Leave empty to discover the model from /v1/models (fails loudly if the server serves more than one).
+name = ""
+# Name of an environment variable holding an API key, if your server needs one.
+api_key_env = ""
+connect_timeout_s = 5.0
+read_timeout_s = 600.0
+max_tokens = 8192
+
+# Sent as-is with every request. Tune per model and only include keys your server accepts.
+[model.sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.05
+
+# The Sentinel inherits everything from [model] unless set here, so it can use a
+# different endpoint or a smaller model. Example:
+#   base_url = "http://127.0.0.1:11434/v1"
+#   name = "your-small-reviewer-model"
+[sentinel]
+
+[paths]
+data_dir = "data"
+sandbox_dir = "sandbox"
+
+[runtime]
+agent_id = "default"
+timezone = "Europe/London"
+max_steps = 12
+# Keep this below the number of parallel requests your server handles, leaving room for chat and the Sentinel.
+max_concurrent_tasks = 3
+heartbeat_s = 2.0
+min_context_tokens = 32768
+
+[tools.web_fetch]
+timeout_s = 20.0
+max_bytes = 2_000_000
+max_chars = 12_000
+max_redirects = 5
+
+[server]
+host = "127.0.0.1"
+port = 8766

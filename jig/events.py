@@ -1,0 +1,232 @@
+"""In-process event bus and the derived avatar state.
+
+Every interesting thing the runtime does is published here. WebSocket and SSE
+clients at ``/events`` receive them, and ``AvatarStateTracker`` folds them into
+a single avatar state for the avatar component.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import itertools
+import logging
+import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from .constants import TRANSIENT_STATE_SECONDS, AvatarState, EventType, Mode
+from .db import now_iso
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Event:
+    seq: int
+    type: str
+    ts: str
+    data: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"seq": self.seq, "type": self.type, "ts": self.ts, "data": self.data}
+
+
+class SubscriberOverflow(Exception):
+    """A subscriber fell too far behind and was disconnected."""
+
+
+class Subscription:
+    def __init__(self, bus: EventBus, maxsize: int):
+        self._bus = bus
+        self._queue: asyncio.Queue[Event | None] = asyncio.Queue(maxsize=maxsize)
+        self.overflowed = False
+
+    def _offer(self, event: Event) -> None:
+        if self.overflowed:
+            return
+        try:
+            self._queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Do not silently drop events: mark the subscriber as broken so
+            # its consumer is disconnected with an explicit error.
+            self.overflowed = True
+            self._queue = asyncio.Queue(maxsize=1)
+            self._queue.put_nowait(None)
+
+    async def get(self) -> Event:
+        event = await self._queue.get()
+        if event is None:
+            raise SubscriberOverflow("event subscriber fell behind and was disconnected")
+        return event
+
+    def close(self) -> None:
+        self._bus._subscribers.discard(self)
+
+
+class EventBus:
+    def __init__(self, history: int = 500):
+        self._seq = itertools.count(1)
+        self._subscribers: set[Subscription] = set()
+        self._listeners: list[Callable[[Event], None]] = []
+        self.recent: deque[Event] = deque(maxlen=history)
+
+    def subscribe(self, maxsize: int = 2000) -> Subscription:
+        sub = Subscription(self, maxsize)
+        self._subscribers.add(sub)
+        return sub
+
+    def add_listener(self, fn: Callable[[Event], None]) -> None:
+        self._listeners.append(fn)
+
+    def remove_listener(self, fn: Callable[[Event], None]) -> None:
+        self._listeners.remove(fn)
+
+    def publish(self, type_: str, **data: Any) -> Event:
+        event = Event(seq=next(self._seq), type=str(type_), ts=now_iso(), data=data)
+        self.recent.append(event)
+        for fn in self._listeners:
+            fn(event)
+        for sub in list(self._subscribers):
+            sub._offer(event)
+        return event
+
+
+@dataclass
+class _Activity:
+    run_id: str
+    kind: str  # chat | task | plan
+    mode: str
+    task_id: str | None
+    phase: AvatarState = AvatarState.THINKING
+    variant: str | None = None
+    pending_approvals: set[str] = field(default_factory=set)
+    updated: float = field(default_factory=time.monotonic)
+
+    @property
+    def background(self) -> bool:
+        return self.mode == Mode.RESEARCH and self.kind == "task"
+
+
+_FOREGROUND_PRIORITY = {
+    AvatarState.TALKING: 3,
+    AvatarState.WORKING: 2,
+    AvatarState.THINKING: 1,
+}
+
+
+class AvatarStateTracker:
+    """Derives one avatar state from all concurrent activity.
+
+    Precedence: needs-approval, then a transient success/error, then the most
+    salient foreground activity (talking > working > thinking), then sleeping
+    (background read-only work or active monitoring schedules), then idle.
+    """
+
+    def __init__(self, bus: EventBus):
+        self.bus = bus
+        self._activities: dict[str, _Activity] = {}
+        self._transient: tuple[AvatarState, float, dict[str, Any]] | None = None
+        self._monitoring = False
+        self._current: dict[str, Any] = {"state": AvatarState.IDLE.value, "variant": None}
+        self._timer: asyncio.TimerHandle | None = None
+        bus.add_listener(self._on_event)
+
+    @property
+    def current(self) -> dict[str, Any]:
+        return dict(self._current)
+
+    def set_monitoring(self, monitoring: bool) -> None:
+        if monitoring != self._monitoring:
+            self._monitoring = monitoring
+            self._recompute()
+
+    def _on_event(self, event: Event) -> None:
+        if event.type == EventType.AVATAR_STATE:
+            return
+        d = event.data
+        run_id = d.get("run_id")
+        act = self._activities.get(run_id) if run_id else None
+        t = event.type
+        if t == EventType.RUN_START and run_id:
+            self._activities[run_id] = _Activity(
+                run_id=run_id, kind=d.get("kind", "task"), mode=d.get("mode", Mode.ACTION),
+                task_id=d.get("task_id"),
+            )
+        elif act is None:
+            return
+        elif t == EventType.MODEL_END and act.phase == AvatarState.TALKING and not d.get("tool_calls"):
+            return  # the final answer has just been spoken; stay talking until the run ends
+        elif t in (EventType.MODEL_START, EventType.TOOL_END, EventType.MODEL_END):
+            act.phase, act.variant = AvatarState.THINKING, None
+        elif t == EventType.CHAT_DELTA and d.get("kind") == "content":
+            if act.phase != AvatarState.TALKING:
+                act.phase, act.variant = AvatarState.TALKING, None
+            else:
+                return
+        elif t == EventType.TOOL_START:
+            act.phase, act.variant = AvatarState.WORKING, d.get("variant")
+        elif t == EventType.APPROVAL_REQUESTED:
+            act.pending_approvals.add(d["approval_id"])
+        elif t == EventType.APPROVAL_RESOLVED:
+            act.pending_approvals.discard(d["approval_id"])
+        elif t == EventType.RUN_END:
+            del self._activities[run_id]
+            status = d.get("status")
+            if status == "failed":
+                self._set_transient(AvatarState.ERROR, d)
+            elif status == "done" and not act.background and act.kind != "plan":
+                self._set_transient(AvatarState.SUCCESS, d)
+        else:
+            return
+        if act is not None:
+            act.updated = time.monotonic()
+        self._recompute()
+
+    def _set_transient(self, state: AvatarState, d: dict[str, Any]) -> None:
+        self._transient = (
+            state,
+            time.monotonic() + TRANSIENT_STATE_SECONDS,
+            {"run_id": d.get("run_id"), "task_id": d.get("task_id")},
+        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._timer:
+            self._timer.cancel()
+        self._timer = loop.call_later(TRANSIENT_STATE_SECONDS + 0.05, self._recompute)
+
+    def _derive(self) -> dict[str, Any]:
+        acts = list(self._activities.values())
+        waiting = [a for a in acts if a.pending_approvals]
+        if waiting:
+            a = max(waiting, key=lambda a: a.updated)
+            return self._state(AvatarState.NEEDS_APPROVAL, None, a, pending=sum(len(w.pending_approvals) for w in waiting))
+        if self._transient and self._transient[1] > time.monotonic():
+            state, _, ctx = self._transient
+            return {"state": state.value, "variant": None, **ctx}
+        self._transient = None
+        foreground = [a for a in acts if not a.background]
+        if foreground:
+            a = max(foreground, key=lambda a: (_FOREGROUND_PRIORITY[a.phase], a.updated))
+            return self._state(a.phase, a.variant, a)
+        if acts:
+            return self._state(AvatarState.SLEEPING, None, max(acts, key=lambda a: a.updated))
+        if self._monitoring:
+            return {"state": AvatarState.SLEEPING.value, "variant": None, "run_id": None, "task_id": None}
+        return {"state": AvatarState.IDLE.value, "variant": None, "run_id": None, "task_id": None}
+
+    def _state(self, state: AvatarState, variant: str | None, a: _Activity, **extra: Any) -> dict[str, Any]:
+        return {"state": state.value, "variant": variant, "run_id": a.run_id, "task_id": a.task_id, **extra}
+
+    def _recompute(self) -> None:
+        derived = self._derive()
+        derived["active"] = len(self._activities)
+        key = (derived["state"], derived["variant"])
+        if key != (self._current["state"], self._current["variant"]):
+            self._current = derived
+            self.bus.publish(EventType.AVATAR_STATE, **derived)
+        else:
+            self._current = derived

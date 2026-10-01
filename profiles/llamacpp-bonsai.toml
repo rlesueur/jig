@@ -1,0 +1,28 @@
+# Example: llama.cpp (or a fork) serving Ternary Bonsai 2 27B. This is the setup Jig was tested with.
+# Start llama-server with --jinja so tool calling uses the model's chat template, and
+# --parallel N so several tasks can run at once.
+#   jig --config profiles/llamacpp-bonsai.toml serve
+
+[model]
+base_url = "http://127.0.0.1:8080/v1"
+name = "bonsai-2-27b"
+max_tokens = 8192
+
+[model.sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.05
+
+[sentinel]
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[runtime]
+timezone = "Europe/London"
+max_concurrent_tasks = 3  # the server was started with 4 slots
+
+[server]
+port = 8766
