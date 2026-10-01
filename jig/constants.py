@@ -14,7 +14,7 @@ from enum import StrEnum
 
 class AvatarState(StrEnum):
     IDLE = "idle"
-    MONITORING = "monitoring"  # background read-only work or active research schedules
+    MONITORING = "monitoring"  # active research schedules, with no research running
     THINKING = "thinking"
     WORKING = "working"  # always paired with a TaskVariant; may be flagged as background work
     TALKING = "talking"

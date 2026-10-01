@@ -94,10 +94,10 @@ Drive the avatar from your runtime's event stream. Keep a single source of truth
 | Runtime event | Avatar call |
 | --- | --- |
 | Agent ready with nothing queued | `setState('idle')` |
-| Scheduled watchers or proactive research running with read-only tools only | `setState('monitoring')` |
+| Scheduled watchers active, with no research running | `setState('monitoring')` |
 | Model generating a plan or reasoning, before any tool call | `setState('thinking')` |
 | Tool call: web search, fetch, browser navigation or page reading | `setState('working', { task: 'browsing' })` |
-| Proactive read-only research fetching or reading a source | `setState('working', { task: 'browsing', background: true })` |
+| Proactive read-only research running (reading, fetching or reasoning between tool calls) | `setState('working', { task: 'browsing', background: true })` |
 | Tool call: drafting or sending email, messages or documents | `setState('working', { task: 'writing' })` |
 | Tool call: shell, code editing, running tests | `setState('working', { task: 'coding' })` |
 | Tool call: basket, checkout or payment | `setState('working', { task: 'shopping' })` |

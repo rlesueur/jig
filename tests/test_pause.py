@@ -97,6 +97,7 @@ async def test_background_research_shows_dimmed_browsing(jig, events):
 
     states = _avatar_states(events)
     assert (AvatarState.WORKING.value, "browsing", True) in states, states
-    assert (AvatarState.MONITORING.value, None, False) in states, states
     assert not any(s == AvatarState.WORKING and not bg for s, _, bg in states), "research is never foreground work"
+    assert not {AvatarState.THINKING, AvatarState.MONITORING} & {s for s, _, _ in states}, \
+        "running research stays dimmed working between tool calls"
     assert not {"sleeping", "needs-approval"} & {s for s, _, _ in states}

@@ -121,9 +121,9 @@ class AvatarStateTracker:
 
     Precedence: approval, then a transient success/error, then the most salient
     foreground activity (talking > working > thinking), then paused (the agent
-    or a task is paused), then background read-only work that is using a tool
-    (``working`` with ``background: true``), then monitoring (other background
-    work or active research schedules), then idle.
+    or a task is paused), then running background research (``working`` with
+    ``background: true``, as ``browsing`` unless it is using a tool of another
+    kind), then monitoring (active research schedules), then idle.
     """
 
     def __init__(self, bus: EventBus):
@@ -226,12 +226,10 @@ class AvatarStateTracker:
             return self._state(a.phase, a.variant, a)
         if self._agent_paused or self._paused_tasks:
             return self._idle(AvatarState.PAUSED, agent_paused=self._agent_paused, paused_tasks=self._paused_tasks)
-        working = [a for a in acts if a.phase == AvatarState.WORKING]
-        if working:
-            a = max(working, key=lambda a: a.updated)
-            return self._state(AvatarState.WORKING, a.variant, a, background=True)
         if acts:
-            return self._state(AvatarState.MONITORING, None, max(acts, key=lambda a: a.updated))
+            a = max(acts, key=lambda a: (a.phase == AvatarState.WORKING, a.updated))
+            variant = a.variant if a.phase == AvatarState.WORKING else TaskVariant.BROWSING.value
+            return self._state(AvatarState.WORKING, variant, a, background=True)
         if self._monitoring:
             return self._idle(AvatarState.MONITORING)
         return self._idle(AvatarState.IDLE)
