@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jig: an always-on personal AI agent on your own local model</title>
+  <meta name="description" content="Jig is an open-source, always-on personal AI agent that runs on the local model of your choice. Memory, rules, audit trail and secrets stay on your machine. Apache-2.0, under active development.">
+  <link rel="canonical" href="https://rlesueur.github.io/jig/">
+  <meta name="theme-color" content="#06040f">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" type="image/png" sizes="64x64" href="media/favicon.png">
+  <link rel="apple-touch-icon" href="media/apple-touch-icon.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Jig">
+  <meta property="og:locale" content="en_GB">
+  <meta property="og:url" content="https://rlesueur.github.io/jig/">
+  <meta property="og:title" content="Jig: an always-on AI agent on your own machine">
+  <meta property="og:description" content="Open-source, always-on personal agent for local models. Bring your own model; your memory, rules, audit trail and secrets stay with you.">
+  <meta property="og:image" content="https://rlesueur.github.io/jig/media/og-image.jpg">
+  <meta property="og:image:secure_url" content="https://rlesueur.github.io/jig/media/og-image.jpg">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Jig, a neon mascot with glowing amber eyes, under the headline: Always-on AI agents. Now on your own machine.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Jig: an always-on AI agent on your own machine">
+  <meta name="twitter:description" content="Open-source, always-on personal agent for local models. Bring your own model; your data stays with you.">
+  <meta name="twitter:image" content="https://rlesueur.github.io/jig/media/og-image.jpg">
+  <meta name="twitter:image:alt" content="Jig, a neon mascot with glowing amber eyes, under the headline: Always-on AI agents. Now on your own machine.">
+
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <nav class="wrap nav" aria-label="Main">
+      <a class="brand" href="#top" aria-label="Jig, back to top">
+        <jig-avatar class="brand-mark" state="idle" shape="circle" framing="icon" aria-hidden="true"></jig-avatar>
+        <span>Jig</span>
+      </a>
+      <ul>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#safety">Safety</a></li>
+        <li><a href="#models">Models</a></li>
+        <li><a href="#quick-start">Quick start</a></li>
+        <li><a class="nav-gh" href="https://github.com/rlesueur/jig">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="kicker">Open source · Apache-2.0 · under active development</p>
+        <h1 id="hero-title">An always-on AI agent.<br><span class="grad">On your own machine.</span></h1>
+        <p class="lede">Jig is a personal agent that keeps working while you are away, using the local model of your choice. Its memory, rules, audit trail and secrets stay on your machine, in files you can inspect and edit.</p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/rlesueur/jig">View on GitHub</a>
+          <a class="btn" href="#quick-start">Quick start</a>
+        </div>
+      </div>
+
+      <figure class="stage">
+        <div class="stage-avatar">
+          <jig-avatar id="hero-avatar" state="idle"></jig-avatar>
+        </div>
+        <figcaption>
+          <p class="stage-status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="state-label">Idle</span></p>
+          <p class="stage-note">This is the live avatar component from the app, drawn in your browser. Try its states:</p>
+          <div class="switcher" role="group" aria-label="Avatar state">
+            <button type="button" data-state="idle" aria-pressed="true">Idle</button>
+            <button type="button" data-state="monitoring">Monitoring</button>
+            <button type="button" data-state="thinking">Thinking</button>
+            <button type="button" data-state="working" data-task="browsing">Browsing</button>
+            <button type="button" data-state="working" data-task="writing">Writing</button>
+            <button type="button" data-state="working" data-task="coding">Coding</button>
+            <button type="button" data-state="working" data-task="scheduling">Scheduling</button>
+            <button type="button" data-state="working" data-task="shopping">Shopping</button>
+            <button type="button" data-state="approval">Needs approval</button>
+            <button type="button" data-state="success">Success</button>
+            <button type="button" data-state="error">Blocked</button>
+            <button type="button" data-state="paused">Paused</button>
+          </div>
+          <label class="toggle"><input type="checkbox" id="background-toggle"> Background work (dimmed, read-only research)</label>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="band" aria-labelledby="video-title">
+      <div class="wrap video-wrap">
+        <div class="video-copy">
+          <h2 id="video-title">Meet Jig in 28 seconds</h2>
+          <p>Every frame of this video was rendered from the same avatar component, driven by the same states the runtime emits. Nothing is screen-recorded.</p>
+          <p class="muted">The video starts muted. Use the controls for sound.</p>
+        </div>
+        <video id="promo" class="promo" controls muted loop playsinline preload="metadata"
+               width="1080" height="1350" poster="media/jig-promo-cover.jpg"
+               aria-label="Promo video: Jig wakes up, works in the background, asks for approval and runs on your own machine">
+          <source src="media/jig-promo.mp4" type="video/mp4">
+          <a href="media/jig-promo.mp4">Download the promo video (MP4)</a>
+        </video>
+      </div>
+    </section>
+
+    <section class="wrap section" id="features" aria-labelledby="features-title">
+      <h2 id="features-title">What Jig does</h2>
+      <p class="section-lede">Jig is under active development. These parts are in the code today; voice and messaging channels are on the roadmap.</p>
+      <ul class="grid">
+        <li class="card"><h3>Always on</h3><p>A heartbeat scheduler runs schedules and queued tasks, breaks goals into tasks, and resumes interrupted runs from their last checkpoint after a restart.</p></li>
+        <li class="card"><h3>Background research</h3><p>Proactive work runs in a read-only research mode: it can read permitted sources and write private notes, but cannot change files, send anything or act.</p></li>
+        <li class="card"><h3>Memory you can see</h3><p>Every memory can be listed, searched, edited and truly forgotten through the API. Nothing is hidden in a vendor's cloud.</p></li>
+        <li class="card"><h3>An audit trail you own</h3><p>Tool calls, policy decisions, reviews, approvals and vault use go to a local, append-only audit log in SQLite.</p></li>
+        <li class="card"><h3>Sandboxed tools</h3><p>File tools are confined to a per-agent folder. An optional hardened Docker container adds code execution and a headless browser behind a gated egress proxy.</p></li>
+        <li class="card"><h3>Vision, if your model has it</h3><p>Image input works with any vision-capable model. Jig checks at start-up that the model can really see, and refuses to start if it cannot.</p></li>
+        <li class="card"><h3>A face for the agent</h3><p>The runtime streams its state over WebSocket and server-sent events, so the avatar shows at a glance whether Jig is idle, working or waiting for you.</p></li>
+        <li class="card"><h3>HTTP API and CLI</h3><p>Chat, goals, tasks, schedules, approvals, rules, memory, audit and vault are all available locally through a documented API and the <code>jig</code> command.</p></li>
+      </ul>
+    </section>
+
+    <section class="band" id="safety" aria-labelledby="safety-title">
+      <div class="wrap section">
+        <h2 id="safety-title">Safety model</h2>
+        <p class="section-lede">Safety is enforced in code, at the tool level. The prompt describes the rules but cannot loosen them. Every tool call passes through one gate, in this order:</p>
+        <ol class="gate">
+          <li><strong>Schema.</strong> The tool must exist and its arguments must match its JSON schema.</li>
+          <li><strong>Mode.</strong> Each tool is tagged read, private write or side effect. Research mode is never offered side-effecting tools, and the gate refuses them even if the model tries.</li>
+          <li><strong>Core rules.</strong> Hard-coded and stricter-only: no credential changes, secrets only for their allowed tools, no outbound calls to localhost or the local network, and human-only actions always need you.</li>
+          <li><strong>Your rules.</strong> Allow, ask or block per tool, optionally matched on an argument such as a URL.</li>
+          <li><strong>The Sentinel.</strong> A separate model call with no tools reviews every outbound or side-effecting action. It never sees the agent's conversation, so injected web content cannot address it. A deny is final.</li>
+          <li><strong>Approvals.</strong> When a human is needed the task pauses, and resumes as soon as you approve or deny it.</li>
+          <li><strong>Vault.</strong> Tools use secrets by reference. Values are inserted only when the tool runs and are redacted from results, so the model never sees them.</li>
+        </ol>
+        <p class="limits"><strong>Limits.</strong> The safety model is under active development and has not been independently audited. The default directory sandbox is a folder jail, not an operating-system sandbox; use the container backend for code and browsing. Please report weaknesses through the <a href="https://github.com/rlesueur/jig/security/policy">security policy</a>.</p>
+      </div>
+    </section>
+
+    <section class="wrap section" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">Bring your own local model</h2>
+      <p class="section-lede">Jig is model-agnostic. The endpoint, model name and sampling settings all come from config, and nothing in the code assumes a particular model or prompt format.</p>
+      <div class="cols">
+        <div class="card">
+          <h3>Compatible servers</h3>
+          <p>Any OpenAI-compatible endpoint with tool calling, for example:</p>
+          <ul class="ticks">
+            <li>llama.cpp, including forks</li>
+            <li>Ollama</li>
+            <li>LM Studio</li>
+            <li>vLLM</li>
+          </ul>
+          <p class="muted">Example profiles for each are in <code>profiles/</code>.</p>
+        </div>
+        <div class="card">
+          <h3>Minimum capabilities</h3>
+          <ul class="ticks">
+            <li>Reliable native tool calling with well-formed JSON arguments</li>
+            <li>JSON-schema structured output</li>
+            <li>A context of 32K tokens or more (advisable)</li>
+            <li>Decent instruction following</li>
+          </ul>
+          <p class="muted">At start-up Jig makes a real tool call and a real structured-output request against your model, and refuses to start if either fails.</p>
+        </div>
+        <div class="card">
+          <h3>One tested set-up</h3>
+          <p>Jig was developed against a 27B-class model on llama.cpp, at about 125 tokens a second on a single RTX 5090.</p>
+          <p class="muted">That is one example, not a requirement. Use whatever capable model your hardware runs well.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="band" id="quick-start" aria-labelledby="qs-title">
+      <div class="wrap section">
+        <h2 id="qs-title">Quick start</h2>
+        <p class="section-lede">You need Python 3.11 or newer and a local OpenAI-compatible server with a tool-capable model.</p>
+        <div class="cols two">
+          <div>
+            <h3 class="code-title">Windows (PowerShell)</h3>
+<pre><code>git clone https://github.com/rlesueur/jig.git
+cd jig
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+# Point jig.toml (or a profile) at your server, then:
+.\.venv\Scripts\jig health
+.\.venv\Scripts\jig serve
+.\.venv\Scripts\jig chat --url http://127.0.0.1:8766</code></pre>
+          </div>
+          <div>
+            <h3 class="code-title">macOS and Linux</h3>
+<pre><code>git clone https://github.com/rlesueur/jig.git
+cd jig
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+# Point jig.toml (or a profile) at your server, then:
+.venv/bin/jig health
+.venv/bin/jig serve
+.venv/bin/jig chat --url http://127.0.0.1:8766</code></pre>
+          </div>
+        </div>
+        <p>Use a profile with <code>jig --config profiles/ollama.toml serve</code>. The <a href="https://github.com/rlesueur/jig#readme">README</a> covers configuration, the API, tests and the container sandbox.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <p><a href="https://github.com/rlesueur/jig">github.com/rlesueur/jig</a> · Licensed under the <a href="https://github.com/rlesueur/jig/blob/main/LICENSE">Apache License 2.0</a></p>
+    <p class="muted">Jig is an independent open-source project, under active development.</p>
+  </footer>
+</body>
+</html>
