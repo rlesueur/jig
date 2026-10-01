@@ -16,6 +16,7 @@
   <a href="https://rlesueur.github.io/jig/"><strong>Website and live avatar</strong></a> ·
   <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 28-second video</a> ·
   <a href="#running-it">Quick start</a> ·
+  <a href="#run-with-docker">Docker</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -81,7 +82,7 @@ How to serve a vision model:
  │  Tools: web_fetch · read_file · list_files · write_file · notes · memory · time
  │         (container backend) run_command · run_python · browser_*         │
  │  Sandbox: per-agent folder, or a hardened Docker container ──► egress proxy (lease + core rules)
- │  Vision (optional image input)  Vault (DPAPI / keyring)                   │
+ │  Vision (optional image input)  Vault (DPAPI / keyring / keyfile)         │
  │  SQLite: goals, tasks, runs, steps, approvals, rules, memory+FTS5, notes, audit (append-only)
  │  Event bus ──► avatar state tracker ──► /events (WebSocket) and /events/sse
  └──────────────────────────────────────────────────────────────────────────┘
@@ -98,9 +99,11 @@ How to serve a vision model:
 | `jig/runtime.py` | Wires everything together; start-up checks; crash and restart recovery; chat streaming |
 | `jig/memory.py` | Memory store with a pluggable search backend (FTS5 now, embeddings later) |
 | `jig/audit.py` | Append-only audit log (SQLite triggers reject updates and deletes) |
-| `jig/vault.py` | Credential vault (Windows DPAPI, or `keyring` elsewhere) |
+| `jig/vault.py` | Credential vault (Windows DPAPI, or `keyring` elsewhere, or an explicit `[vault] backend`) |
+| `jig/vault_backends/keyfile.py` | `keyfile` vault backend for containers: AES-256-GCM, scrypt, key from a file (Docker secret) |
 | `jig/sandbox.py` | Per-agent workspace with path-traversal protection |
 | `jig/sandbox_container/` | Container backend: Docker lifecycle, hardened container, egress relay and proxy, browser session, image (`image/Dockerfile`) |
+| `jig/sandbox_compose/` | `compose` backend for container mode: talks to the long-running sandbox services over the internal network, start-up isolation checks, API guard |
 | `jig/tools/sandbox_exec.py`, `jig/tools/browser.py` | `run_command` / `run_python` and the headless browser tools (container backend only) |
 | `jig/vision.py` | Image content parts, the real vision probe, and image description for tools |
 | `jig/events.py` | Event bus and the derived avatar state |
@@ -156,7 +159,7 @@ name = "your-small-reviewer-model"
 
 ### Tests
 
-The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com` and `https://httpbin.org`, so they need internet access. The container and browser tests (`tests/test_container_sandbox.py`, `tests/test_browser.py`) need Docker running and the sandbox image built (`jig sandbox build`). The vision tests need `[vision] enabled = true` and a vision-capable model.
+The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com` and `https://httpbin.org`, so they need internet access. The container and browser tests (`tests/test_container_sandbox.py`, `tests/test_browser.py`) need Docker running and the sandbox image built (`jig sandbox build`). The vision tests need `[vision] enabled = true` and a vision-capable model. `tests/test_vault_keyfile.py` needs no model. `tests/test_compose_stack.py` runs against a live compose stack: start it, then set `JIG_STACK_URL` (for example `http://127.0.0.1:8766`) and run `pytest -m compose`. Without `JIG_STACK_URL` it is skipped.
 
 ```powershell
 .\.venv\Scripts\python -m pytest -q
@@ -169,6 +172,46 @@ With `jig serve` running:
 ```powershell
 .\.venv\Scripts\python scripts\demo.py --url http://127.0.0.1:8766       # goal -> plan -> approval -> done
 .\.venv\Scripts\python scripts\chat_demo.py --url http://127.0.0.1:8766  # streaming chat with avatar states
+```
+
+## Run with Docker
+
+Jig also ships as a standalone container deployment: the images `ghcr.io/rlesueur/jig` and `ghcr.io/rlesueur/jig-sandbox` (linux/amd64 and linux/arm64), and `compose.yaml`. You need Docker and a model server. By default, that server runs on the host on port 8080. Full details are in [docs/container.md](docs/container.md).
+
+```sh
+openssl rand -base64 32 > secrets/jig_vault_key     # the vault key, once (PowerShell: see docs/container.md)
+docker compose up -d                                # Jig, sandbox-exec and sandbox-browser
+docker compose exec jig jig token show              # paste it into http://127.0.0.1:8766
+```
+
+Configuration comes from `deploy/jig.toml`, mounted read-only (or your own file, via `JIG_CONFIG_FILE`), and from variables in `.env` (see `deploy/env.example`). State lives in the named volume `jig-data`, and the agent's files in `workspace`. Jig waits up to 10 minutes for the model to be served, then runs the same capability checks as on the host (tool call and JSON schema, plus vision if enabled). If they fail, it exits with the reason and compose restarts it. It never picks another model.
+
+**Profiles.**
+
+- **Default:** a server on the host, at `host.docker.internal`, which also works on Linux.
+- **`--profile ollama`:** Ollama with NVIDIA GPUs.
+- **`--profile llamacpp`:** the official llama.cpp server image with GPUs and your `models/` folder.
+
+With a profile, set `JIG_MODEL_BASE_URL` to `http://ollama:11434/v1` or `http://llamacpp:8080/v1`. Forks such as PrismML's llama.cpp (needed by some ternary models) are not in the official image, so keep those on the host.
+
+**Security model in container mode.**
+
+- **No Docker socket.** Jig runs as a non-root user with a read-only root filesystem and no capabilities, and does not get the Docker socket.
+- **Loopback only.** The port is published on `127.0.0.1`.
+- **Isolated sandbox.** Code and the browser run in the long-lived `sandbox-exec` and `sandbox-browser` services, with the same hardening as the per-agent container. Their only network is `internal: true`. The only way out is Jig's egress proxy, so leases, core rules, custom rules, the Sentinel and approvals all still apply. Jig refuses API requests from that network.
+- **Checked at start-up.** Jig verifies all of this every time it starts, including that the sandbox cannot reach the internet directly, and refuses to start if anything is wrong.
+- **One shared sandbox.** You get one sandbox for the stack instead of one container per agent. Run one compose project per agent, or Jig on the host, to get that back. [docs/container.md](docs/container.md#security-model) lists every trade-off.
+
+**Vault key.** A container has no DPAPI and no keyring, so the container config selects `[vault] backend = "keyfile"`. Secrets are encrypted with AES-256-GCM under a key that scrypt derives from the Docker secret `jig_vault_key`. Without that file, or with a wrong key, Jig refuses to start and says how to fix it. It never generates a key and never stores secrets in plaintext. Back up the key separately from the data.
+
+**Always on.** Every service has `restart: unless-stopped`. On Windows and macOS, set Docker Desktop to start when you sign in; on Linux, run `sudo systemctl enable --now docker`. The host autostart below (Task Scheduler, launchd, systemd) is not used in container mode.
+
+**Updating and backups.** Update with `git pull`, `docker compose pull` and then `docker compose up -d`; volumes are kept. To back up, stop Jig and archive the `jig-data` volume:
+
+```sh
+docker compose stop jig
+docker compose run --rm --no-deps -v "$PWD/backups:/backup" --entrypoint tar jig -czf /backup/jig-data.tgz -C /var/lib/jig/data .
+docker compose start jig
 ```
 
 ## Running Jig always-on
@@ -294,7 +337,7 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 4. **Custom rules.** Editable `allow`, `ask` or `block` rules per tool, with glob matching on tool names and, optionally, on an argument such as `url` matching `https://shop.*`. They are stored in SQLite and managed through `/rules`.
 5. **The Sentinel.** Every outbound or side-effecting action is reviewed by an isolated model call with its own system prompt and no tools. It sees only the trusted intent, the proposed action and the policy findings, never the agent's conversation, so injected web content cannot address it. It returns a structured verdict of `allow`, `ask_user` or `deny`, with a risk level and a reason. A `deny` cannot be overridden. If the Sentinel fails or returns an invalid verdict, the action does not run and the error is reported.
 6. **Approvals.** If a core rule, custom rule or the Sentinel asks for a human, an approval is queued (`/approvals`), the task's status becomes `waiting_approval`, and the run pauses. It resumes as soon as you approve or deny. Runs are checkpointed after every step, so a paused or interrupted task picks up where it left off after a restart.
-7. **Vault.** Tools use secrets by reference (`{{secret:NAME}}`). The real value is inserted only at the moment the tool runs, after review, and any occurrence of it in the result is redacted before it reaches the model or the audit log. Values can be written through the API but never read back. Jig uses Windows DPAPI on Windows and the `keyring` library elsewhere, and refuses to start if neither is available.
+7. **Vault.** Tools use secrets by reference (`{{secret:NAME}}`). The real value is inserted only at the moment the tool runs, after review, and any occurrence of it in the result is redacted before it reaches the model or the audit log. Values can be written through the API but never read back. Jig uses Windows DPAPI on Windows and the `keyring` library elsewhere, and refuses to start if neither is available. In containers, `[vault] backend = "keyfile"` uses a key you supply as a Docker secret (see [Run with Docker](#run-with-docker)).
 
 **Audit.** Every model-call summary, tool call and result, policy decision, Sentinel verdict, approval, vault use, state change, and rule or memory change is appended to an audit log that SQLite triggers make append-only. Query it with `GET /audit?kind=tool&task_id=...`. Forgetting a memory deletes it from the table and the search index, and the audit log records only its id, never its content.
 
