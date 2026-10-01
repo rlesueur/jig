@@ -1,8 +1,9 @@
-"""Route benchmark host names to the local benchmark services, and nowhere else.
+"""Route a fixed set of reserved test host names to local ports, and refuse every other host.
 
-Jig's core rule `no-local-network` (correctly) refuses any outbound URL that resolves to a loopback or
-private address, so the agent cannot reach our local benchmark web server or exfiltration sink. To run
-injection experiments against real local services without touching any third party, the harness:
+This is isolation tooling for benchmark runs, not attack content. Jig's core rule `no-local-network`
+(correctly) refuses any outbound URL that resolves to a loopback or private address. To let a published
+benchmark's own tool environment be exercised against local fixtures without ever touching a third party,
+the harness:
 
 1. gives Jig an HTTP client whose transport maps a fixed set of host names under the reserved `.test`
    TLD (RFC 2606) to 127.0.0.1:<port>, and **refuses every other host** (so a benchmark run can never
@@ -11,8 +12,9 @@ injection experiments against real local services without touching any third par
    URL to Jig's real check unchanged.
 
 Everything else in Jig (the gate, core and custom rules, the Sentinel, approvals, the tools) runs
-unmodified. This is a methodological choice documented in PROTOCOL.md; a native "benchmark hosts" hook
-is recommended to the core team so this in-process exemption is no longer needed.
+unmodified. In the current scope `services.routes()` returns no hosts, so the transport simply blocks all
+outbound access during a run. A native "benchmark hosts" hook is recommended to the core team so this
+in-process exemption is no longer needed.
 """
 
 from __future__ import annotations

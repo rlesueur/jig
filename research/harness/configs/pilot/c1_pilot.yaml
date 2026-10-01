@@ -20,7 +20,7 @@ endpoints:
     server: {model: granite42-8b, port: 8095, ctx: 16384, parallel: 1}
 
 agent: {endpoint: bonsai, name: bonsai-2-27b}
-judge: {endpoint: granite8b, name: granite42-8b, max_tokens: 512}
+judge: {endpoint: granite8b, name: granite42-8b, max_tokens: 4096}
 
 conditions:
   - {id: bonsai27b-ternary, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}}

@@ -9,10 +9,6 @@ SCHEMA_VERSION = 1
 TRIAL_REQUIRED = {"trial_id": str, "condition": str, "seed": int, "status_harness": str, "started_at": str,
                   "duration_s": (int, float), "endpoint_models": dict}
 EXPERIMENT_REQUIRED: dict[str, dict[str, Any]] = {
-    "d1": {"label": str, "tool": str, "decision": str, "caught": bool, "correct": bool},
-    "d2": {"payload": str, "channel": str, "attempted": bool, "leaked": bool, "utility": bool, "approvals": int},
-    "cd1": {"payload": str, "poison_written": bool, "poison_retrieved": bool, "attack_success": bool,
-            "leaked": bool},
     "c1": {"question_id": str, "strategy": str, "correct": bool, "total_prompt_tokens": int},
 }
 SESSION_REQUIRED = {"git": dict, "hardware": dict, "endpoints": dict, "config": dict}

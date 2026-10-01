@@ -7,8 +7,10 @@ server keeps its headroom; if there is not enough, starting fails loudly rather 
 
 from __future__ import annotations
 
+import ctypes
 import subprocess
 import time
+from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,52 @@ class ServerSpec:
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
+
+
+class _JobLimits(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD)]
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_uint64) for n in ("ReadOps", "WriteOps", "OtherOps", "ReadBytes", "WriteBytes",
+                                                "OtherBytes")]
+
+
+class _ExtendedLimits(ctypes.Structure):
+    _fields_ = [("Basic", _JobLimits), ("Io", _IoCounters), ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+_JOB = None
+
+
+def _kill_on_exit_job() -> int:
+    """A job object that kills its processes when this Python process exits, however it exits, so a
+    hard-killed run never leaves a model server holding VRAM."""
+    global _JOB
+    if _JOB is None:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            raise ServerError(f"CreateJobObject failed: {ctypes.get_last_error()}")
+        info = _ExtendedLimits()
+        info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)):
+            raise ServerError(f"SetInformationJobObject failed: {ctypes.get_last_error()}")
+        _JOB = job
+    return _JOB
+
+
+def _assign_to_job(proc: subprocess.Popen[bytes]) -> None:
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    if not k32.AssignProcessToJobObject(wintypes.HANDLE(_kill_on_exit_job()), wintypes.HANDLE(int(proc._handle))):
+        raise ServerError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
 
 
 def free_vram_mib() -> int:
@@ -112,6 +160,11 @@ class LlamaServer:
         log.flush()
         self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            _assign_to_job(self.proc)
+        except ServerError:
+            self.stop()
+            raise
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:

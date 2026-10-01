@@ -19,7 +19,7 @@ endpoints:
   gemma26b: {server: {model: gemma-4-26b-a4b, port: 8094, ctx: 16384, parallel: 1, n_cpu_moe: 99}}
 
 agent: {endpoint: bonsai, name: bonsai-2-27b}
-judge: {endpoint: gemma26b, name: gemma-4-26b-a4b, max_tokens: 1024}
+judge: {endpoint: gemma26b, name: gemma-4-26b-a4b, max_tokens: 4096}
 
 conditions:
   - {id: bonsai27b-ternary, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}}
