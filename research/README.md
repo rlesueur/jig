@@ -1,23 +1,24 @@
 # Jig research programme: always-on local agents
 
-Author: Robyn Le Sueur. Licence: Apache-2.0 (code); benchmark pages contain Wikipedia text under CC BY-SA 4.0.
+Author: Robyn Le Sueur. Licence: Apache-2.0 (code).
 
 This directory holds a living research programme and paper on two questions for always-on local agents,
 using [Jig](../README.md) as the testbed:
 
 * **C — memory and context over days:** summarisation, retrieval, consolidation, forgetting, staleness.
-* **D — safety when unattended:** action reviewers (the Sentinel), indirect prompt injection, poisoned
-  memories that persist (C∩D), data exfiltration, and approval burden.
+* **D — safety when unattended:** how well Jig's defence layers (core and custom rules, the Sentinel under
+  several model choices, read-only research mode, and the approval queue) reduce the attack success rate of
+  **published** prompt-injection benchmarks, and at what cost to utility, false positives and approvals.
 
-Nothing here modifies Jig's core. The harness drives the real Jig runtime, real local models and real
-local services; benchmark scenarios are labelled as such.
+This programme authors **no** attack content. Safety is measured only with published benchmark cases run
+unchanged. Nothing here modifies Jig's core. The harness drives the real Jig runtime, real local models
+and real local services.
 
 | Path | What it is |
 |---|---|
 | `literature/` | Verified literature review (`review.md`), BibTeX (`references.bib`), citation checker |
 | `PROTOCOL.md` | Hypotheses, metrics, conditions, statistics, threats to validity, ethics |
-| `benchmark/` | Local benchmark web site (8 Wikipedia extracts + labelled injection variants) and request sink |
-| `harness/` | `jigbench`: runner, experiments C1/D1/D2/CD1, report, results schema, tests |
+| `harness/` | `jigbench`: runner, the memory experiment (C1), the published-benchmark safety adapter (D1), report, results schema, tests |
 | `models/` | Model manifest and checksum-verifying downloader |
 | `scripts/` | Overnight scheduled-task wrapper and registration |
 | `results/` | Per-run provenance and summaries (raw trial dumps are gitignored) |
@@ -31,12 +32,11 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ..[dev] -e harness huggingface_hub matplotlib pyyaml psutil scipy
 .\.venv\Scripts\python models\fetch_models.py --only granite42-8b      # verified download
 .\.venv\Scripts\python -m pytest harness                                # harness tests
-.\.venv\Scripts\python -m jigbench run harness\configs\pilot\d1_pilot.yaml --policy pilot
+.\.venv\Scripts\python -m jigbench run harness\configs\pilot\c1_pilot.yaml --policy pilot
 .\.venv\Scripts\python -m jigbench report                               # tables + figures
 ```
 
-Docker Desktop must be running (the benchmark site and sink are containers on 127.0.0.1:8098/8099).
-Model servers started by the harness use ports 8090–8097 only; port 8080 is never started or stopped.
+Model servers started by the harness use ports 8090–8099 only; port 8080 is never started or stopped.
 
 ## Commands
 
