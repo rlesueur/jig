@@ -11,7 +11,7 @@ cd jig\avatar
 python -m http.server 8765 --bind 127.0.0.1
 ```
 
-Open <http://127.0.0.1:8765/>. You can deep-link to a state with query parameters, for example `?state=working&task=coding` or `?state=talking&audio=0.6`.
+Open <http://127.0.0.1:8765/>. You can deep-link to a state with query parameters, for example `?state=working&task=coding`, `?state=working&task=browsing&background=1` or `?state=talking&audio=0.6`.
 
 ## Usage
 
@@ -28,28 +28,36 @@ import { STATES, TASKS } from './jig-avatar.js';
 const jig = document.querySelector('jig-avatar');
 jig.setState('thinking');
 jig.setState('working', { task: 'writing' });
+jig.setState('working', { task: 'browsing', background: true }); // dimmed: read-only background research
 jig.setState('talking');
 jig.setAudioLevel(0.42); // call every frame or on each audio chunk while on a call
-jig.addEventListener('jig-statechange', (e) => console.log(e.detail)); // { state, task, previous }
+jig.addEventListener('jig-statechange', (e) => console.log(e.detail)); // { state, task, previous, background }
 ```
 
 ### API
 
 | Member | Description |
 | --- | --- |
-| `setState(name, { task })` | Moves smoothly to a new state. `task` is required for `working` and not allowed for any other state. |
+| `setState(name, { task, background })` | Moves smoothly to a new state. `task` is required for `working` and not allowed for any other state. `background` is optional (default `false`) and works with any state. |
 | `setAudioLevel(level)` | Sets the live voice level, from 0 to 1, used by `talking`. |
-| `state`, `task`, `audioLevel` | Read-only getters. |
-| `jig-statechange` event | Fires on every change, with `detail: { state, task, previous }`. |
+| `state`, `task`, `background`, `audioLevel` | Read-only getters. |
+| `jig-statechange` event | Fires on every change, with `detail: { state, task, previous, background }`. |
 | `STATES`, `TASKS` | Exported arrays of the valid names. |
 
-Invalid input throws instead of guessing. An unknown state, an unknown task, a missing task for `working`, or an audio level outside 0–1 raises a `RangeError` or `TypeError`.
+Invalid input throws instead of guessing. An unknown state, an unknown task, a missing task for `working`, a `background` value that is not a boolean, or an audio level outside 0–1 raises a `RangeError` or `TypeError`.
+
+### Background work
+
+`background: true` marks the state as background work, such as read-only proactive research. The animation stays the same (for example the browsing panes and scan sweep), but the rig dims, the eyes go half-lidded, and the motion softens and slows. The change is interpolated like any other state change, so switching the flag on or off cross-fades. Each `setState` call describes the whole state, so leaving `background` out sets it back to `false`.
+
+The `background` option is separate from the `background` state alias, which still means `monitoring`.
 
 ### Attributes
 
 | Attribute | Values |
 | --- | --- |
 | `state`, `task` | Mirror `setState` and stay in sync with it. |
+| `background` | Boolean attribute that mirrors the `background` option. Present (or any value other than `false`) means background work. |
 | `audio-level` | 0–1. |
 | `shape` | `rounded` (default), `circle` for avatars and icons, or `none` for a transparent background. |
 | `framing` | `auto` (default; switches to `icon` below 110px), `icon` (head-and-shoulders crop with reduced detail), or `full`. |
@@ -89,6 +97,7 @@ Drive the avatar from your runtime's event stream. Keep a single source of truth
 | Scheduled watchers or proactive research running with read-only tools only | `setState('monitoring')` |
 | Model generating a plan or reasoning, before any tool call | `setState('thinking')` |
 | Tool call: web search, fetch, browser navigation or page reading | `setState('working', { task: 'browsing' })` |
+| Proactive read-only research fetching or reading a source | `setState('working', { task: 'browsing', background: true })` |
 | Tool call: drafting or sending email, messages or documents | `setState('working', { task: 'writing' })` |
 | Tool call: shell, code editing, running tests | `setState('working', { task: 'coding' })` |
 | Tool call: basket, checkout or payment | `setState('working', { task: 'shopping' })` |
@@ -97,9 +106,9 @@ Drive the avatar from your runtime's event stream. Keep a single source of truth
 | Action review requires the user (approve, hand off, sign in, connect an app) | `setState('approval')` |
 | Task completed successfully | `setState('success')`, then return to `idle` or `monitoring` after about 2–3 seconds |
 | Task failed, permission denied, or blocked by a rule | `setState('error')` until the user acknowledges it or the task retries |
-| User paused the agent | `setState('paused')` |
+| User paused the agent or a task | `setState('paused')` |
 
-Precedence when several things are true at once, highest first: `approval`, `error`, `talking`, `working`, `thinking`, `monitoring`, `idle`. A pending approval should always win, because it is the one state where Jig needs the user. When parallel tool calls span several task kinds, show the one the user is most likely to care about, or the most recently started.
+Precedence when several things are true at once, highest first: `approval`, `error`, `talking`, `working`, `thinking`, `paused`, background `working`, `monitoring`, `idle`. A pending approval should always win, because it is the one state where Jig needs the user. When parallel tool calls span several task kinds, show the one the user is most likely to care about, or the most recently started.
 
 ## Performance and accessibility
 
@@ -107,11 +116,11 @@ Precedence when several things are true at once, highest first: `approval`, `err
 - The neon glow is built from layered strokes with additive blending rather than `shadowBlur`. In the demo, the large avatar costs about 0.7 ms of JavaScript per frame, and all 13 avatars together about 4 ms.
 - Icon framing reduces detail: fewer ribbons, sparks and vortex rings, with lighter glow passes.
 - With reduced motion, amplitudes shrink to about 15%, phases slow down, and the pirouette and confetti are skipped. States still cross-fade quickly.
-- The element sets `role="img"` and an `aria-label` such as "Jig is working: coding".
+- The element sets `role="img"` and an `aria-label` such as "Jig is working: coding", or "Jig is working: browsing, in the background" for background work.
 
 ## Files
 
 - `jig-avatar.js`: the web component and rig.
-- `index.html`: the demo page, with state and task buttons, an audio slider, a real microphone input and 48px icons.
+- `index.html`: the demo page, with state and task buttons, a background-work toggle, an audio slider, a real microphone input and 48px icons.
 - `assets/jig-mascot-reference.jpg`: the approved mascot artwork.
 - `screenshots/`: captured states.

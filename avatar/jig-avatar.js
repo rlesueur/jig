@@ -60,7 +60,7 @@ const BASE_POSE = {
   eyeOpen: 1, lookX: 0, lookY: 0, happy: 0, sad: 0, smile: 1, mouthOpen: 0,
   tilt: -0.1, drop: 0,
   aL: 208, lL: 222, bL: -42, aR: 8, lR: 215, bR: 34, spreadL: 1, spreadR: 0.85, waveR: 0, typing: 0,
-  cool: 0, amber: 0, desat: 0, timeScale: 1,
+  cool: 0, amber: 0, desat: 0, timeScale: 1, dim: 0,
   wThink: 0, wWatch: 0, wTalk: 0, wApprove: 0, wSuccess: 0, wError: 0, wPause: 0,
   wBrowse: 0, wWrite: 0, wCode: 0, wShop: 0, wCal: 0,
 };
@@ -105,6 +105,23 @@ const TASK_POSES = {
   shopping: { wShop: 1, aR: 6, lR: 200, lookX: 0.75, lookY: 0.3, smile: 1.2 },
   scheduling: { wCal: 1, aR: -8, lR: 236, lookX: 0.8, lookY: -0.05, smile: 0.8 },
 };
+
+/* Background work (for example read-only proactive research) keeps the state's animation but dims the
+   rig, softens and slows the motion and half-closes the eyes. Applied on top of the state and task pose. */
+const BACKGROUND_SCALE = {
+  energy: 0.62, bobAmp: 0.45, sway: 0.5, swayFreq: 0.6, swirl: 0.45, orbit: 0.45, wave: 0.6, flare: 0.8,
+  typing: 0.5, timeScale: 0.6, spreadL: 0.8, spreadR: 0.8,
+};
+const BACKGROUND_EYE_OPEN = 0.5;
+const BACKGROUND_DESAT = 0.22;
+
+function backgroundPose(pose) {
+  const out = { ...pose, dim: 1 };
+  for (const key in BACKGROUND_SCALE) out[key] = pose[key] * BACKGROUND_SCALE[key];
+  out.eyeOpen = Math.min(pose.eyeOpen, BACKGROUND_EYE_OPEN);
+  out.desat = Math.max(pose.desat, BACKGROUND_DESAT);
+  return out;
+}
 
 const RIBBONS = [
   { o: -1.0, c: C.magenta, ph: 0.0, bw: 16 },
@@ -254,7 +271,7 @@ const TEMPLATE = `
 
 export class JigAvatar extends HTMLElement {
   static get observedAttributes() {
-    return ['state', 'task', 'audio-level', 'shape', 'framing', 'reduced-motion'];
+    return ['state', 'task', 'background', 'audio-level', 'shape', 'framing', 'reduced-motion'];
   }
 
   constructor() {
@@ -265,6 +282,7 @@ export class JigAvatar extends HTMLElement {
     this._ctx = this._canvas.getContext('2d');
     this._state = 'idle';
     this._task = null;
+    this._background = false;
     this._target = { ...BASE_POSE };
     this._cur = { ...BASE_POSE };
     this._audio = 0;
@@ -311,15 +329,16 @@ export class JigAvatar extends HTMLElement {
 
   attributeChangedCallback(name, oldValue, value) {
     if (this._reflecting || oldValue === value) return;
-    if (name === 'state' || name === 'task') {
-      /* state and task may arrive as separate attribute writes, so apply them together once settled */
+    if (name === 'state' || name === 'task' || name === 'background') {
+      /* state, task and background may arrive as separate attribute writes, so apply them together once settled */
       if (this._pendingAttr) return;
       this._pendingAttr = true;
       queueMicrotask(() => {
         this._pendingAttr = false;
         const state = this.getAttribute('state') || 'idle';
         const canonical = STATE_ALIASES[state] || state;
-        this.setState(state, canonical === 'working' ? { task: this.getAttribute('task') } : {});
+        const background = this.hasAttribute('background') && this.getAttribute('background') !== 'false';
+        this.setState(state, canonical === 'working' ? { task: this.getAttribute('task'), background } : { background });
       });
     } else if (name === 'audio-level') {
       if (value !== null) this.setAudioLevel(Number(value));
@@ -342,6 +361,10 @@ export class JigAvatar extends HTMLElement {
     return this._task;
   }
 
+  get background() {
+    return this._background;
+  }
+
   get audioLevel() {
     return this._audio;
   }
@@ -349,7 +372,8 @@ export class JigAvatar extends HTMLElement {
   /**
    * Switch animation state. Throws on unknown states or tasks rather than guessing.
    * @param {string} name one of STATES (or an alias such as 'sleeping', 'needs-approval', 'blocked')
-   * @param {{task?: string}} [options] required when name is 'working'
+   * @param {{task?: string, background?: boolean}} [options] task is required when name is 'working';
+   *   background dims the state to show it is background work (for example read-only research)
    */
   setState(name, options = {}) {
     const state = STATE_ALIASES[name] || name;
@@ -367,12 +391,18 @@ export class JigAvatar extends HTMLElement {
     } else if (options.task) {
       throw new TypeError(`jig-avatar: the "${state}" state does not take a task`);
     }
+    const background = options.background ?? false;
+    if (typeof background !== 'boolean') {
+      throw new TypeError(`jig-avatar: the background option must be true or false, received ${background}`);
+    }
 
-    const changed = state !== this._state || task !== this._task;
+    const changed = state !== this._state || task !== this._task || background !== this._background;
     const previous = this._state;
     this._state = state;
     this._task = task;
-    this._target = { ...BASE_POSE, ...STATE_POSES[state], ...(task ? TASK_POSES[task] : {}) };
+    this._background = background;
+    const pose = { ...BASE_POSE, ...STATE_POSES[state], ...(task ? TASK_POSES[task] : {}) };
+    this._target = background ? backgroundPose(pose) : pose;
 
     if (changed && state === 'success' && previous !== 'success') {
       this._spinStart = this._rt;
@@ -384,11 +414,13 @@ export class JigAvatar extends HTMLElement {
     this.setAttribute('state', state);
     if (task) this.setAttribute('task', task);
     else this.removeAttribute('task');
+    if (background) this.setAttribute('background', '');
+    else this.removeAttribute('background');
     this._reflecting = false;
     this._updateLabel();
 
     if (changed) {
-      this.dispatchEvent(new CustomEvent('jig-statechange', { detail: { state, task, previous }, bubbles: true }));
+      this.dispatchEvent(new CustomEvent('jig-statechange', { detail: { state, task, previous, background }, bubbles: true }));
     }
   }
 
@@ -402,7 +434,7 @@ export class JigAvatar extends HTMLElement {
 
   _updateLabel() {
     const label = this._task ? `Jig is ${this._state}: ${this._task}` : `Jig is ${this._state}`;
-    this.setAttribute('aria-label', label);
+    this.setAttribute('aria-label', this._background ? `${label}, in the background` : label);
   }
 
   _resize(w, h) {
@@ -577,6 +609,12 @@ export class JigAvatar extends HTMLElement {
       g = lerp(g, y, p.desat);
       b = lerp(b, y, p.desat);
     }
+    if (p.dim > 0.001) {
+      const k = 1 - p.dim * 0.3;
+      r *= k;
+      g *= k;
+      b *= k;
+    }
     return [r, g, b];
   }
 
@@ -653,7 +691,7 @@ export class JigAvatar extends HTMLElement {
     if (cur.wBrowse > 0.01) {
       const i = Math.floor(this._t * 0.7) % 6;
       const tx = i % 2 === 0 ? -0.85 : 0.85;
-      this._browseLook += (tx - this._browseLook) * 0.12;
+      this._browseLook += (tx - this._browseLook) * 0.12 * (1 - cur.dim * 0.6);
       lookX = lerp(lookX, this._browseLook, cur.wBrowse);
       lookY = lerp(lookY, (Math.floor(i / 2) - 1) * 0.55, cur.wBrowse);
     }

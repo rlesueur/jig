@@ -67,6 +67,7 @@
       <div class="status">
         <span>State: <strong id="status-state">idle</strong></span>
         <span>Task: <strong id="status-task">—</strong></span>
+        <span>Background: <strong id="status-background">no</strong></span>
         <span>Frame rate: <strong id="fps">—</strong></span>
       </div>
     </div>
@@ -80,6 +81,10 @@
       <section>
         <h2>Working task</h2>
         <div class="buttons" id="task-buttons"></div>
+        <div class="row" style="margin-top: 12px">
+          <label><input type="checkbox" id="background"> Background work (dimmed)</label>
+        </div>
+        <p class="note">Passes <code>{ background: true }</code> to <code>setState()</code>, as the runtime does for read-only proactive research.</p>
       </section>
 
       <section>
@@ -136,9 +141,11 @@
 
     let lastTask = 'browsing';
     const mirror = [];
+    const backgroundBox = document.getElementById('background');
 
     function apply(state, task) {
-      const opts = state === 'working' ? { task: task || lastTask } : {};
+      const background = backgroundBox.checked;
+      const opts = state === 'working' ? { task: task || lastTask, background } : { background };
       if (opts.task) lastTask = opts.task;
       hero.setState(state, opts);
       for (const el of mirror) el.setState(state, opts);
@@ -161,14 +168,14 @@
       taskButtons.append(b);
     }
 
-    function addIcon(label, state, task, isMirror) {
+    function addIcon(label, state, task, isMirror, background = false) {
       const wrap = document.createElement('div');
       wrap.className = 'icon';
       const el = document.createElement('jig-avatar');
       el.setAttribute('shape', 'circle');
       wrap.append(el, Object.assign(document.createElement('span'), { textContent: label }));
       icons.append(wrap);
-      el.setState(state, task ? { task } : {});
+      el.setState(state, task ? { task, background } : { background });
       if (isMirror) mirror.push(el);
       return el;
     }
@@ -177,6 +184,7 @@
     addIcon('Monitoring', 'monitoring');
     addIcon('Thinking', 'thinking');
     addIcon('Research', 'working', 'browsing');
+    addIcon('Background research', 'working', 'browsing', false, true);
     addIcon('Email', 'working', 'writing');
     addIcon('Coding', 'working', 'coding');
     addIcon('Paying', 'working', 'shopping');
@@ -186,16 +194,20 @@
     addIcon('Blocked', 'error');
 
     hero.addEventListener('jig-statechange', (e) => {
-      const { state, task } = e.detail;
+      const { state, task, background } = e.detail;
       document.getElementById('status-state').textContent = state;
       document.getElementById('status-task').textContent = task || '—';
+      document.getElementById('status-background').textContent = background ? 'yes' : 'no';
+      backgroundBox.checked = background;
       for (const b of stateButtons.children) b.setAttribute('aria-pressed', String(b.dataset.state === state));
       for (const b of taskButtons.children) b.setAttribute('aria-pressed', String(state === 'working' && b.dataset.task === task));
       const url = new URL(location.href);
       url.searchParams.set('state', state);
       if (task) url.searchParams.set('task', task); else url.searchParams.delete('task');
+      if (background) url.searchParams.set('background', '1'); else url.searchParams.delete('background');
       history.replaceState(null, '', url);
     });
+    backgroundBox.addEventListener('change', () => apply(hero.state, hero.task));
 
     function setLevel(v) {
       hero.setAudioLevel(v);
@@ -264,6 +276,7 @@
       audio.value = params.get('audio');
       setLevel(Number(params.get('audio')));
     }
+    backgroundBox.checked = params.get('background') === '1';
     apply(params.get('state') || 'idle', params.get('task'));
   </script>
 </body>
