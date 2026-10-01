@@ -2,9 +2,9 @@
 processes only: the developer's model server on 8080 (used read-only), a real HTTP server that is not a model
 server, and a real llama.cpp server launched on a free port with a small model.
 
-The launched-server tests need a stock llama.cpp build and a small GGUF model. Point JIG_TEST_LLAMA_SERVER
-and JIG_TEST_SMALL_MODEL at them; by default they look in the developer's usual places and are skipped if
-neither is there.
+The launched-server tests need a stock llama.cpp build and a small GGUF model (an 8B Q4 model with 4096
+tokens of context is plenty). Point JIG_TEST_LLAMA_SERVER and JIG_TEST_SMALL_MODEL at them; without both
+those tests are skipped.
 """
 
 from __future__ import annotations
@@ -27,10 +27,8 @@ from jig.runtime import Jig
 
 from .server_helpers import free_port
 
-LLAMA_SERVER = Path(os.environ.get("JIG_TEST_LLAMA_SERVER")
-                    or r"C:\Users\you\tools\llama-upstream-b8664-cuda131\llama-server.exe")
-SMALL_MODEL = Path(os.environ.get("JIG_TEST_SMALL_MODEL")
-                   or r"C:\Users\you\models\jig-research\granite-4.2-8b-Q4_K_M.gguf")
+LLAMA_SERVER = Path(os.environ.get("JIG_TEST_LLAMA_SERVER", ""))
+SMALL_MODEL = Path(os.environ.get("JIG_TEST_SMALL_MODEL", ""))
 needs_llama = pytest.mark.skipif(not (LLAMA_SERVER.is_file() and SMALL_MODEL.is_file()),
                                  reason="set JIG_TEST_LLAMA_SERVER and JIG_TEST_SMALL_MODEL")
 ALIAS = "jig-test-small"
