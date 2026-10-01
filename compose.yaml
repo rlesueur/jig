@@ -1,0 +1,161 @@
+# Jig as a standalone container deployment.
+#
+#   1. openssl rand -base64 32 > secrets/jig_vault_key      (once; keep a copy somewhere safe)
+#   2. docker compose up -d                                  (model server on the host, port 8080)
+#   3. docker compose exec jig jig token show                (then open http://127.0.0.1:8766)
+#
+# Profiles: --profile ollama or --profile llamacpp run a model server in a container instead
+# (set JIG_MODEL_BASE_URL to match). Settings come from .env next to this file; see
+# deploy/env.example and docs/container.md, which also explains the security model.
+
+name: jig
+
+x-sandbox: &sandbox
+  image: ${JIG_SANDBOX_IMAGE:-ghcr.io/rlesueur/jig-sandbox:0.1.0}
+  build:
+    context: ./jig/sandbox_container/image
+  user: "10001:10001"
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=512m
+    - /home/jig:rw,nosuid,nodev,size=256m,mode=1777
+  shm_size: 256m
+  mem_limit: 2g
+  memswap_limit: 2g
+  cpus: 2.0
+  pids_limit: 512
+  # Only Docker's embedded DNS (service names) works; public names cannot be resolved directly.
+  dns: [127.0.0.1]
+  networks: [sandbox]
+  volumes:
+    - workspace:/workspace
+  restart: unless-stopped
+  environment: &sandbox-env
+    HOME: /home/jig
+    JIG_PEER: jig
+    HTTP_PROXY: http://jig:3128
+    HTTPS_PROXY: http://jig:3128
+    http_proxy: http://jig:3128
+    https_proxy: http://jig:3128
+    NO_PROXY: ""
+    JIG_BROWSER_PROXY: http://jig:3128
+
+services:
+  jig:
+    image: ${JIG_IMAGE:-ghcr.io/rlesueur/jig:0.1.0}
+    build:
+      context: .
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    ports:
+      # Loopback only by default. Publishing on 0.0.0.0 exposes Jig to your network; read docs/container.md first.
+      - "${JIG_BIND_ADDRESS:-127.0.0.1}:${JIG_HOST_PORT:-8766}:8766"
+    volumes:
+      - jig-data:/var/lib/jig/data
+      - workspace:/var/lib/jig/sandbox/default
+      - ${JIG_CONFIG_FILE:-./deploy/jig.toml}:/etc/jig/jig.toml:ro
+    environment:
+      JIG_MODEL_BASE_URL: ${JIG_MODEL_BASE_URL:-http://host.docker.internal:8080/v1}
+      JIG_MODEL_NAME: ${JIG_MODEL_NAME:-}
+    secrets:
+      - jig_vault_key
+    extra_hosts:
+      # Docker Desktop provides host.docker.internal; this makes it work on Linux Docker Engine too.
+      - "host.docker.internal:host-gateway"
+    networks:
+      default: {}
+      sandbox: {}
+    depends_on:
+      sandbox-exec:
+        condition: service_healthy
+      sandbox-browser:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+        required: false
+      llamacpp:
+        condition: service_started
+        required: false
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  sandbox-exec:
+    <<: *sandbox
+    command: ["python3", "-u", "/opt/jig/sandbox_service.py", "exec", "7010"]
+    healthcheck:
+      test: ["CMD", "python3", "/opt/jig/sandbox_service.py", "ping", "7010"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      start_interval: 2s
+
+  sandbox-browser:
+    <<: *sandbox
+    command: ["python3", "-u", "/opt/jig/sandbox_service.py", "browser", "7011"]
+    healthcheck:
+      test: ["CMD", "python3", "/opt/jig/sandbox_service.py", "ping", "7011"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      start_interval: 2s
+
+  # --profile ollama: Ollama with every NVIDIA GPU. Pull a tool-capable model with
+  #   docker compose exec ollama ollama pull <model>
+  # and set JIG_MODEL_BASE_URL=http://ollama:11434/v1 (and JIG_MODEL_NAME if you pull more than one).
+  ollama:
+    profiles: [ollama]
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.35.0@sha256:2a6e883b917fc543389599dae79918f5cac9e1438890506982f44aa4f5625d01}
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-32768}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [default]
+    restart: unless-stopped
+
+  # --profile llamacpp: the official llama.cpp server (CUDA, linux/amd64) with your models mounted
+  # read-only at /models. Set LLAMACPP_ARGS for your model and JIG_MODEL_BASE_URL=http://llamacpp:8080/v1.
+  # Forks (for example PrismML's, needed by some ternary models) are not in this image: keep those on the host.
+  llamacpp:
+    profiles: [llamacpp]
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:6cdf9529493b9581c421fec5628dcd4b8dd7c09507fc7d27ad739cc9205d66f5}
+    command: ${LLAMACPP_ARGS:--m /models/model.gguf --host 0.0.0.0 --port 8080 --jinja --ctx-size 32768 --parallel 4 -ngl 999}
+    volumes:
+      - ${LLAMACPP_MODELS_DIR:-./models}:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [default]
+    restart: unless-stopped
+
+networks:
+  default: {}
+  # No gateway and no route out. The only way out is Jig's egress proxy (jig:3128).
+  sandbox:
+    internal: true
+
+volumes:
+  jig-data:
+  workspace:
+  ollama:
+
+secrets:
+  jig_vault_key:
+    file: ${JIG_VAULT_KEY_PATH:-./secrets/jig_vault_key}

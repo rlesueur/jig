@@ -1,0 +1,10 @@
+# Only what the Jig image needs: jig/, avatar/jig-avatar.js, deploy/, LICENSE.
+*
+!jig/
+!avatar/jig-avatar.js
+!deploy/jig.toml
+!deploy/requirements.lock
+!LICENSE
+**/__pycache__
+**/*.py[cod]
+jig/sandbox_container/image/

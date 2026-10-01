@@ -1,0 +1,74 @@
+# Jig configuration for the container (compose.yaml). It is baked into the image at
+# /etc/jig/jig.toml; compose.yaml mounts this file (or JIG_CONFIG_FILE) over it, so edit it here
+# and run `docker compose up -d` again. See docs/container.md.
+#
+# Environment overrides (set them in .env next to compose.yaml): JIG_MODEL_BASE_URL,
+# JIG_MODEL_NAME, JIG_VAULT_BACKEND, JIG_VAULT_KEY_FILE, JIG_SANDBOX_BACKEND.
+
+[model]
+# Default: a model server on the host (llama.cpp, Ollama, LM Studio, vLLM, ...). compose.yaml maps
+# host.docker.internal to the host on Linux as well. With the ollama or llamacpp profile, set
+# JIG_MODEL_BASE_URL to http://ollama:11434/v1 or http://llamacpp:8080/v1 instead.
+base_url = "http://host.docker.internal:8080/v1"
+# Empty: discover from /v1/models (fails loudly if the server offers more than one model).
+name = ""
+api_key_env = ""
+connect_timeout_s = 5.0
+read_timeout_s = 600.0
+max_tokens = 8192
+
+# Sent as-is with every request; include only keys your server accepts.
+[model.sampling]
+temperature = 1.0
+top_p = 0.95
+
+# Jig starts nothing here; it waits up to readiness_timeout_s for the server to serve the model
+# (a model can take minutes to load), then runs the capability checks. If it is not ready in time,
+# Jig exits with an error and compose restarts it. It never switches to another model or server.
+[model.launch]
+readiness_timeout_s = 600
+poll_interval_s = 5
+
+[sentinel]
+
+# Needs a vision-capable model; when true, a real test image is checked at start-up.
+[vision]
+enabled = false
+
+# Sandbox services next to Jig (sandbox-exec, sandbox-browser) on the internal-only network.
+[sandbox]
+backend = "compose"
+exec_service = "sandbox-exec:7010"
+browser_service = "sandbox-browser:7011"
+egress_port = 3128
+egress_ports = [80, 443]
+command_timeout_s = 120.0
+
+# Secrets are encrypted with the key in the jig_vault_key Docker secret. Without it Jig refuses to start.
+[vault]
+backend = "keyfile"
+key_file = "/run/secrets/jig_vault_key"
+
+[paths]
+data_dir = "/var/lib/jig/data"
+sandbox_dir = "/var/lib/jig/sandbox"
+
+[runtime]
+# The workspace volume is mounted at /var/lib/jig/sandbox/<agent_id>; change both together.
+agent_id = "default"
+timezone = "Europe/London"
+max_steps = 12
+max_concurrent_tasks = 3
+heartbeat_s = 2.0
+min_context_tokens = 32768
+
+[tools.web_fetch]
+timeout_s = 20.0
+max_bytes = 2_000_000
+max_chars = 12_000
+max_redirects = 5
+
+# Inside the container Jig listens on all interfaces; compose.yaml publishes it on 127.0.0.1 only.
+[server]
+host = "0.0.0.0"
+port = 8766
