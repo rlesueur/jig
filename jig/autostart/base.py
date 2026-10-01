@@ -22,6 +22,16 @@ class AutostartError(JigError):
     """Registering, removing or querying the autostart entry failed. Nothing is changed silently."""
 
 
+CONTAINER_MODE_HINT = ("Docker keeps Jig running (restart: unless-stopped). Make sure Docker Desktop starts "
+                       "when you log in.")
+CONTAINER_MODE_REASON = f"Autostart is not applicable in container mode: {CONTAINER_MODE_HINT}"
+
+
+def not_applicable_reason(config: Config) -> str | None:
+    """Why autostart does not apply to this deployment, or None when it does."""
+    return CONTAINER_MODE_REASON if config.deployment == "container" else None
+
+
 @dataclass(frozen=True)
 class LaunchSpec:
     """What the autostart entry starts: one Jig, with one config, data directory and port."""

@@ -8,7 +8,7 @@ import sys
 
 from ..config import load_config
 from ..instance import request_stop
-from . import AutostartError, LaunchSpec, backend_for, disable, enable
+from . import AutostartError, LaunchSpec, backend_for, disable, enable, not_applicable_reason
 
 
 def add_parsers(sub: argparse._SubParsersAction) -> None:
@@ -27,8 +27,7 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
     s.add_argument("--data-dir", help="data directory (default: from the config)")
 
 
-def _backend(args: argparse.Namespace):
-    config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
+def _backend(config, args: argparse.Namespace):
     spec = LaunchSpec.from_config(config, port=args.port)
     return backend_for(spec, entry=args.entry)
 
@@ -41,7 +40,14 @@ def run_stop(args: argparse.Namespace) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
-    backend = _backend(args)
+    config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
+    if reason := not_applicable_reason(config):
+        if args.json:
+            print(json.dumps({"applicable": False, "reason": reason, "deployment": config.deployment}, indent=2))
+        else:
+            print(reason, file=sys.stderr if args.action in ("enable", "disable") else sys.stdout)
+        return 1 if args.action in ("enable", "disable") else 0
+    backend = _backend(config, args)
     if args.action == "show":
         plan = backend.plan()
         print(json.dumps(plan.as_dict(), indent=2) if args.json else f"{plan.disclosure()}\n\n{plan.definition}")

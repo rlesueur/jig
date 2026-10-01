@@ -5,6 +5,10 @@
 # Environment overrides (set them in .env next to compose.yaml): JIG_MODEL_BASE_URL,
 # JIG_MODEL_NAME, JIG_VAULT_BACKEND, JIG_VAULT_KEY_FILE, JIG_SANDBOX_BACKEND.
 
+# Docker keeps Jig running (restart: unless-stopped), so 'jig autostart' is switched off here.
+# The image also sets JIG_DEPLOYMENT=container, so a config of your own gets the same behaviour.
+deployment = "container"
+
 [model]
 # Default: a model server on the host (llama.cpp, Ollama, LM Studio, vLLM, ...). compose.yaml maps
 # host.docker.internal to the host on Linux as well. With the ollama or llamacpp profile, set

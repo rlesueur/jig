@@ -262,7 +262,7 @@ Every service has `restart: unless-stopped`. Jig comes back after a crash, a fai
 - **Windows and macOS:** in Docker Desktop, turn on *Settings → General → Start Docker Desktop when you sign in*. Containers start when Docker Desktop does, which is after you sign in, not at boot.
 - **Linux:** enable the Docker service with `sudo systemctl enable --now docker`. Containers then start at boot.
 
-Jig's host autostart (Task Scheduler, launchd or systemd) is **not** used in container mode, and the UI's autostart control does not apply there. Do not turn it on for the same data, and do not run a host Jig on the same host port.
+Jig's host autostart (Task Scheduler, launchd or systemd) is **not** used in container mode. The image sets `JIG_DEPLOYMENT=container` and `deploy/jig.toml` sets `deployment = "container"`, so Jig knows it runs in a container without guessing. Inside it, `jig autostart enable` refuses with "Autostart is not applicable in container mode", `GET /autostart` returns `"applicable": false` with the reason, and the Status card shows "Docker keeps Jig running (restart: unless-stopped). Make sure Docker Desktop starts when you log in." instead of the toggle. Do not turn on the host autostart for the same data, and do not run a host Jig on the same host port.
 
 ## Updating
 

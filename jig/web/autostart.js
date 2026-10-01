@@ -41,6 +41,12 @@ function render(info, error) {
     dd.textContent = `Error: ${error}`;
     return;
   }
+  if (info.applicable === false) {
+    // Container mode: Docker restarts Jig, so there is nothing to register here.
+    dd.textContent = info.hint;
+    dd.title = info.reason;
+    return;
+  }
   const { status, plan } = info;
   const label = document.createElement('span');
   label.textContent = status.registered

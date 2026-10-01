@@ -138,6 +138,9 @@ class Config:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
+    # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
+    # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
+    deployment: str = "host"
 
     @property
     def db_path(self) -> Path:
@@ -177,6 +180,9 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     model_launch = _build(ModelLaunchConfig, launch_raw, "model.launch")
     if model_launch.readiness_timeout_s < 0 or model_launch.poll_interval_s <= 0:
         raise ConfigError("[model.launch] readiness_timeout_s must be >= 0 and poll_interval_s > 0")
+    deployment = os.environ.get("JIG_DEPLOYMENT") or raw.get("deployment", "host")
+    if deployment not in ("host", "container"):
+        raise ConfigError(f"deployment (or JIG_DEPLOYMENT) must be 'host' or 'container', not {deployment!r}")
     if model_launch.command:
         work = Path(model_launch.working_dir or ".")
         model_launch = replace(model_launch, working_dir=str((work if work.is_absolute() else base / work).resolve()))
@@ -228,6 +234,7 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         sandbox=_sandbox_config(_section(raw, "sandbox"), overrides.get("sandbox_backend")),
         model_launch=model_launch,
         vault=_vault_config(_section(raw, "vault")),
+        deployment=deployment,
     )
 
 

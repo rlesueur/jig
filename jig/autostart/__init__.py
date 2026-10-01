@@ -14,10 +14,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .base import AutostartBackend, AutostartError, LaunchSpec, Plan, Status, record_audit
+from .base import (CONTAINER_MODE_REASON, AutostartBackend, AutostartError, LaunchSpec, Plan, Status,
+                   not_applicable_reason, record_audit)
 
-__all__ = ["AutostartBackend", "AutostartError", "LaunchSpec", "Plan", "Status", "backend_for", "enable",
-           "disable"]
+__all__ = ["AutostartBackend", "AutostartError", "CONTAINER_MODE_REASON", "LaunchSpec", "Plan", "Status",
+           "backend_for", "enable", "disable", "not_applicable_reason"]
 
 
 def backend_for(spec: LaunchSpec, *, entry: str | None = None, platform: str | None = None) -> AutostartBackend:

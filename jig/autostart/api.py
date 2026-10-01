@@ -12,7 +12,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..config import Config
-from . import AutostartError, LaunchSpec, backend_for, disable, enable
+from . import AutostartError, LaunchSpec, backend_for, disable, enable, not_applicable_reason
+from .base import CONTAINER_MODE_HINT
 
 
 class AutostartEnableIn(BaseModel):
@@ -23,25 +24,32 @@ class AutostartEnableIn(BaseModel):
 
 def autostart_router(config: Config) -> APIRouter:
     router = APIRouter(prefix="/autostart", tags=["autostart"])
+    reason = not_applicable_reason(config)
 
     def backend():
+        if reason:
+            raise HTTPException(409, reason)
         return backend_for(LaunchSpec.from_config(config), entry=os.environ.get("JIG_AUTOSTART_ENTRY") or None)
 
     @router.get("")
     def autostart_status() -> dict[str, Any]:
-        """Whether autostart is registered, its last run and result, and the plan enable would register."""
+        """Whether autostart is registered, its last run and result, and the plan enable would register.
+        In container mode: ``applicable`` is false, with the reason."""
+        if reason:
+            return {"applicable": False, "reason": reason, "hint": CONTAINER_MODE_HINT,
+                    "deployment": config.deployment}
         b = backend()
         try:
-            return {"status": b.status().as_dict(), "plan": b.plan().as_dict()}
+            return {"applicable": True, "status": b.status().as_dict(), "plan": b.plan().as_dict()}
         except AutostartError as exc:
             raise HTTPException(500, str(exc)) from exc
 
     @router.post("/enable")
     def autostart_enable(body: AutostartEnableIn) -> dict[str, Any]:
+        b = backend()
         if body.confirm is not True:
             raise HTTPException(400, "autostart was not enabled: send \"confirm\": true after showing the user "
                                      "the plan from GET /autostart")
-        b = backend()
         if b.is_registered():
             raise HTTPException(409, f"autostart is already registered as {b.entry}")
         try:

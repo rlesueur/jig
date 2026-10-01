@@ -46,6 +46,7 @@ ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     JIG_CONFIG=/etc/jig/jig.toml \
+    JIG_DEPLOYMENT=container \
     HOME=/var/lib/jig
 
 # Byte-compile once at build time; the container's root filesystem is read-only at run time.
