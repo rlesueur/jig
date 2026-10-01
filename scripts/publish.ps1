@@ -6,9 +6,10 @@
     Run this once, from the repository root, when all work is committed. It:
       a. checks that the GitHub CLI is signed in as rlesueur (never an organisation);
       b. checks that the working tree is clean, the branch is main and nothing has been published yet;
-      c. rewrites every commit authored or committed as 'Jig <jig@localhost>' to
-         'rlesueur <2302916+rlesueur@users.noreply.github.com>' with git filter-repo, and replaces
-         local absolute paths (C:\Users\<name>\...) in the history with portable ones;
+      c. sets the author and committer of every commit whose author or committer is 'Jig <jig@localhost>'
+         or has the name 'rlesueur' to 'Robyn Le Sueur <2302916+rlesueur@users.noreply.github.com>' with
+         git filter-repo, replaces local absolute paths (C:\Users\<name>\...) in the history with portable
+         ones, then stops unless that is the only author and committer identity left in the history;
          a bundle of the original history is saved first;
       d. scans the rewritten history (gitleaks plus explicit checks) and stops on any finding;
       e. creates github.com/rlesueur/<repo> as a public repository and pushes main;
@@ -36,9 +37,9 @@ Set-StrictMode -Version Latest
 
 $Owner = 'rlesueur'
 $OwnerId = 2302916
-$NewName = 'rlesueur'
+$NewName = 'Robyn Le Sueur'
 $NewEmail = '2302916+rlesueur@users.noreply.github.com'
-$OldIdent = 'Jig <jig@localhost>'
+$NewIdent = "$NewName <$NewEmail>"
 $PagesUrl = "https://$Owner.github.io/$Repo/"
 $Description = 'An open-source, always-on personal AI agent for your own local model. Memory, rules, audit trail and secrets stay on your machine.'
 $Topics = @('local-ai', 'ai-agents', 'local-llm', 'privacy', 'self-hosted', 'llama-cpp', 'ollama', 'open-source')
@@ -132,9 +133,26 @@ function Get-FilterRepo {
 function Invoke-Rewrite([string]$Python, [string]$RepoPath) {
     $work = Join-Path ([IO.Path]::GetTempPath()) "jig-publish-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     New-Item -ItemType Directory -Path $work | Out-Null
-    $mailmap = Join-Path $work 'mailmap'
+    $driver = Join-Path $work 'rewrite.py'
     $replacements = Join-Path $work 'replacements'
-    [IO.File]::WriteAllText($mailmap, "$NewName <$NewEmail> $OldIdent`n")
+    # A mailmap cannot match on a name alone, so the identities are rewritten in a commit callback.
+    [IO.File]::WriteAllText($driver, @'
+import sys
+import git_filter_repo as fr
+
+new_name, new_email, replacements = sys.argv[1].encode(), sys.argv[2].encode(), sys.argv[3]
+
+def stale(name, email):
+    return name == b'rlesueur' or (name, email) == (b'Jig', b'jig@localhost')
+
+def fix_identity(commit, metadata):
+    if stale(commit.author_name, commit.author_email) or stale(commit.committer_name, commit.committer_email):
+        commit.author_name = commit.committer_name = new_name
+        commit.author_email = commit.committer_email = new_email
+
+args = fr.FilteringOptions.parse_args(['--force', '--replace-text', replacements])
+fr.RepoFilter(args, commit_callback=fix_identity).run()
+'@)
     # Order matters: the repository path first, then any other profile path. The profile path is read at
     # run time so that this script never contains it (filter-repo would otherwise rewrite its own rules).
     [IO.File]::WriteAllText($replacements, (@(
@@ -143,14 +161,18 @@ function Invoke-Rewrite([string]$Python, [string]$RepoPath) {
     ) -join "`n") + "`n")
     Push-Location $RepoPath
     try {
-        Run $Python -m git_filter_repo --force --mailmap $mailmap --replace-text $replacements | Out-Null
+        Run $Python $driver $NewName $NewEmail $replacements | Out-Null
     } finally { Pop-Location }
     Remove-Item -Recurse -Force $work
 
-    $left = Run git -C $RepoPath log --all --format='%an <%ae>%n%cn <%ce>' | Where-Object { $_ -eq $OldIdent }
-    if ($left) { Fail "commits by '$OldIdent' remain after the rewrite." }
+    $idents = @(Run git -C $RepoPath log --all --format='%an <%ae>%n%cn <%ce>' | Sort-Object -Unique -CaseSensitive)
+    Write-Host '    Author and committer identities after the rewrite:'
+    $idents | ForEach-Object { Write-Host "      $_" }
+    if ($idents.Count -ne 1 -or $idents[0] -cne $NewIdent) {
+        Fail "the history must contain exactly one author and committer identity, '$NewIdent', but has the $($idents.Count) listed above."
+    }
     $count = (Run git -C $RepoPath rev-list --all --count).Trim()
-    Ok "rewrote history: $count commits, all authored and committed as $NewName <$NewEmail>"
+    Ok "rewrote history: $count commits, all authored and committed as $NewIdent"
 }
 
 # --- (d) Secret and privacy scan ------------------------------------------------------------
