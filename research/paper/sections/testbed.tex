@@ -1,0 +1,29 @@
+\section{Testbed}
+\label{sec:testbed}
+
+\paragraph{Jig.} The harness drives Jig's public Python API (the runtime, its task scheduler, its
+executor and its memory store) and does not modify Jig's code. Each trial runs in a fresh Jig instance
+with its own data directory, so no memory leaks between trials.
+
+\paragraph{Models and hardware.} One NVIDIA RTX~5090 (32~GB), shared with the owner's own model server.
+The agent is Bonsai~2~27B (ternary PTQ1\_0, about 1.75 bits per weight) on the owner's llama.cpp server,
+used only through its API. The pilot judge is Granite~4.2~8B; the full run's judge is Gemma~4~26B-A4B, a
+different family from the agent. Qwen3.8-27B at Q4\_K\_M is the standard-quantisation counterpart of the
+agent, and the small models and Granite Guardian~4.1~8B are candidates for the reviewer study of
+Section~\ref{sec:safety}. All are Apache-2.0; Table~\ref{tab:models} lists files and checksums.
+Harness-started servers use their own ports, are refused if they would leave less than 2~GiB of free
+video memory, and are tied to the harness process so that they stop with it however it exits.
+
+\begin{table}[t]\centering\small
+\caption{Models. Sizes are file sizes; SHA-256 prefixes were checked against Hugging Face after download.}
+\label{tab:models}
+\begin{tabular}{llrl}\toprule
+Role & Model (file) & GB & SHA-256 \\\midrule
+Agent & Bonsai 2 27B, PTQ1\_0 ternary & 5.9 & \texttt{53107f53\ldots} \\
+Agent (Q4 counterpart) & Qwen3.8-27B Q4\_K\_M & 19.0 & \texttt{c600de03\ldots} \\
+Judge (full run) & Gemma 4 26B-A4B UD-Q4\_K\_M & 17.0 & \texttt{f2c28b3d\ldots} \\
+Judge (pilot), reviewer & Granite 4.2 8B Q4\_K\_M & 5.3 & \texttt{16a9369d\ldots} \\
+Reviewer & Gemma 4 E4B Q4\_0 & 4.6 & \texttt{a555b900\ldots} \\
+Guard model & Granite Guardian 4.1 8B Q4\_K\_M & 5.1 & \texttt{979114c9\ldots} \\
+\bottomrule\end{tabular}
+\end{table}

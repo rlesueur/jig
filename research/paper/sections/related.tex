@@ -1,0 +1,68 @@
+\section{Related work}
+\label{sec:related}
+
+Every work cited here was retrieved from the arXiv API and its title checked against our bibliography
+entry; summaries come from the abstracts unless stated. A general web search was not available when the
+review was made, so work outside arXiv is under-represented.
+
+\paragraph{Long-term memory.} MemGPT pages information between the context window and slower
+stores~\citep{packer2023memgpt}; Generative Agents retrieve by recency, importance and relevance and
+periodically reflect into higher-level memories~\citep{park2023generative}; MemoryBank adds a forgetting
+curve~\citep{zhong2023memorybank}; A-MEM links agent-written notes~\citep{xu2025amem}; Mem0 extracts and
+consolidates salient facts~\citep{chhikara2025mem0}; Zep keeps a temporal knowledge
+graph~\citep{rasmussen2025zep}. CoALA supplies the vocabulary of memory types~\citep{sumers2023coala}, and
+long contexts are used unevenly~\citep{liu2023lost}. Benchmarks include LoCoMo~\citep{maharana2024locomo},
+LongMemEval with knowledge-update and abstention questions~\citep{wu2024longmemeval}, MemoryArena, where
+memory must guide later actions~\citep{he2026memoryarena}, Memora with a forgetting-aware
+score~\citep{uddin2026memora}, and LongMemEval-V2~\citep{wu2026longmemevalv2}.
+
+\paragraph{Compaction as a safety surface.} Constraints obeyed while visible are removed by
+compaction~\citep{chen2026governancedecay}; compactors keep a minority of session
+constraints~\citep{wang2026lostincompaction}; rewriting turns hedges into confident
+facts~\citep{kwon2026manufactured}; and persisted authority labels cut unauthorised actions to zero in
+AuthMem-Bench~\citep{zhan2026authmem}. Consolidation itself should be measured and
+governed~\citep{annapureddy2026epistemics}.
+
+\paragraph{Indirect injection and exfiltration.} Indirect injection was defined by Greshake et
+al.~\citep{greshake2023indirect} and formalised by Liu et al.~\citep{liu2023formalizing}; benchmarks
+include BIPIA~\citep{yi2023bipia}, InjecAgent~\citep{zhan2024injecagent},
+AgentDojo~\citep{debenedetti2024agentdojo}, Agent Security Bench~\citep{zhang2024asb},
+WASP~\citep{evtimov2025wasp} and, for malicious users, AgentHarm~\citep{andriushchenko2024agentharm}.
+ToolEmu emulates tools with a language model~\citep{ruan2023toolemu}; we use real local services
+instead. Silent Egress reports that a malicious page induces exfiltrating requests from a local 7B agent
+most of the time and that output-based checks miss most successes~\citep{lan2026silentegress}. Adaptive
+attacks break most in-band defences~\citep{narisetty2026adaptive}, so static results such as ours are an
+upper bound on robustness.
+
+\paragraph{Memory poisoning.} Early attacks assumed write access to the
+store~\citep{zou2024poisonedrag,chen2024agentpoison}; MINJA injects through queries
+alone~\citep{dong2025minja}, and MemoryGraft plants fake successful experiences~\citep{srivastava2025memorygraft}.
+In 2026, persistence became the focus: eTAMP~\citep{zou2026etamp}, sleeper
+poisoning~\citep{pulipaka2026sleeper}, cross-session stored injection~\citep{xie2026crosssession},
+MPBench~\citep{dash2026mpbench}, WhisperBench~\citep{zhang2026whisperbench}, Bad
+Memory~\citep{gadgil2026badmemory}, MemSecBench~\citep{chen2026memsecbench} and
+PMPA~\citep{huang2026pmpa}. A survey argues for storage-time provenance and
+retention~\citep{lin2026ltmsurvey}, and MemGate gates retrieval~\citep{zhang2026memgate}.
+
+\paragraph{Guards, monitors and system defences.} Guard classifiers include Llama
+Guard~\citep{inan2023llamaguard}, ShieldGemma~\citep{zeng2024shieldgemma} and Granite
+Guardian~\citep{padhi2024graniteguardian}; GuardAgent reviews agent actions~\citep{xiang2024guardagent};
+LlamaFirewall combines several layers~\citep{chennabasappa2025llamafirewall}. System designs separate
+trusted control from untrusted data: the dual-LLM pattern~\citep{willison2023dualllm},
+CaMeL~\citep{debenedetti2025camel} and the design patterns of Beurer-Kellner et
+al.~\citep{beurerkellner2025patterns}; spotlighting~\citep{hines2024spotlighting} and instruction
+hierarchies~\citep{wallace2024hierarchy} work inside the model. Weaker monitors can supervise stronger
+agents with the right scaffolding~\citep{kale2025weaktostrong}, and PACT studies per-call
+trust~\citep{fan2026pact}. Human approvals habituate over time~\citep{yu2026habituation}, and approvals
+must bind to the exact executed call~\citep{kumar2026loopjacking}.
+
+\paragraph{Quantisation and proactive agents.} Quantisation can degrade safety
+alignment~\citep{kharinaev2025quant}, and standard 4-bit quantisation is mostly safety-neutral but
+unstable at high sampling temperature~\citep{prasad2026quanttemp}; neither covers ternary models or
+agentic injection. Proactive agents act on observed activity~\citep{lu2024proactive,oh2026proactivefoundations},
+building on the ReAct loop~\citep{yao2022react}.
+
+\paragraph{Gap.} We found no evaluation of an isolated, intent-only action reviewer against
+memory-mediated attacks; no comparison of reviewer choice against approval burden on one consumer GPU;
+and no agentic injection or memory study of a ternary model against a standard 4-bit quantisation of
+the same base model.

@@ -1,0 +1,13 @@
+\section{Setting}
+\label{sec:threat}
+
+The owner is trusted and gives the agent tasks; the agent works unattended for long stretches, in a
+read-only \emph{research} mode (read-only tools plus private notes and memories) or an \emph{action} mode
+whose side-effecting calls are reviewed. Every tool call passes a fixed gate: schema validation, the
+task mode, core rules, the owner's custom rules, the Sentinel for outbound or side-effecting tools, the
+approval queue, the credential vault and finally the tool. The Sentinel sees only the trusted intent
+(the task's title and description), the proposed call and the policy findings, never the conversation,
+and returns allow, ask or deny with a reason; ``ask'' raises an approval request for the owner. Memory
+writes during research are private writes and are not reviewed by default, while forgetting a memory is
+a side effect and is reviewed. Every decision is written to an audit log, from which the harness
+reconstructs each call's path.

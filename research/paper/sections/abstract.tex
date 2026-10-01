@@ -1,0 +1,17 @@
+Always-on personal agents increasingly run locally, keep memory across days and work unattended. We
+study two questions in that setting with Jig, an open-source local agent with an isolated action reviewer
+(the Sentinel), on a single consumer GPU: how memory should be managed over days, and how safe the agent
+is when nobody is watching. We release a living benchmark that drives the real agent, real local models
+and real local services, with full provenance for every result (the served model file, its quantisation,
+the server build, the hardware, the seeds and the exact commit), a compute policy suited to a shared
+personal machine, and a one-command path for others to contribute results. For memory, we compare five
+strategies on LongMemEval---bounded full context, a rolling summary, retrieval over stored turns, and
+agent-curated memory with periodic consolidation that either keeps or forgets superseded facts---run
+through the real agent loop and memory store, reporting accuracy alongside every model token spent. For
+safety, we take a deliberately conservative stance: rather than author any attack content, we measure
+Jig's existing defence layers (core and custom rules, the Sentinel under several model choices, read-only
+research mode and the approval queue) against \emph{published} agent prompt-injection benchmarks run
+unchanged through a Jig adapter. This version reports the harness, the verified literature and the
+experimental design; the memory pilot and the published-benchmark safety runs are queued in the overnight
+compute window and their tables are generated automatically as they finish. All quantitative results will
+be labelled pilots with wide intervals until the full runs complete.

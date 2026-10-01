@@ -1,0 +1,52 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+
+% Author block: add an affiliation with \affil{...} or a line break inside \author when one is known.
+\newcommand{\paperauthor}{Robyn Le Sueur}
+\newcommand{\paperaffiliation}{}
+
+\title{Always-On, Unattended, Local:\\Memory and Safety for Personal Agents on One Consumer GPU\\[0.4em]
+\large Living benchmark, version 0.1 (design and verified literature; results queued)}
+\author{\paperauthor\ifx\paperaffiliation\empty\else\\\small\paperaffiliation\fi}
+\date{2 October 2026}
+
+\newcommand{\pilot}{\textsc{pilot}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\input{sections/abstract}
+\end{abstract}
+
+\input{sections/introduction}
+\input{sections/related}
+\input{sections/threat}
+\input{sections/testbed}
+\input{sections/method}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/limitations}
+\input{sections/ethics}
+\input{sections/reproducibility}
+\input{sections/conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{../literature/references}
+
+\appendix
+\input{sections/appendix}
+
+\end{document}

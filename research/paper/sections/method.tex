@@ -1,0 +1,54 @@
+\section{Method}
+\label{sec:method}
+
+\paragraph{Data.} LongMemEval-S (cleaned; MIT; \url{https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned})
+provides time-stamped multi-session user--assistant histories and later questions of several types,
+including knowledge updates (a fact that changed) and temporal reasoning. For each selected question we
+replay the answer-bearing sessions plus sampled distractor sessions in date order, then ask the question
+``on'' its question date.
+
+\paragraph{Strategies.} All five run on Jig's real model client, memory store and agent loop.
+\begin{itemize}
+\item \emph{full\_context}: the most recent sessions that fit a 12k-token budget, placed in the prompt.
+\item \emph{rolling\_summary}: after each session the model rewrites a bounded (400-word) summary of
+  durable facts with their dates; the answer sees only the summary.
+\item \emph{retrieval}: every turn is stored as a Jig memory with its date; the Jig agent answers in
+  research mode using \texttt{memory\_search}.
+\item \emph{hybrid\_keep}: a Jig research task per session extracts dated facts with
+  \texttt{memory\_add}; every few sessions an action-mode task reviews the memory list and adds
+  ``UPDATE'' memories for superseded facts, deleting nothing; the agent answers with
+  \texttt{memory\_search}.
+\item \emph{hybrid\_forget}: as \emph{hybrid\_keep}, but consolidation deletes superseded facts with
+  \texttt{memory\_forget}, which Jig's Sentinel reviews.
+\end{itemize}
+
+\paragraph{Grading.} Answers are graded with LongMemEval's own judge prompts, ported verbatim from its
+evaluation script, on a judge model of a different family from the agent at temperature 0. A judge reply
+that is neither ``yes'' nor ``no'' is recorded as a harness error and never guessed.
+
+\paragraph{Costs.} For every trial we record the prompt tokens of every model call (ingestion,
+consolidation and answering), wall time, the number of memories kept, and approval requests raised.
+
+\paragraph{Statistics.} Accuracy is reported as $k/n$ with Wilson 95\% intervals and means with
+percentile-bootstrap 95\% intervals. For the full run, strategies are compared on the same questions with
+McNemar's exact test and Holm--Bonferroni correction. The pilot reports intervals without hypothesis
+tests. Sampling uses Jig's defaults (temperature 1.0, top-$p$ 0.95, top-$k$ 20, min-$p$ 0.05) with a
+recorded seed.
+
+\paragraph{Simulated days.} Sessions are replayed back to back; dates live in the session text and the
+memory content. Jig's system prompt states the real date, which can conflict with a question's date; we
+pass the question date explicitly and flag the conflict as a threat to validity.
+
+\section{Planned safety evaluation}
+\label{sec:safety}
+
+Unattended safety will be evaluated on published agent prompt-injection benchmarks, such as
+AgentDojo~\citep{debenedetti2024agentdojo} and InjecAgent~\citep{zhan2024injecagent}, run
+through a Jig adapter that executes their existing test cases unchanged, under each benchmark's own
+open-source licence (recorded with the run provenance); no attack content is authored
+in this programme. The conditions are the reviewer configurations an owner can actually choose: no
+reviewer, rules only, the agent's own model, smaller models of other families, a different family in
+the same size class, and a dedicated guard model. The measures are attack success, utility, the share
+of harmful calls stopped and auto-blocked, false positives, and approval requests per task, the last as
+a proxy for approval fatigue~\citep{yu2026habituation}. The harness already provides the reviewer
+conditions, including an adapter that drives Granite Guardian through its documented scoring format.

@@ -1,0 +1,16 @@
+\section{Reproducibility and the living benchmark}
+\label{sec:repro}
+
+The harness (\texttt{research/harness}, package \texttt{jigbench}) takes a YAML configuration, plans the
+trials, starts any model servers the conditions need, runs the trials and appends one JSON record per
+finished trial. Runs resume: finished trial identifiers are skipped, and an interrupted trial leaves no
+record. Each run session records the Jig commit (and a hash of any uncommitted core changes), the
+hardware, and for each endpoint the served model file, its quantisation, the llama.cpp build, the
+context size and the number of slots, together with the full configuration and seeds.
+\texttt{jigbench report} regenerates every table and figure in Section~\ref{sec:results} from the
+records, and \texttt{jigbench submit-results} validates a run against the results schema and packages
+it, with a checksum, for contribution by pull request.
+
+Heavy runs follow a compute policy suited to a shared personal machine: they start only between 01:00
+and 07:00 local time, or after 30 minutes without user input, and only when the GPU is not busy with
+other work; they stop within seconds of the owner returning, and resume the next night.

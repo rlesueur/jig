@@ -1,0 +1,46 @@
+\section{Introduction}
+\label{sec:intro}
+
+Personal agents are moving from chat windows to always-on services that keep memory across days, do
+research in the background and act through tools while their owner is away. Running such an agent
+locally, on the owner's own hardware, is attractive for privacy and cost, but it changes the operating
+point that most agent research assumes. Context budgets are modest, the model is quantised to fit one
+consumer GPU alongside everything else, and there is nobody watching each step. Two questions then
+dominate:
+
+\begin{itemize}
+\item \textbf{Memory over days (C).} How should the agent keep, compress, retrieve and forget what it
+  has learnt so that later answers stay correct when facts change, without the token and latency cost of
+  carrying everything?
+\item \textbf{Safety when unattended (D).} When the agent reads untrusted content on its own, how well
+  does an isolated action reviewer stop harmful tool calls, and at what cost in false alarms and
+  approval requests?
+\end{itemize}
+
+Prior work has established that indirect prompt injection hijacks tool-using
+agents~\citep{greshake2023indirect,zhan2024injecagent,debenedetti2024agentdojo}, that poisoned memories
+persist and trigger in later sessions~\citep{zou2026etamp,pulipaka2026sleeper,chen2026memsecbench}, that
+compaction silently drops constraints~\citep{chen2026governancedecay,wang2026lostincompaction}, and that
+provenance labels help~\citep{zhan2026authmem}. We do not claim these as new. This version of the paper
+contributes:
+
+\begin{enumerate}
+\item a comparison of five memory strategies (bounded full context, rolling summary, retrieval over
+  stored turns, and agent-curated memory with periodic consolidation that either keeps or forgets
+  superseded facts) on LongMemEval~\citep{wu2024longmemeval}, run through a real local agent at a local
+  budget, reporting accuracy alongside every model token spent;
+\item a living benchmark harness: every result carries the model file, quantisation, server build,
+  hardware, seeds and commit, heavy runs respect a compute policy suited to a shared personal machine,
+  and others can add results with one command; and
+\item a plan for evaluating unattended safety on \emph{published} prompt-injection benchmarks, run
+  through a Jig adapter that executes their existing test cases unchanged (Section~\ref{sec:safety}).
+\end{enumerate}
+
+The testbed is Jig, an open-source (Apache-2.0) always-on local agent with a gated tool pipeline, a
+separate reviewer model (the \emph{Sentinel}), an approval queue and a memory store. Our agent model is
+Bonsai~2~27B, a ternary (1.75 bits per weight) post-training quantisation of Qwen3.8-27B, served by
+llama.cpp on a single RTX~5090 shared with the owner's other work.
+
+\paragraph{Status.} This is version 0.1 of a living paper. All numbers in it are from a small
+\pilot{} run, clearly marked, with Wilson 95\% intervals; they are not conclusive. The full memory run is
+queued in an overnight compute window and will replace the pilot table as it finishes.

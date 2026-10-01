@@ -1,0 +1,40 @@
+\section{Discussion}
+\label{sec:discussion}
+
+This version sets out the testbed, the verified literature and the design; the quantitative runs are
+queued. The discussion below is therefore framed as the questions the queued runs are built to answer and
+the design choices they test, not as findings.
+
+\paragraph{Why measure memory in model tokens, not just accuracy.} On a shared consumer GPU the scarce
+resource is context and compute, not disk. A strategy that answers well by carrying every past session is
+not viable if it spends tens of thousands of prompt tokens per question. By recording the prompt tokens of
+every ingestion, consolidation and answering call, the harness lets accuracy be read against its true
+cost, which is where retrieval and agent-curated consolidation are expected to separate from full context
+and rolling summaries~\citep{wu2024longmemeval,chhikara2025mem0}.
+
+\paragraph{Forgetting is a trade-off, not a feature.} Consolidation that deletes superseded facts should
+help on knowledge-update questions, where a stale fact is actively wrong, but hurt on temporal-reasoning
+questions, where the history is the answer~\citep{uddin2026memora,kwon2026manufactured}. Reporting both
+question types separately, with and without forgetting, is how the living benchmark surfaces that tension
+rather than hiding it in an average.
+
+\paragraph{Measuring defences without authoring attacks.} The safety evaluation deliberately uses only
+published benchmarks~\citep{debenedetti2024agentdojo,zhan2024injecagent}, run unchanged through a Jig
+adapter. This bounds what can be claimed---static benchmark cases are an upper bound on robustness, and
+adaptive attacks break most out-of-band defences~\citep{narisetty2026adaptive}---but it keeps the
+programme on established, reviewable ground and makes every safety number reproducible against a public
+artefact. The reviewer conditions (none, rules only, the agent's own model, a smaller different-family
+model, read-only mode) are exactly the choices a Jig owner can make, so the result is directly actionable.
+
+\paragraph{Approval burden is a first-class measure.} Rules and reviewers can achieve coverage by asking
+rather than blocking, and an owner who approves whatever is queued gains little from an
+``ask''~\citep{yu2026habituation,kumar2026loopjacking}. The harness therefore reports approvals per task
+alongside every catch rate, so reviewers are compared on what they \emph{block}.
+
+\paragraph{Recommendations for Jig, to be tested.} Motivated by prior work rather than by results here, the
+queued runs probe four design ideas: (1) exposing memory and note provenance to the
+Sentinel~\citep{zhan2026authmem}; (2) applying the same provenance or review to every persistent channel
+the agent can write unattended and read back later (memories, notes, files, task results); (3) a
+deterministic check that flags a private memory value appearing in any outbound argument, including request
+headers~\citep{lan2026silentegress,fan2026pact}; and (4) letting a task carry a simulated clock and letting
+evaluations map benchmark host names to local services without an in-process exemption.

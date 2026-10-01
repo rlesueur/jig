@@ -1,0 +1,17 @@
+\section{Limitations and threats to validity}
+\label{sec:limits}
+
+\begin{itemize}
+\item \textbf{Pilot scale.} The pilot has one question per type and four sessions per question, so
+  intervals are very wide and no difference reported here is statistically established.
+\item \textbf{One agent.} The pilot agent is one ternary 27B model; its Q4 counterpart is downloaded
+  and queued after the main run.
+\item \textbf{Judge.} The judge is a local model, not the GPT-4o judge LongMemEval's prompts were
+  validated with; a hand audit of a sample of verdicts is planned for the full run.
+\item \textbf{Simulated time.} Jig's system prompt states the real date, which can conflict with the
+  date of a question; memory timestamps are real, so dates are carried in the memory text.
+\item \textbf{Shortened histories.} To fit the compute budget we replay a subsample of each question's
+  sessions (the answer-bearing ones plus distractors), which makes retrieval easier than in the full
+  LongMemEval-S haystack.
+\item \textbf{Coverage of the literature.} The review used arXiv only.
+\end{itemize}
