@@ -135,9 +135,10 @@ function Invoke-Rewrite([string]$Python, [string]$RepoPath) {
     $mailmap = Join-Path $work 'mailmap'
     $replacements = Join-Path $work 'replacements'
     [IO.File]::WriteAllText($mailmap, "$NewName <$NewEmail> $OldIdent`n")
-    # Order matters: the repository path first, then any other profile path.
+    # Order matters: the repository path first, then any other profile path. The profile path is read at
+    # run time so that this script never contains it (filter-repo would otherwise rewrite its own rules).
     [IO.File]::WriteAllText($replacements, (@(
-        'jig==>jig'
+        "$(Join-Path $env:USERPROFILE 'Jig')==>jig"
         'regex:[A-Za-z]:\\Users\\[^\\/\s"''<>]+==>C:\Users\you'
     ) -join "`n") + "`n")
     Push-Location $RepoPath
@@ -174,7 +175,8 @@ function Invoke-Scan([string]$RepoPath) {
 
     $revs = Run git -C $RepoPath rev-list --all
     $hits = Try-Run git -C $RepoPath grep -I -n -E '[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z]' @revs
-    $userPaths = ($hits.Output -split "`n") | Where-Object { $_ -and $_ -notmatch ':C:.Users.you' }
+    if ($hits.Code -gt 1) { Fail "git grep failed (exit code $($hits.Code)): $($hits.Output)" }
+    $userPaths = ($hits.Output -split "`n") | Where-Object { $_ -and $_ -notmatch 'C:[\\/]+Users[\\/]+you\b' }
     if ($userPaths) { $problems += "local profile paths in history:`n      $($userPaths -join "`n      ")" } else { Ok 'no local profile paths in any commit' }
 
     $objects = Run git -C $RepoPath rev-list --all --objects
