@@ -55,6 +55,16 @@ async def _health(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sandbox(args: argparse.Namespace) -> int:
+    from .sandbox_container.docker import IMAGE_DIR, build_image
+
+    config = load_config(args.config)
+    print(f"Building {config.sandbox.image} from {IMAGE_DIR}")
+    build_image(config.sandbox.image)
+    print(f"Built {config.sandbox.image}. Select it with [sandbox] backend = \"container\".")
+    return 0
+
+
 def _print_event(event: dict) -> None:
     t, d = event["type"], event["data"]
     if t == "tool.start":
@@ -130,10 +140,14 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--show-thinking", action="store_true")
     h = sub.add_parser("health", help="check the configured model servers and their capabilities")
     h.add_argument("--quick", action="store_true", help="only check that the models are served")
+    sb = sub.add_parser("sandbox", help="manage the container sandbox")
+    sb.add_argument("action", choices=["build"], help="build: build the sandbox Docker image")
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
             return _serve(args)
+        if args.command == "sandbox":
+            return _sandbox(args)
         if args.command == "health":
             return asyncio.run(_health(args))
         return asyncio.run(_chat(args))

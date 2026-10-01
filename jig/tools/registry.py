@@ -8,6 +8,7 @@ from the decorator. Every tool declares its ``effect`` and whether it is
 from __future__ import annotations
 
 import inspect
+import re
 import types
 import typing
 from collections.abc import Awaitable, Callable
@@ -107,6 +108,8 @@ class ToolSpec:
                 raise ToolArgumentError(f"{self.name}: argument {key!r} must be of type {expected}")
             if "enum" in props[key] and value not in props[key]["enum"]:
                 raise ToolArgumentError(f"{self.name}: argument {key!r} must be one of {props[key]['enum']}")
+            if "pattern" in props[key] and not re.fullmatch(props[key]["pattern"], value):
+                raise ToolArgumentError(f"{self.name}: argument {key!r} must match {props[key]['pattern']}")
         return args
 
 

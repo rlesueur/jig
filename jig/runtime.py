@@ -53,6 +53,7 @@ class Jig:
         self.registry = build_registry()
         self.vision = VisionService(self.model, config.vision)
         self.rules = RuleStore(self.db)
+        self.container = self._container_backend()
         self.sentinel = Sentinel(self.sentinel_model)
         self.approvals = ApprovalQueue(self.db, self.bus, self.audit)
         self.executor = ToolExecutor(registry=self.registry, rules=self.rules, sentinel=self.sentinel,
@@ -70,7 +71,21 @@ class Jig:
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
                            http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id,
-                           vision=self.vision)
+                           vision=self.vision, container=self.container)
+
+    def _container_backend(self) -> Any:
+        """With ``[sandbox] backend = "container"``, build the Docker backend and register its tools."""
+        if self.config.sandbox.backend != "container":
+            return None
+        from .sandbox_container import ContainerSandbox, EgressProxy
+        from .tools.browser import register_browser_tools
+        from .tools.sandbox_exec import register_exec_tools
+
+        egress = EgressProxy(bind=self.config.sandbox.egress_bind, ports=self.config.sandbox.egress_ports,
+                             rules=self.rules, audit=self.audit)
+        register_exec_tools(self.registry)
+        register_browser_tools(self.registry)
+        return ContainerSandbox(self.config.sandbox, self.sandbox.root, self.config.runtime.agent_id, egress)
 
     # Lifecycle -------------------------------------------------------------
     async def start(self, *, run_scheduler: bool = True, check_capabilities: bool = True) -> None:
@@ -84,6 +99,8 @@ class Jig:
             if ctx is not None and ctx < self.config.runtime.min_context_tokens:
                 log.warning("%s %s has a %d-token context; %d or more is advisable", client.label,
                             client.model_name, ctx, self.config.runtime.min_context_tokens)
+        if self.container:
+            self.capabilities["sandbox"] = await self.container.start()
         self.audit.record("runtime.start", "Jig started", actor="runtime", model=self.model.server_info,
                           sentinel=self.sentinel_model.server_info, capabilities=self.capabilities,
                           vault_backend=self.vault.backend, sandbox=str(self.sandbox.root))
@@ -109,6 +126,8 @@ class Jig:
         for t in list(self._background):
             t.cancel()
         await asyncio.gather(*self._background, return_exceptions=True)
+        if self.container:
+            await self.container.stop()
         self.audit.record("runtime.stop", "Jig stopped", actor="runtime")
         await self.http.aclose()
         await self.model.aclose()
