@@ -1,0 +1,321 @@
+# Candidate citations. Each [arxiv.<key>] is fetched from the arXiv API by verify_citations.py;
+# `expect` is the title we believe it has, and the fetched title must match it. Only entries that
+# pass are written to references.bib. [web.<key>] entries were fetched over HTTP and checked by hand
+# (see fetch_web_sources.py and web_sources.json).
+
+# --- Long-term memory for LLM agents ---
+[arxiv.packer2023memgpt]
+id = "2310.08560"
+expect = "MemGPT: Towards LLMs as Operating Systems"
+topic = "memory"
+
+[arxiv.park2023generative]
+id = "2304.03442"
+expect = "Generative Agents: Interactive Simulacra of Human Behavior"
+topic = "memory"
+
+[arxiv.xu2025amem]
+id = "2502.12110"
+expect = "A-MEM: Agentic Memory for LLM Agents"
+topic = "memory"
+
+[arxiv.chhikara2025mem0]
+id = "2504.19413"
+expect = "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory"
+topic = "memory"
+
+[arxiv.wu2024longmemeval]
+id = "2410.10813"
+expect = "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory"
+topic = "memory-benchmark"
+
+[arxiv.maharana2024locomo]
+id = "2402.17753"
+expect = "Evaluating Very Long-Term Conversational Memory of LLM Agents"
+topic = "memory-benchmark"
+
+[arxiv.zhong2023memorybank]
+id = "2305.10250"
+expect = "MemoryBank: Enhancing Large Language Models with Long-Term Memory"
+topic = "memory"
+
+[arxiv.rasmussen2025zep]
+id = "2501.13956"
+expect = "Zep: A Temporal Knowledge Graph Architecture for Agent Memory"
+topic = "memory"
+
+[arxiv.liu2023lost]
+id = "2307.03172"
+expect = "Lost in the Middle: How Language Models Use Long Contexts"
+topic = "context"
+
+[arxiv.sumers2023coala]
+id = "2309.02427"
+expect = "Cognitive Architectures for Language Agents"
+topic = "memory"
+
+[arxiv.he2026memoryarena]
+id = "2602.16313"
+expect = "MemoryArena: Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks"
+topic = "memory-benchmark"
+
+[arxiv.uddin2026memora]
+id = "2604.20006"
+expect = "From Recall to Forgetting: Benchmarking Long-Term Memory for Personalized Agents"
+topic = "memory-benchmark"
+
+[arxiv.wu2026longmemevalv2]
+id = "2605.12493"
+expect = "LongMemEval-V2: Evaluating Long-Term Agent Memory Toward Experienced Colleagues"
+topic = "memory-benchmark"
+
+[arxiv.chen2026governancedecay]
+id = "2606.22528"
+expect = "Governance Decay: How Context Compaction Silently Erases Safety Constraints in Long-Horizon LLM Agents"
+topic = "context-safety"
+
+[arxiv.wang2026lostincompaction]
+id = "2608.11242"
+expect = "Lost in Compaction: Evaluating Side-Constraint Loss under Context Compaction"
+topic = "context-safety"
+
+[arxiv.kwon2026manufactured]
+id = "2606.29279"
+expect = "Manufactured Confidence: How Memory Consolidation Turns Hearsay into Confident Facts"
+topic = "memory-safety"
+
+[arxiv.zhan2026authmem]
+id = "2608.01679"
+expect = "When Memory Becomes Authority: Benchmarking Authority Collapse at the Memory Consolidation Boundary"
+topic = "memory-safety"
+
+[arxiv.annapureddy2026epistemics]
+id = "2609.33013"
+expect = "The Epistemics of Agent Memory: Measuring, and Governing, the Consolidation Decision in Long-Horizon LLM Agents"
+topic = "memory"
+
+# --- Prompt injection and agent safety ---
+[arxiv.greshake2023indirect]
+id = "2302.12173"
+expect = "Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection"
+topic = "injection"
+
+[arxiv.zhan2024injecagent]
+id = "2403.02691"
+expect = "InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents"
+topic = "injection-benchmark"
+
+[arxiv.debenedetti2024agentdojo]
+id = "2406.13352"
+expect = "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents"
+topic = "injection-benchmark"
+
+[arxiv.evtimov2025wasp]
+id = "2504.18575"
+expect = "WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks"
+topic = "injection-benchmark"
+
+[arxiv.andriushchenko2024agentharm]
+id = "2410.09024"
+expect = "AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents"
+topic = "safety-benchmark"
+
+[arxiv.liu2023formalizing]
+id = "2310.12815"
+expect = "Formalizing and Benchmarking Prompt Injection Attacks and Defenses"
+topic = "injection"
+
+[arxiv.yi2023bipia]
+id = "2312.14197"
+expect = "Benchmarking and Defending Against Indirect Prompt Injection Attacks on Large Language Models"
+topic = "injection-benchmark"
+
+[arxiv.hines2024spotlighting]
+id = "2403.14720"
+expect = "Defending Against Indirect Prompt Injection Attacks With Spotlighting"
+topic = "defence"
+
+[arxiv.wallace2024hierarchy]
+id = "2404.13208"
+expect = "The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions"
+topic = "defence"
+
+[arxiv.zhang2024asb]
+id = "2410.02644"
+expect = "Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents"
+topic = "injection-benchmark"
+
+[arxiv.ruan2023toolemu]
+id = "2309.15817"
+expect = "Identifying the Risks of LM Agents with an LM-Emulated Sandbox"
+topic = "safety-benchmark"
+
+[arxiv.lan2026silentegress]
+id = "2602.22450"
+expect = "Silent Egress: When Implicit Prompt Injection Makes LLM Agents Leak Without a Trace"
+topic = "exfiltration"
+
+[arxiv.narisetty2026adaptive]
+id = "2606.26479"
+expect = "Adaptive Evaluation of Out-of-Band Defenses Against Prompt Injection in LLM Agents"
+topic = "defence"
+
+# --- Memory and RAG poisoning ---
+[arxiv.chen2024agentpoison]
+id = "2407.12784"
+expect = "AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases"
+topic = "poisoning"
+
+[arxiv.zou2024poisonedrag]
+id = "2402.07867"
+expect = "PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models"
+topic = "poisoning"
+
+[arxiv.dong2025minja]
+id = "2503.03704"
+expect = "Memory Injection Attacks on LLM Agents via Query-Only Interaction"
+topic = "poisoning"
+
+[arxiv.srivastava2025memorygraft]
+id = "2512.16962"
+expect = "MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval"
+topic = "poisoning"
+
+[arxiv.zou2026etamp]
+id = "2604.02623"
+expect = "Poison Once, Exploit Forever: Environment-Injected Memory Poisoning Attacks on Web Agents"
+topic = "poisoning"
+
+[arxiv.pulipaka2026sleeper]
+id = "2605.15338"
+expect = "Hidden in Memory: Sleeper Memory Poisoning in LLM Agents"
+topic = "poisoning"
+
+[arxiv.xie2026crosssession]
+id = "2606.04425"
+expect = "What If Prompt Injection Never Left? Rethinking Agent Security through Cross-Session Stored Prompt Injection"
+topic = "poisoning"
+
+[arxiv.dash2026mpbench]
+id = "2606.04329"
+expect = "From Untrusted Input to Trusted Memory: A Systematic Study of Memory Poisoning Attacks in LLM Agents"
+topic = "poisoning"
+
+[arxiv.zhang2026whisperbench]
+id = "2607.05189"
+expect = "When Claws Remember but Do Not Tell: Stealthy Memory Injection in Persistent Personal Agents"
+topic = "poisoning"
+
+[arxiv.gadgil2026badmemory]
+id = "2607.14611"
+expect = "Bad Memory: Evaluating Prompt Injection Risks from Memory in Agentic Systems"
+topic = "poisoning"
+
+[arxiv.chen2026memsecbench]
+id = "2607.27080"
+expect = "MemSecBench: Tracking Agent Memory Poisoning from Persistence to Consequence and Repair"
+topic = "poisoning"
+
+[arxiv.huang2026pmpa]
+id = "2609.13889"
+expect = "When Malicious Instructions Persist: Persistent Memory Poisoning Attack on Harness-Based Agents"
+topic = "poisoning"
+
+[arxiv.lin2026ltmsurvey]
+id = "2604.16548"
+expect = "A Survey on Long-Term Memory Security in LLM Agents: Attacks, Defenses, and Governance Across the Memory Lifecycle"
+topic = "poisoning"
+
+[arxiv.zhang2026memgate]
+id = "2606.06054"
+expect = "Beyond Similarity: Trustworthy Memory Search for Personal AI Agents"
+topic = "poisoning"
+
+# --- Guard and reviewer models, system-level defences ---
+[arxiv.inan2023llamaguard]
+id = "2312.06674"
+expect = "Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations"
+topic = "guard"
+
+[arxiv.debenedetti2025camel]
+id = "2503.18813"
+expect = "Defeating Prompt Injections by Design"
+topic = "defence"
+
+[arxiv.beurerkellner2025patterns]
+id = "2506.08837"
+expect = "Design Patterns for Securing LLM Agents against Prompt Injections"
+topic = "defence"
+
+[arxiv.chennabasappa2025llamafirewall]
+id = "2505.03574"
+expect = "LlamaFirewall: An open source guardrail system for building secure AI agents"
+topic = "guard"
+
+[arxiv.padhi2024graniteguardian]
+id = "2412.07724"
+expect = "Granite Guardian"
+topic = "guard"
+
+[arxiv.zeng2024shieldgemma]
+id = "2407.21772"
+expect = "ShieldGemma: Generative AI Content Moderation Based on Gemma"
+topic = "guard"
+
+[arxiv.xiang2024guardagent]
+id = "2406.09187"
+expect = "GuardAgent: Safeguard LLM Agents by a Guard Agent via Knowledge-Enabled Reasoning"
+topic = "guard"
+
+[arxiv.kale2025weaktostrong]
+id = "2508.19461"
+expect = "Reliable Weak-to-Strong Monitoring of LLM Agents"
+topic = "guard"
+
+[arxiv.fan2026pact]
+id = "2605.11039"
+expect = "The Granularity Mismatch in Agent Security: Argument-Level Provenance Solves Enforcement and Isolates the LLM Reasoning Bottleneck"
+topic = "defence"
+
+[arxiv.yu2026habituation]
+id = "2606.22721"
+expect = "Habituation at the Gate: Rising Approval and Declining Scrutiny in Human Review of AI Agent Code"
+topic = "approval"
+
+[arxiv.kumar2026loopjacking]
+id = "2609.21081"
+expect = "Loopjacking: Hijacking Human-in-the-Loop Approval"
+topic = "approval"
+
+# --- Quantisation and safety ---
+[arxiv.kharinaev2025quant]
+id = "2502.15799"
+expect = "Investigating the Impact of Quantization Methods on the Safety and Reliability of Large Language Models"
+topic = "quantisation"
+
+[arxiv.prasad2026quanttemp]
+id = "2606.29581"
+expect = "The Joint Effect of Quantization and Sampling Temperature on LLM Safety Alignment: A Factorial Analysis"
+topic = "quantisation"
+
+# --- Always-on and proactive agents ---
+[arxiv.lu2024proactive]
+id = "2410.12361"
+expect = "Proactive Agent: Shifting LLM Agents from Reactive Responses to Active Assistance"
+topic = "proactive"
+
+[arxiv.oh2026proactivefoundations]
+id = "2609.37267"
+expect = "Foundations of Proactive Agents: Principles, Technical Layers, and Proactivity-Gym"
+topic = "proactive"
+
+[arxiv.yao2022react]
+id = "2210.03629"
+expect = "ReAct: Synergizing Reasoning and Acting in Language Models"
+topic = "agents"
+
+[web.willison2023dualllm]
+title = "The Dual LLM pattern for building AI assistants that can resist prompt injection"
+author = "Simon Willison"
+year = 2023
+url = "https://simonwillison.net/2023/Apr/25/dual-llm-pattern/"

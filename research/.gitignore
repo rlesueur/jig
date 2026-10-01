@@ -1,0 +1,24 @@
+# The repository root ignores every models/ folder (weights). Here it holds only the manifest and scripts.
+!models/
+models/*.gguf
+
+# Research virtual environment, datasets and large artefacts stay local.
+.venv/
+data/
+logs/
+results/**/raw/
+results/**/trials.jsonl
+submissions/**/trials.jsonl.gz
+paper/generated/*.png
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+literature/abstracts_cache.jsonl
+paper/build/
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/*.toc
+benchmark/sink-log/

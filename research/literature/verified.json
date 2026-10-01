@@ -1,0 +1,1099 @@
+{
+ "packer2023memgpt": {
+  "id": "2310.08560",
+  "title": "MemGPT: Towards LLMs as Operating Systems",
+  "authors": [
+   "Charles Packer",
+   "Sarah Wooders",
+   "Kevin Lin",
+   "Vivian Fang",
+   "Shishir G. Patil",
+   "Ion Stoica",
+   "Joseph E. Gonzalez"
+  ],
+  "year": 2023,
+  "published": "2023-10-12T17:51:32Z",
+  "url": "https://arxiv.org/abs/2310.08560",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "park2023generative": {
+  "id": "2304.03442",
+  "title": "Generative Agents: Interactive Simulacra of Human Behavior",
+  "authors": [
+   "Joon Sung Park",
+   "Joseph C. O'Brien",
+   "Carrie J. Cai",
+   "Meredith Ringel Morris",
+   "Percy Liang",
+   "Michael S. Bernstein"
+  ],
+  "year": 2023,
+  "published": "2023-04-07T01:55:19Z",
+  "url": "https://arxiv.org/abs/2304.03442",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "xu2025amem": {
+  "id": "2502.12110",
+  "title": "A-MEM: Agentic Memory for LLM Agents",
+  "authors": [
+   "Wujiang Xu",
+   "Zujie Liang",
+   "Kai Mei",
+   "Hang Gao",
+   "Juntao Tan",
+   "Yongfeng Zhang"
+  ],
+  "year": 2025,
+  "published": "2025-02-17T18:36:14Z",
+  "url": "https://arxiv.org/abs/2502.12110",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "chhikara2025mem0": {
+  "id": "2504.19413",
+  "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory",
+  "authors": [
+   "Prateek Chhikara",
+   "Dev Khant",
+   "Saket Aryan",
+   "Taranjeet Singh",
+   "Deshraj Yadav"
+  ],
+  "year": 2025,
+  "published": "2025-04-28T01:46:35Z",
+  "url": "https://arxiv.org/abs/2504.19413",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "wu2024longmemeval": {
+  "id": "2410.10813",
+  "title": "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory",
+  "authors": [
+   "Di Wu",
+   "Hongwei Wang",
+   "Wenhao Yu",
+   "Yuwei Zhang",
+   "Kai-Wei Chang",
+   "Dong Yu"
+  ],
+  "year": 2024,
+  "published": "2024-10-14T17:59:44Z",
+  "url": "https://arxiv.org/abs/2410.10813",
+  "verified_on": "2026-10-01",
+  "topic": "memory-benchmark"
+ },
+ "maharana2024locomo": {
+  "id": "2402.17753",
+  "title": "Evaluating Very Long-Term Conversational Memory of LLM Agents",
+  "authors": [
+   "Adyasha Maharana",
+   "Dong-Ho Lee",
+   "Sergey Tulyakov",
+   "Mohit Bansal",
+   "Francesco Barbieri",
+   "Yuwei Fang"
+  ],
+  "year": 2024,
+  "published": "2024-02-27T18:42:31Z",
+  "url": "https://arxiv.org/abs/2402.17753",
+  "verified_on": "2026-10-01",
+  "topic": "memory-benchmark"
+ },
+ "zhong2023memorybank": {
+  "id": "2305.10250",
+  "title": "MemoryBank: Enhancing Large Language Models with Long-Term Memory",
+  "authors": [
+   "Wanjun Zhong",
+   "Lianghong Guo",
+   "Qiqi Gao",
+   "He Ye",
+   "Yanlin Wang"
+  ],
+  "year": 2023,
+  "published": "2023-05-17T14:40:29Z",
+  "url": "https://arxiv.org/abs/2305.10250",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "rasmussen2025zep": {
+  "id": "2501.13956",
+  "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+  "authors": [
+   "Preston Rasmussen",
+   "Pavlo Paliychuk",
+   "Travis Beauvais",
+   "Jack Ryan",
+   "Daniel Chalef"
+  ],
+  "year": 2025,
+  "published": "2025-01-20T16:52:48Z",
+  "url": "https://arxiv.org/abs/2501.13956",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "liu2023lost": {
+  "id": "2307.03172",
+  "title": "Lost in the Middle: How Language Models Use Long Contexts",
+  "authors": [
+   "Nelson F. Liu",
+   "Kevin Lin",
+   "John Hewitt",
+   "Ashwin Paranjape",
+   "Michele Bevilacqua",
+   "Fabio Petroni",
+   "Percy Liang"
+  ],
+  "year": 2023,
+  "published": "2023-07-06T17:54:11Z",
+  "url": "https://arxiv.org/abs/2307.03172",
+  "verified_on": "2026-10-01",
+  "topic": "context"
+ },
+ "sumers2023coala": {
+  "id": "2309.02427",
+  "title": "Cognitive Architectures for Language Agents",
+  "authors": [
+   "Theodore R. Sumers",
+   "Shunyu Yao",
+   "Karthik Narasimhan",
+   "Thomas L. Griffiths"
+  ],
+  "year": 2023,
+  "published": "2023-09-05T17:56:20Z",
+  "url": "https://arxiv.org/abs/2309.02427",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "he2026memoryarena": {
+  "id": "2602.16313",
+  "title": "MemoryArena: Benchmarking Agent Memory in Interdependent Multi-Session Agentic Tasks",
+  "authors": [
+   "Zexue He",
+   "Yu Wang",
+   "Churan Zhi",
+   "Yuanzhe Hu",
+   "Tzu-Ping Chen",
+   "Lang Yin",
+   "Ze Chen",
+   "Tong Arthur Wu",
+   "Siru Ouyang",
+   "Zihan Wang",
+   "Jiaxin Pei",
+   "Julian McAuley",
+   "Yejin Choi",
+   "Alex Pentland"
+  ],
+  "year": 2026,
+  "published": "2026-02-18T09:49:14Z",
+  "url": "https://arxiv.org/abs/2602.16313",
+  "verified_on": "2026-10-01",
+  "topic": "memory-benchmark"
+ },
+ "uddin2026memora": {
+  "id": "2604.20006",
+  "title": "From Recall to Forgetting: Benchmarking Long-Term Memory for Personalized Agents",
+  "authors": [
+   "Md Nayem Uddin",
+   "Kumar Shubham",
+   "Eduardo Blanco",
+   "Chitta Baral",
+   "Gengyu Wang"
+  ],
+  "year": 2026,
+  "published": "2026-04-21T21:31:01Z",
+  "url": "https://arxiv.org/abs/2604.20006",
+  "verified_on": "2026-10-01",
+  "topic": "memory-benchmark"
+ },
+ "wu2026longmemevalv2": {
+  "id": "2605.12493",
+  "title": "LongMemEval-V2: Evaluating Long-Term Agent Memory Toward Experienced Colleagues",
+  "authors": [
+   "Di Wu",
+   "Zixiang Ji",
+   "Asmi Kawatkar",
+   "Bryan Kwan",
+   "Jia-Chen Gu",
+   "Nanyun Peng",
+   "Kai-Wei Chang"
+  ],
+  "year": 2026,
+  "published": "2026-05-12T17:59:34Z",
+  "url": "https://arxiv.org/abs/2605.12493",
+  "verified_on": "2026-10-01",
+  "topic": "memory-benchmark"
+ },
+ "chen2026governancedecay": {
+  "id": "2606.22528",
+  "title": "Governance Decay: How Context Compaction Silently Erases Safety Constraints in Long-Horizon LLM Agents",
+  "authors": [
+   "Shiyang Chen"
+  ],
+  "year": 2026,
+  "published": "2026-06-21T14:30:20Z",
+  "url": "https://arxiv.org/abs/2606.22528",
+  "verified_on": "2026-10-01",
+  "topic": "context-safety"
+ },
+ "wang2026lostincompaction": {
+  "id": "2608.11242",
+  "title": "Lost in Compaction: Evaluating Side-Constraint Loss under Context Compaction",
+  "authors": [
+   "Zhiqi Wang",
+   "Yichi Zhang",
+   "Dongwon Lee",
+   "Yuchen Yang"
+  ],
+  "year": 2026,
+  "published": "2026-07-31T16:04:00Z",
+  "url": "https://arxiv.org/abs/2608.11242",
+  "verified_on": "2026-10-01",
+  "topic": "context-safety"
+ },
+ "kwon2026manufactured": {
+  "id": "2606.29279",
+  "title": "Manufactured Confidence: How Memory Consolidation Turns Hearsay into Confident Facts",
+  "authors": [
+   "Alex Kwon"
+  ],
+  "year": 2026,
+  "published": "2026-06-28T08:56:48Z",
+  "url": "https://arxiv.org/abs/2606.29279",
+  "verified_on": "2026-10-01",
+  "topic": "memory-safety"
+ },
+ "zhan2026authmem": {
+  "id": "2608.01679",
+  "title": "When Memory Becomes Authority: Benchmarking Authority Collapse at the Memory Consolidation Boundary",
+  "authors": [
+   "Qiuyang Zhan",
+   "Rui Zhang",
+   "Sheng Guo",
+   "Lepeng Zhao",
+   "Zhuotao Liu"
+  ],
+  "year": 2026,
+  "published": "2026-08-03T04:15:40Z",
+  "url": "https://arxiv.org/abs/2608.01679",
+  "verified_on": "2026-10-01",
+  "topic": "memory-safety"
+ },
+ "annapureddy2026epistemics": {
+  "id": "2609.33013",
+  "title": "The Epistemics of Agent Memory: Measuring, and Governing, the Consolidation Decision in Long-Horizon LLM Agents",
+  "authors": [
+   "Sasank Annapureddy",
+   "Anjaneya Prasad Thamatani"
+  ],
+  "year": 2026,
+  "published": "2026-09-26T23:10:45Z",
+  "url": "https://arxiv.org/abs/2609.33013",
+  "verified_on": "2026-10-01",
+  "topic": "memory"
+ },
+ "greshake2023indirect": {
+  "id": "2302.12173",
+  "title": "Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection",
+  "authors": [
+   "Kai Greshake",
+   "Sahar Abdelnabi",
+   "Shailesh Mishra",
+   "Christoph Endres",
+   "Thorsten Holz",
+   "Mario Fritz"
+  ],
+  "year": 2023,
+  "published": "2023-02-23T17:14:38Z",
+  "url": "https://arxiv.org/abs/2302.12173",
+  "verified_on": "2026-10-01",
+  "topic": "injection"
+ },
+ "zhan2024injecagent": {
+  "id": "2403.02691",
+  "title": "InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents",
+  "authors": [
+   "Qiusi Zhan",
+   "Zhixiang Liang",
+   "Zifan Ying",
+   "Daniel Kang"
+  ],
+  "year": 2024,
+  "published": "2024-03-05T06:21:45Z",
+  "url": "https://arxiv.org/abs/2403.02691",
+  "verified_on": "2026-10-01",
+  "topic": "injection-benchmark"
+ },
+ "debenedetti2024agentdojo": {
+  "id": "2406.13352",
+  "title": "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents",
+  "authors": [
+   "Edoardo Debenedetti",
+   "Jie Zhang",
+   "Mislav Balunović",
+   "Luca Beurer-Kellner",
+   "Marc Fischer",
+   "Florian Tramèr"
+  ],
+  "year": 2024,
+  "published": "2024-06-19T08:55:56Z",
+  "url": "https://arxiv.org/abs/2406.13352",
+  "verified_on": "2026-10-01",
+  "topic": "injection-benchmark"
+ },
+ "evtimov2025wasp": {
+  "id": "2504.18575",
+  "title": "WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks",
+  "authors": [
+   "Ivan Evtimov",
+   "Arman Zharmagambetov",
+   "Aaron Grattafiori",
+   "Chuan Guo",
+   "Kamalika Chaudhuri"
+  ],
+  "year": 2025,
+  "published": "2025-04-22T17:51:03Z",
+  "url": "https://arxiv.org/abs/2504.18575",
+  "verified_on": "2026-10-01",
+  "topic": "injection-benchmark"
+ },
+ "andriushchenko2024agentharm": {
+  "id": "2410.09024",
+  "title": "AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents",
+  "authors": [
+   "Maksym Andriushchenko",
+   "Alexandra Souly",
+   "Mateusz Dziemian",
+   "Derek Duenas",
+   "Maxwell Lin",
+   "Justin Wang",
+   "Dan Hendrycks",
+   "Andy Zou",
+   "Zico Kolter",
+   "Matt Fredrikson",
+   "Eric Winsor",
+   "Jerome Wynne",
+   "Yarin Gal",
+   "Xander Davies"
+  ],
+  "year": 2024,
+  "published": "2024-10-11T17:39:22Z",
+  "url": "https://arxiv.org/abs/2410.09024",
+  "verified_on": "2026-10-01",
+  "topic": "safety-benchmark"
+ },
+ "liu2023formalizing": {
+  "id": "2310.12815",
+  "title": "Formalizing and Benchmarking Prompt Injection Attacks and Defenses",
+  "authors": [
+   "Yupei Liu",
+   "Yuqi Jia",
+   "Runpeng Geng",
+   "Jinyuan Jia",
+   "Neil Zhenqiang Gong"
+  ],
+  "year": 2023,
+  "published": "2023-10-19T15:12:09Z",
+  "url": "https://arxiv.org/abs/2310.12815",
+  "verified_on": "2026-10-01",
+  "topic": "injection"
+ },
+ "yi2023bipia": {
+  "id": "2312.14197",
+  "title": "Benchmarking and Defending Against Indirect Prompt Injection Attacks on Large Language Models",
+  "authors": [
+   "Jingwei Yi",
+   "Yueqi Xie",
+   "Bin Zhu",
+   "Emre Kiciman",
+   "Guangzhong Sun",
+   "Xing Xie",
+   "Fangzhao Wu"
+  ],
+  "year": 2023,
+  "published": "2023-12-21T01:08:39Z",
+  "url": "https://arxiv.org/abs/2312.14197",
+  "verified_on": "2026-10-01",
+  "topic": "injection-benchmark"
+ },
+ "hines2024spotlighting": {
+  "id": "2403.14720",
+  "title": "Defending Against Indirect Prompt Injection Attacks With Spotlighting",
+  "authors": [
+   "Keegan Hines",
+   "Gary Lopez",
+   "Matthew Hall",
+   "Federico Zarfati",
+   "Yonatan Zunger",
+   "Emre Kiciman"
+  ],
+  "year": 2024,
+  "published": "2024-03-20T15:26:23Z",
+  "url": "https://arxiv.org/abs/2403.14720",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "wallace2024hierarchy": {
+  "id": "2404.13208",
+  "title": "The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions",
+  "authors": [
+   "Eric Wallace",
+   "Kai Xiao",
+   "Reimar Leike",
+   "Lilian Weng",
+   "Johannes Heidecke",
+   "Alex Beutel"
+  ],
+  "year": 2024,
+  "published": "2024-04-19T22:55:23Z",
+  "url": "https://arxiv.org/abs/2404.13208",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "zhang2024asb": {
+  "id": "2410.02644",
+  "title": "Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents",
+  "authors": [
+   "Hanrong Zhang",
+   "Jingyuan Huang",
+   "Kai Mei",
+   "Yifei Yao",
+   "Zhenting Wang",
+   "Chenlu Zhan",
+   "Hongwei Wang",
+   "Yongfeng Zhang"
+  ],
+  "year": 2024,
+  "published": "2024-10-03T16:30:47Z",
+  "url": "https://arxiv.org/abs/2410.02644",
+  "verified_on": "2026-10-01",
+  "topic": "injection-benchmark"
+ },
+ "ruan2023toolemu": {
+  "id": "2309.15817",
+  "title": "Identifying the Risks of LM Agents with an LM-Emulated Sandbox",
+  "authors": [
+   "Yangjun Ruan",
+   "Honghua Dong",
+   "Andrew Wang",
+   "Silviu Pitis",
+   "Yongchao Zhou",
+   "Jimmy Ba",
+   "Yann Dubois",
+   "Chris J. Maddison",
+   "Tatsunori Hashimoto"
+  ],
+  "year": 2023,
+  "published": "2023-09-25T17:08:02Z",
+  "url": "https://arxiv.org/abs/2309.15817",
+  "verified_on": "2026-10-01",
+  "topic": "safety-benchmark"
+ },
+ "lan2026silentegress": {
+  "id": "2602.22450",
+  "title": "Silent Egress: When Implicit Prompt Injection Makes LLM Agents Leak Without a Trace",
+  "authors": [
+   "Qianlong Lan",
+   "Anuj Kaul",
+   "Shaun Jones",
+   "Stephanie Westrum"
+  ],
+  "year": 2026,
+  "published": "2026-02-25T22:26:23Z",
+  "url": "https://arxiv.org/abs/2602.22450",
+  "verified_on": "2026-10-01",
+  "topic": "exfiltration"
+ },
+ "narisetty2026adaptive": {
+  "id": "2606.26479",
+  "title": "Adaptive Evaluation of Out-of-Band Defenses Against Prompt Injection in LLM Agents",
+  "authors": [
+   "Praneeth Narisetty",
+   "Shiva Nagendra Babu Kore",
+   "Uday Kumar Reddy Kattamanchi",
+   "Jayaram Kumarapu"
+  ],
+  "year": 2026,
+  "published": "2026-06-25T00:35:23Z",
+  "url": "https://arxiv.org/abs/2606.26479",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "chen2024agentpoison": {
+  "id": "2407.12784",
+  "title": "AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases",
+  "authors": [
+   "Zhaorun Chen",
+   "Zhen Xiang",
+   "Chaowei Xiao",
+   "Dawn Song",
+   "Bo Li"
+  ],
+  "year": 2024,
+  "published": "2024-07-17T17:59:47Z",
+  "url": "https://arxiv.org/abs/2407.12784",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "zou2024poisonedrag": {
+  "id": "2402.07867",
+  "title": "PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models",
+  "authors": [
+   "Wei Zou",
+   "Runpeng Geng",
+   "Binghui Wang",
+   "Jinyuan Jia"
+  ],
+  "year": 2024,
+  "published": "2024-02-12T18:28:36Z",
+  "url": "https://arxiv.org/abs/2402.07867",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "dong2025minja": {
+  "id": "2503.03704",
+  "title": "Memory Injection Attacks on LLM Agents via Query-Only Interaction",
+  "authors": [
+   "Shen Dong",
+   "Shaochen Xu",
+   "Pengfei He",
+   "Yige Li",
+   "Jiliang Tang",
+   "Tianming Liu",
+   "Hui Liu",
+   "Zhen Xiang"
+  ],
+  "year": 2025,
+  "published": "2025-03-05T17:53:24Z",
+  "url": "https://arxiv.org/abs/2503.03704",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "srivastava2025memorygraft": {
+  "id": "2512.16962",
+  "title": "MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval",
+  "authors": [
+   "Saksham Sahai Srivastava",
+   "Haoyu He"
+  ],
+  "year": 2025,
+  "published": "2025-12-18T08:34:40Z",
+  "url": "https://arxiv.org/abs/2512.16962",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "zou2026etamp": {
+  "id": "2604.02623",
+  "title": "Poison Once, Exploit Forever: Environment-Injected Memory Poisoning Attacks on Web Agents",
+  "authors": [
+   "Wei Zou",
+   "Mingwen Dong",
+   "Miguel Romero Calvo",
+   "Shuaichen Chang",
+   "Jiang Guo",
+   "Dongkyu Lee",
+   "Xing Niu",
+   "Xiaofei Ma",
+   "Yanjun Qi",
+   "Jiarong Jiang"
+  ],
+  "year": 2026,
+  "published": "2026-04-03T01:25:12Z",
+  "url": "https://arxiv.org/abs/2604.02623",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "pulipaka2026sleeper": {
+  "id": "2605.15338",
+  "title": "Hidden in Memory: Sleeper Memory Poisoning in LLM Agents",
+  "authors": [
+   "Sidharth Pulipaka",
+   "Stanislau Hlebik",
+   "Leonidas Raghav",
+   "Sahar Abdelnabi",
+   "Vyas Raina",
+   "Ivaxi Sheth",
+   "Mario Fritz"
+  ],
+  "year": 2026,
+  "published": "2026-05-14T19:06:10Z",
+  "url": "https://arxiv.org/abs/2605.15338",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "xie2026crosssession": {
+  "id": "2606.04425",
+  "title": "What If Prompt Injection Never Left? Rethinking Agent Security through Cross-Session Stored Prompt Injection",
+  "authors": [
+   "Yuanbo Xie",
+   "Wenlei Zhu",
+   "Tianyun Liu",
+   "Yingjie Zhang",
+   "Suchen Liu",
+   "Yulin Li",
+   "Liya Su",
+   "Tingwen Liu"
+  ],
+  "year": 2026,
+  "published": "2026-06-03T04:14:17Z",
+  "url": "https://arxiv.org/abs/2606.04425",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "dash2026mpbench": {
+  "id": "2606.04329",
+  "title": "From Untrusted Input to Trusted Memory: A Systematic Study of Memory Poisoning Attacks in LLM Agents",
+  "authors": [
+   "Pritam Dash",
+   "Tongyu Ge",
+   "Aditi Jain",
+   "Tanmay Shah",
+   "Zhiwei Shang"
+  ],
+  "year": 2026,
+  "published": "2026-06-03T01:04:13Z",
+  "url": "https://arxiv.org/abs/2606.04329",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "zhang2026whisperbench": {
+  "id": "2607.05189",
+  "title": "When Claws Remember but Do Not Tell: Stealthy Memory Injection in Persistent Personal Agents",
+  "authors": [
+   "Yechao Zhang",
+   "Shiqian Zhao",
+   "Jiawen Zhang",
+   "Jie Zhang",
+   "Gelei Deng",
+   "Xiaogeng Liu",
+   "Chaowei Xiao",
+   "Tianwei Zhang"
+  ],
+  "year": 2026,
+  "published": "2026-07-06T15:08:58Z",
+  "url": "https://arxiv.org/abs/2607.05189",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "gadgil2026badmemory": {
+  "id": "2607.14611",
+  "title": "Bad Memory: Evaluating Prompt Injection Risks from Memory in Agentic Systems",
+  "authors": [
+   "Soham Gadgil",
+   "David Alexander",
+   "Sai Sunku",
+   "Franziska Roesner"
+  ],
+  "year": 2026,
+  "published": "2026-07-16T06:13:48Z",
+  "url": "https://arxiv.org/abs/2607.14611",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "chen2026memsecbench": {
+  "id": "2607.27080",
+  "title": "MemSecBench: Tracking Agent Memory Poisoning from Persistence to Consequence and Repair",
+  "authors": [
+   "Xuanze Chen",
+   "Xukang Xie",
+   "Wentao Fu",
+   "Jiajun Zhou",
+   "Shanqing Yu",
+   "Qi Xuan"
+  ],
+  "year": 2026,
+  "published": "2026-07-29T16:06:54Z",
+  "url": "https://arxiv.org/abs/2607.27080",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "huang2026pmpa": {
+  "id": "2609.13889",
+  "title": "When Malicious Instructions Persist: Persistent Memory Poisoning Attack on Harness-Based Agents",
+  "authors": [
+   "Shuhuai Huang",
+   "Jingfeng Zhang",
+   "Hong Jia"
+  ],
+  "year": 2026,
+  "published": "2026-09-12T11:27:53Z",
+  "url": "https://arxiv.org/abs/2609.13889",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "lin2026ltmsurvey": {
+  "id": "2604.16548",
+  "title": "A Survey on Long-Term Memory Security in LLM Agents: Attacks, Defenses, and Governance Across the Memory Lifecycle",
+  "authors": [
+   "Zehao Lin",
+   "Xixuan Hao",
+   "Renyu Fu",
+   "Shaobo Cui",
+   "Kai Chen",
+   "Chunyu Li",
+   "Zhiyu Li",
+   "Feiyu Xiong"
+  ],
+  "year": 2026,
+  "published": "2026-04-17T06:28:22Z",
+  "url": "https://arxiv.org/abs/2604.16548",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "zhang2026memgate": {
+  "id": "2606.06054",
+  "title": "Beyond Similarity: Trustworthy Memory Search for Personal AI Agents",
+  "authors": [
+   "Jiawen Zhang",
+   "Kejia Chen",
+   "Jiachen Ma",
+   "Yangfan Hu",
+   "Lipeng He",
+   "Yechao Zhang",
+   "Jian Liu",
+   "Xiaohu Yang",
+   "Tianwei Zhang",
+   "Ruoxi Jia"
+  ],
+  "year": 2026,
+  "published": "2026-06-04T11:54:29Z",
+  "url": "https://arxiv.org/abs/2606.06054",
+  "verified_on": "2026-10-01",
+  "topic": "poisoning"
+ },
+ "inan2023llamaguard": {
+  "id": "2312.06674",
+  "title": "Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations",
+  "authors": [
+   "Hakan Inan",
+   "Kartikeya Upasani",
+   "Jianfeng Chi",
+   "Rashi Rungta",
+   "Krithika Iyer",
+   "Yuning Mao",
+   "Michael Tontchev",
+   "Qing Hu",
+   "Brian Fuller",
+   "Davide Testuggine",
+   "Madian Khabsa"
+  ],
+  "year": 2023,
+  "published": "2023-12-07T19:40:50Z",
+  "url": "https://arxiv.org/abs/2312.06674",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "debenedetti2025camel": {
+  "id": "2503.18813",
+  "title": "Defeating Prompt Injections by Design",
+  "authors": [
+   "Edoardo Debenedetti",
+   "Ilia Shumailov",
+   "Tianqi Fan",
+   "Jamie Hayes",
+   "Nicholas Carlini",
+   "Daniel Fabian",
+   "Christoph Kern",
+   "Chongyang Shi",
+   "Andreas Terzis",
+   "Florian Tramèr"
+  ],
+  "year": 2025,
+  "published": "2025-03-24T15:54:10Z",
+  "url": "https://arxiv.org/abs/2503.18813",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "beurerkellner2025patterns": {
+  "id": "2506.08837",
+  "title": "Design Patterns for Securing LLM Agents against Prompt Injections",
+  "authors": [
+   "Luca Beurer-Kellner",
+   "Beat Buesser",
+   "Ana-Maria Creţu",
+   "Edoardo Debenedetti",
+   "Daniel Dobos",
+   "Daniel Fabian",
+   "Marc Fischer",
+   "David Froelicher",
+   "Kathrin Grosse",
+   "Daniel Naeff",
+   "Ezinwanne Ozoani",
+   "Andrew Paverd",
+   "Florian Tramèr",
+   "Václav Volhejn"
+  ],
+  "year": 2025,
+  "published": "2025-06-10T14:23:55Z",
+  "url": "https://arxiv.org/abs/2506.08837",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "chennabasappa2025llamafirewall": {
+  "id": "2505.03574",
+  "title": "LlamaFirewall: An open source guardrail system for building secure AI agents",
+  "authors": [
+   "Sahana Chennabasappa",
+   "Cyrus Nikolaidis",
+   "Daniel Song",
+   "David Molnar",
+   "Stephanie Ding",
+   "Shengye Wan",
+   "Spencer Whitman",
+   "Lauren Deason",
+   "Nicholas Doucette",
+   "Abraham Montilla",
+   "Alekhya Gampa",
+   "Beto de Paola",
+   "Dominik Gabi",
+   "James Crnkovich",
+   "Jean-Christophe Testud",
+   "Kat He",
+   "Rashnil Chaturvedi",
+   "Wu Zhou",
+   "Joshua Saxe"
+  ],
+  "year": 2025,
+  "published": "2025-05-06T14:34:21Z",
+  "url": "https://arxiv.org/abs/2505.03574",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "padhi2024graniteguardian": {
+  "id": "2412.07724",
+  "title": "Granite Guardian",
+  "authors": [
+   "Inkit Padhi",
+   "Manish Nagireddy",
+   "Giandomenico Cornacchia",
+   "Subhajit Chaudhury",
+   "Tejaswini Pedapati",
+   "Pierre Dognin",
+   "Keerthiram Murugesan",
+   "Erik Miehling",
+   "Martín Santillán Cooper",
+   "Kieran Fraser",
+   "Giulio Zizzo",
+   "Muhammad Zaid Hameed",
+   "Mark Purcell",
+   "Michael Desmond",
+   "Qian Pan",
+   "Zahra Ashktorab",
+   "Inge Vejsbjerg",
+   "Elizabeth M. Daly",
+   "Michael Hind",
+   "Werner Geyer",
+   "Ambrish Rawat",
+   "Kush R. Varshney",
+   "Prasanna Sattigeri"
+  ],
+  "year": 2024,
+  "published": "2024-12-10T18:17:02Z",
+  "url": "https://arxiv.org/abs/2412.07724",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "zeng2024shieldgemma": {
+  "id": "2407.21772",
+  "title": "ShieldGemma: Generative AI Content Moderation Based on Gemma",
+  "authors": [
+   "Wenjun Zeng",
+   "Yuchi Liu",
+   "Ryan Mullins",
+   "Ludovic Peran",
+   "Joe Fernandez",
+   "Hamza Harkous",
+   "Karthik Narasimhan",
+   "Drew Proud",
+   "Piyush Kumar",
+   "Bhaktipriya Radharapu",
+   "Olivia Sturman",
+   "Oscar Wahltinez"
+  ],
+  "year": 2024,
+  "published": "2024-07-31T17:48:14Z",
+  "url": "https://arxiv.org/abs/2407.21772",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "xiang2024guardagent": {
+  "id": "2406.09187",
+  "title": "GuardAgent: Safeguard LLM Agents by a Guard Agent via Knowledge-Enabled Reasoning",
+  "authors": [
+   "Zhen Xiang",
+   "Linzhi Zheng",
+   "Yanjie Li",
+   "Junyuan Hong",
+   "Qinbin Li",
+   "Han Xie",
+   "Jiawei Zhang",
+   "Zidi Xiong",
+   "Chulin Xie",
+   "Carl Yang",
+   "Dawn Song",
+   "Bo Li"
+  ],
+  "year": 2024,
+  "published": "2024-06-13T14:49:26Z",
+  "url": "https://arxiv.org/abs/2406.09187",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "kale2025weaktostrong": {
+  "id": "2508.19461",
+  "title": "Reliable Weak-to-Strong Monitoring of LLM Agents",
+  "authors": [
+   "Neil Kale",
+   "Chen Bo Calvin Zhang",
+   "Kevin Zhu",
+   "Ankit Aich",
+   "Paula Rodriguez",
+   "Scale Red Team",
+   "Christina Q. Knight",
+   "Zifan Wang"
+  ],
+  "year": 2025,
+  "published": "2025-08-26T22:29:31Z",
+  "url": "https://arxiv.org/abs/2508.19461",
+  "verified_on": "2026-10-01",
+  "topic": "guard"
+ },
+ "fan2026pact": {
+  "id": "2605.11039",
+  "title": "The Granularity Mismatch in Agent Security: Argument-Level Provenance Solves Enforcement and Isolates the LLM Reasoning Bottleneck",
+  "authors": [
+   "Linfeng Fan",
+   "Ziwei Li",
+   "Yuan Tian",
+   "Yichen Wang",
+   "Rongsheng Li",
+   "Xiong Wang"
+  ],
+  "year": 2026,
+  "published": "2026-05-11T04:09:11Z",
+  "url": "https://arxiv.org/abs/2605.11039",
+  "verified_on": "2026-10-01",
+  "topic": "defence"
+ },
+ "yu2026habituation": {
+  "id": "2606.22721",
+  "title": "Habituation at the Gate: Rising Approval and Declining Scrutiny in Human Review of AI Agent Code",
+  "authors": [
+   "Haoran Yu",
+   "Lifei Liu",
+   "Xiaochong Jiang",
+   "Yuwen Jia",
+   "Su Wang",
+   "Pin Qian",
+   "Yihang Chen"
+  ],
+  "year": 2026,
+  "published": "2026-06-21T23:38:33Z",
+  "url": "https://arxiv.org/abs/2606.22721",
+  "verified_on": "2026-10-01",
+  "topic": "approval"
+ },
+ "kumar2026loopjacking": {
+  "id": "2609.21081",
+  "title": "Loopjacking: Hijacking Human-in-the-Loop Approval",
+  "authors": [
+   "Adithyan Arun Kumar"
+  ],
+  "year": 2026,
+  "published": "2026-09-17T20:58:26Z",
+  "url": "https://arxiv.org/abs/2609.21081",
+  "verified_on": "2026-10-01",
+  "topic": "approval"
+ },
+ "kharinaev2025quant": {
+  "id": "2502.15799",
+  "title": "Investigating the Impact of Quantization Methods on the Safety and Reliability of Large Language Models",
+  "authors": [
+   "Artyom Kharinaev",
+   "Viktor Moskvoretskii",
+   "Egor Shvetsov",
+   "Kseniia Studenikina",
+   "Bykov Mikhail",
+   "Evgeny Burnaev"
+  ],
+  "year": 2025,
+  "published": "2025-02-18T20:32:05Z",
+  "url": "https://arxiv.org/abs/2502.15799",
+  "verified_on": "2026-10-01",
+  "topic": "quantisation"
+ },
+ "prasad2026quanttemp": {
+  "id": "2606.29581",
+  "title": "The Joint Effect of Quantization and Sampling Temperature on LLM Safety Alignment: A Factorial Analysis",
+  "authors": [
+   "Hari Prasad",
+   "Ritam Pal"
+  ],
+  "year": 2026,
+  "published": "2026-06-28T19:52:25Z",
+  "url": "https://arxiv.org/abs/2606.29581",
+  "verified_on": "2026-10-01",
+  "topic": "quantisation"
+ },
+ "lu2024proactive": {
+  "id": "2410.12361",
+  "title": "Proactive Agent: Shifting LLM Agents from Reactive Responses to Active Assistance",
+  "authors": [
+   "Yaxi Lu",
+   "Shenzhi Yang",
+   "Cheng Qian",
+   "Guirong Chen",
+   "Qinyu Luo",
+   "Yesai Wu",
+   "Huadong Wang",
+   "Xin Cong",
+   "Zhong Zhang",
+   "Yankai Lin",
+   "Weiwen Liu",
+   "Yasheng Wang",
+   "Zhiyuan Liu",
+   "Fangming Liu",
+   "Maosong Sun"
+  ],
+  "year": 2024,
+  "published": "2024-10-16T08:24:09Z",
+  "url": "https://arxiv.org/abs/2410.12361",
+  "verified_on": "2026-10-01",
+  "topic": "proactive"
+ },
+ "oh2026proactivefoundations": {
+  "id": "2609.37267",
+  "title": "Foundations of Proactive Agents: Principles, Technical Layers, and Proactivity-Gym",
+  "authors": [
+   "Jio Oh",
+   "Seunghyun Do",
+   "Young-Jun Lee",
+   "Steven Euijong Whang",
+   "Dongyeop Kang"
+  ],
+  "year": 2026,
+  "published": "2026-09-29T11:13:10Z",
+  "url": "https://arxiv.org/abs/2609.37267",
+  "verified_on": "2026-10-01",
+  "topic": "proactive"
+ },
+ "yao2022react": {
+  "id": "2210.03629",
+  "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+  "authors": [
+   "Shunyu Yao",
+   "Jeffrey Zhao",
+   "Dian Yu",
+   "Nan Du",
+   "Izhak Shafran",
+   "Karthik Narasimhan",
+   "Yuan Cao"
+  ],
+  "year": 2022,
+  "published": "2022-10-06T01:00:32Z",
+  "url": "https://arxiv.org/abs/2210.03629",
+  "verified_on": "2026-10-01",
+  "topic": "agents"
+ }
+}

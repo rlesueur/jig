@@ -1,0 +1,43 @@
+{
+ "fetched_on": "2026-10-01",
+ "web": {
+  "willison2023dualllm": {
+   "url": "https://simonwillison.net/2023/Apr/25/dual-llm-pattern/",
+   "status": 200,
+   "page_title": "The Dual LLM pattern for building AI assistants that can resist prompt injection",
+   "matches": true
+  }
+ },
+ "licences": {
+  "agentdojo": {
+   "repo": "https://github.com/ethz-spylab/agentdojo",
+   "status": 200,
+   "spdx": "MIT"
+  },
+  "longmemeval": {
+   "repo": "https://github.com/xiaowu0162/LongMemEval",
+   "status": 200,
+   "spdx": "MIT"
+  },
+  "locomo": {
+   "repo": "https://github.com/snap-research/locomo",
+   "status": 200,
+   "spdx": "NOASSERTION"
+  },
+  "injecagent": {
+   "repo": "https://github.com/uiuc-kang-lab/InjecAgent",
+   "status": 200,
+   "spdx": "MIT"
+  },
+  "bipia": {
+   "repo": "https://github.com/microsoft/BIPIA",
+   "status": 200,
+   "spdx": "NOASSERTION"
+  },
+  "longmemeval_hf": {
+   "dataset": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned",
+   "status": 200,
+   "license": "mit"
+  }
+ }
+}
