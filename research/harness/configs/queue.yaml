@@ -1,0 +1,7 @@
+# Overnight queue, in priority order. Each entry resumes where the last window stopped; an entry that is
+# complete is skipped in seconds, so the queue simply moves on.
+queue:
+  - configs/full/d1_full.yaml
+  - configs/full/d2_full.yaml
+  - configs/full/cd1_full.yaml
+  - configs/full/c1_full.yaml

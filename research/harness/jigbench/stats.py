@@ -47,6 +47,14 @@ def fisher_exact(k1: int, n1: int, k2: int, n2: int) -> float:
     return float(fe([[k1, n1 - k1], [k2, n2 - k2]]).pvalue)
 
 
+def mcnemar_exact(b: int, c: int) -> float:
+    """Exact two-sided McNemar test from the discordant pair counts b and c."""
+    from scipy.stats import binomtest
+
+    n = b + c
+    return 1.0 if n == 0 else float(binomtest(b, n, 0.5).pvalue)
+
+
 def fmt_ci(p: float, lo: float, hi: float, pct: bool = True) -> str:
     if math.isnan(p):
         return "--"

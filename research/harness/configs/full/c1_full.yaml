@@ -1,0 +1,25 @@
+# C1 full v1: 5 questions per type (30 questions), 10 sessions each, 5 strategies, 1 seed.
+name: c1-full-v1
+experiment: c1
+questions_per_type: {knowledge-update: 5, temporal-reasoning: 5, multi-session: 5, single-session-user: 5,
+                     single-session-assistant: 5, single-session-preference: 5}
+question_seed: 0
+max_sessions: 10
+consolidate_every: 3
+context_budget_tokens: 12000
+strategies: [full_context, rolling_summary, retrieval, hybrid_keep, hybrid_forget]
+seeds: [0]
+approval_policy: approve_all
+max_steps: 12
+task_timeout_s: 900
+sampling: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.05}
+
+endpoints:
+  bonsai: {base_url: "http://127.0.0.1:8080/v1"}
+  gemma26b: {server: {model: gemma-4-26b-a4b, port: 8094, ctx: 16384, parallel: 1, n_cpu_moe: 99}}
+
+agent: {endpoint: bonsai, name: bonsai-2-27b}
+judge: {endpoint: gemma26b, name: gemma-4-26b-a4b, max_tokens: 1024}
+
+conditions:
+  - {id: bonsai27b-ternary, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}}

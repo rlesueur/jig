@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import subprocess
@@ -17,7 +18,8 @@ from .paths import MODELS_LOCK, MODELS_TOML, REPO, RESEARCH
 
 
 def _run(cmd: list[str], cwd: Any = None) -> str:
-    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=30)
+    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=30)
     if out.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} failed: {out.stderr.strip()[:300]}")
     return out.stdout.strip()
@@ -27,7 +29,10 @@ def git_info() -> dict[str, Any]:
     commit = _run(["git", "rev-parse", "HEAD"], cwd=REPO)
     dirty_jig = bool(_run(["git", "status", "--porcelain", "--", "jig"], cwd=REPO))
     dirty_research = bool(_run(["git", "status", "--porcelain", "--", "research"], cwd=REPO))
-    return {"commit": commit, "jig_core_dirty": dirty_jig, "research_dirty": dirty_research}
+    diff = _run(["git", "diff", "HEAD", "--", "jig"], cwd=REPO)
+    return {"commit": commit, "jig_core_dirty": dirty_jig, "research_dirty": dirty_research,
+            "jig_core_diff_sha256": hashlib.sha256(diff.encode()).hexdigest() if dirty_jig else None,
+            "jig_core_dirty_files": _run(["git", "status", "--porcelain", "--", "jig"], cwd=REPO).splitlines()}
 
 
 def hardware_info() -> dict[str, Any]:

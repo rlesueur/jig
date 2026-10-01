@@ -17,7 +17,7 @@ sampling: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.05}
 endpoints:
   bonsai: {base_url: "http://127.0.0.1:8080/v1"}
   granite8b:
-    server: {model: granite42-8b, port: 8091, ctx: 16384, parallel: 1}
+    server: {model: granite42-8b, port: 8095, ctx: 16384, parallel: 1}
 
 agent: {endpoint: bonsai, name: bonsai-2-27b}
 judge: {endpoint: granite8b, name: granite42-8b, max_tokens: 512}

@@ -10,7 +10,8 @@ $python = Join-Path $research '.venv\Scripts\python.exe'
 $queue = Join-Path $research 'harness\configs\queue.yaml'
 "=== $(Get-Date -Format o) task start (pid $PID)" | Add-Content -Path $log -Encoding utf8
 Set-Location $research
-& $python -m jigbench overnight --queue $queue *>> $log
+$ErrorActionPreference = 'Continue'
+& $python -m jigbench overnight --queue $queue 2>&1 | ForEach-Object { "$_" } | Out-File -FilePath $log -Append -Encoding utf8
 $code = $LASTEXITCODE
 "=== $(Get-Date -Format o) task end, exit $code" | Add-Content -Path $log -Encoding utf8
 exit $code
