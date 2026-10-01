@@ -29,7 +29,7 @@ jig = "jig.cli:main"
 include = ["jig*"]
 
 [tool.setuptools.package-data]
-jig = ["web/*"]
+jig = ["web/*", "web/fonts/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
