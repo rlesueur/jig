@@ -166,8 +166,14 @@ async def test_run_command_needs_approval(cjig):
     assert not (cjig.sandbox.root / "proof.txt").exists(), "nothing may run before approval"
 
     cjig.approvals.respond(approval["id"], approve=True, note="go ahead")
-    await wait_for(lambda: cjig.store.get_task(task["id"])["status"] in (TaskStatus.DONE, TaskStatus.FAILED),
-                   what="task to finish")
+
+    def finished_approving_follow_ups() -> bool:
+        # The model may check its work with another command; each one also needs (and gets) approval.
+        for follow_up in cjig.approvals.list(status="pending"):
+            cjig.approvals.respond(follow_up["id"], approve=True, note="follow-up")
+        return cjig.store.get_task(task["id"])["status"] in (TaskStatus.DONE, TaskStatus.FAILED)
+
+    await wait_for(finished_approving_follow_ups, what="task to finish")
     final = cjig.store.get_task(task["id"])
     assert final["status"] == TaskStatus.DONE, final["error"]
     assert (cjig.sandbox.root / "proof.txt").read_text(encoding="utf-8").strip() == "jig-container-ok"
