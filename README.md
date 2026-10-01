@@ -4,7 +4,7 @@ Jig is an open-source, always-on personal AI agent that runs **only on local mod
 
 Jig is an open alternative to hosted agents such as Meta's Muse and OpenAI's Dots. It takes their best safety ideas (an isolated reviewer, a credential vault, read-only background research, per-action rules and approvals) and adds the things that running locally makes possible: memory you can see and edit, and an audit trail you own.
 
-> Status: foundations. The runtime, safety model, API and tests are in place. A VM/container sandbox, a browser, voice and messaging channels are on the roadmap.
+> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, and vision are in place. Voice and messaging channels are on the roadmap.
 
 ## Model requirements
 
@@ -20,6 +20,24 @@ Reasoning text (`reasoning_content` or `reasoning`) is optional. When a server s
 At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, Jig refuses to start and explains why. Run the same checks any time with `jig health`.
 
 Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.cpp fork (`profiles/llamacpp-bonsai.toml`). That is one example setup, not a requirement.
+
+### Vision (optional)
+
+Vision is optional and works with any vision-capable model. Images are sent as standard OpenAI `image_url` content parts (base64 data URLs). Turn it on with:
+
+```toml
+[vision]
+enabled = true
+```
+
+With vision enabled, the start-up check (and `jig health`) also sends a **real test image**: a square in a randomly chosen colour. The model has to name the colour, or Jig refuses to start. Tools that need vision, such as `browser_screenshot` with a question, raise `VisionUnavailable` with a clear message if vision is off; they never quietly carry on without the image. Without vision, use `browser_read` for the page text.
+
+How to serve a vision model:
+
+- **llama.cpp** (and forks): download the model's vision projector (`mmproj-*.gguf`) and add `--mmproj <file>` to `llama-server`. For the test model that is `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (about 0.63 GB) from `prism-ml/Ternary-Bonsai-2-27B-gguf`:
+  `llama-server -m Ternary-Bonsai-2-27B-PTQ1_0.gguf --mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --jinja ...`
+- **Ollama** and **LM Studio** ship their own vision models (for example Gemma 3 or Qwen2.5-VL); pick one of those as `name`. Their OpenAI-compatible endpoints accept the same image parts.
+- **vLLM** serves multimodal models directly.
 
 ## Architecture
 
@@ -41,7 +59,9 @@ Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.
  │                           │ 7 vault refs resolved, tool runs, redaction  ││     no tools)
  │                           └──────────────────────────────────────────────┘│
  │  Tools: web_fetch · read_file · list_files · write_file · notes · memory · time
- │  Sandbox (per-agent folder)     Vault (DPAPI / keyring)                   │
+ │         (container backend) run_command · run_python · browser_*         │
+ │  Sandbox: per-agent folder, or a hardened Docker container ──► egress proxy (lease + core rules)
+ │  Vision (optional image input)  Vault (DPAPI / keyring)                   │
  │  SQLite: goals, tasks, runs, steps, approvals, rules, memory+FTS5, notes, audit (append-only)
  │  Event bus ──► avatar state tracker ──► /events (WebSocket) and /events/sse
  └──────────────────────────────────────────────────────────────────────────┘
@@ -60,6 +80,9 @@ Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.
 | `jig/audit.py` | Append-only audit log (SQLite triggers reject updates and deletes) |
 | `jig/vault.py` | Credential vault (Windows DPAPI, or `keyring` elsewhere) |
 | `jig/sandbox.py` | Per-agent workspace with path-traversal protection |
+| `jig/sandbox_container/` | Container backend: Docker lifecycle, hardened container, egress relay and proxy, browser session, image (`image/Dockerfile`) |
+| `jig/tools/sandbox_exec.py`, `jig/tools/browser.py` | `run_command` / `run_python` and the headless browser tools (container backend only) |
+| `jig/vision.py` | Image content parts, the real vision probe, and image description for tools |
 | `jig/events.py` | Event bus and the derived avatar state |
 | `jig/constants.py` | All shared names: avatar states, task variants, modes and statuses |
 | `jig/api/app.py` | HTTP and WebSocket API |
@@ -102,7 +125,7 @@ name = "your-small-reviewer-model"
 
 ### Tests
 
-The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com`, so they need internet access.
+The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com` and `https://httpbin.org`, so they need internet access. The container and browser tests (`tests/test_container_sandbox.py`, `tests/test_browser.py`) need Docker running and the sandbox image built (`jig sandbox build`). The vision tests need `[vision] enabled = true` and a vision-capable model.
 
 ```powershell
 .\.venv\Scripts\python -m pytest -q
@@ -116,6 +139,65 @@ With `jig serve` running:
 .\.venv\Scripts\python scripts\demo.py --url http://127.0.0.1:8766       # goal -> plan -> approval -> done
 .\.venv\Scripts\python scripts\chat_demo.py --url http://127.0.0.1:8766  # streaming chat with avatar states
 ```
+
+## Container sandbox and headless browser
+
+By default (`[sandbox] backend = "directory"`), the file tools are confined to a folder and Jig cannot run code or use a browser. To run code, shell commands and a headless Chromium in an isolated Linux container, use the container backend:
+
+```powershell
+.\.venv\Scripts\jig sandbox build      # docker build -t jig-sandbox:0.1.0 jig/sandbox_container/image
+```
+
+```toml
+[sandbox]
+backend = "container"     # or set JIG_SANDBOX_BACKEND=container
+image = "jig-sandbox:0.1.0"
+cpus = 2.0
+memory = "2g"
+pids_limit = 512
+egress_ports = [80, 443]
+```
+
+If the container backend is selected and Docker is not running, or the image has not been built, Jig refuses to start and says why. It never falls back to the directory sandbox. The image is based on `mcr.microsoft.com/playwright/python` (Chromium included) and adds a pinned `playwright` package, an unprivileged `jig` user (uid 10001) and two small scripts: the browser server and the egress relay.
+
+**The container.** Each agent workspace gets its own container (`jig-sbx-<agent>-<hash>`). It is created at start-up and removed at shutdown; files persist in the workspace. It runs with:
+
+- only the agent's workspace bind-mounted, at `/workspace`; no other host path is visible;
+- user `10001:10001` (non-root), `--cap-drop ALL` and `--security-opt no-new-privileges`;
+- `--read-only` root filesystem, with tmpfs at `/tmp` and `/home/jig` (`nosuid,nodev`) and a 256 MB `/dev/shm`;
+- `--memory 2g --memory-swap 2g`, `--cpus 2` and `--pids-limit 512` (all configurable); `--init` reaps stray processes;
+- Docker's default seccomp profile; every command is wrapped in `timeout -s KILL`, so it also dies inside the container.
+
+**Egress.** The container's only network is an `--internal` Docker network with no gateway, and external DNS is disabled (`--dns 127.0.0.1`). Its one neighbour is a relay container (`jig-egress-<...>`, hardened in the same way). The relay forwards every TCP connection to the **egress proxy inside the Jig runtime** on the host (an ephemeral port on `egress_bind`, reached through `host.docker.internal`) and to nowhere else. `HTTP(S)_PROXY` and Chromium's proxy setting point at the relay. The proxy decides on every connection, whether `CONNECT` for HTTPS or an absolute-URI request for HTTP:
+
+1. **Lease.** Egress is open only while a container tool that has already passed the whole gate (core rules, custom rules, the Sentinel and any approval) is running. `run_command`, `run_python`, `browser_open`, `browser_click`, `browser_type`, `browser_fill`, `browser_submit` and `browser_login` open a lease; `browser_read` and `browser_screenshot` do not. Background processes and page scripts get no network between reviewed actions.
+2. **Core rule `no-local-network`.** The proxy resolves the host itself and refuses loopback, private, link-local and reserved addresses, which covers Jig's API, the model server and the LAN. It then connects to the exact address it checked, so DNS rebinding cannot swap it afterwards.
+3. **Ports.** Only `egress_ports` are allowed (80 and 443 by default).
+4. **Custom rules** on the pseudo-tool `egress`, matching `host` or `url`, for example `{"tool": "egress", "arg": "host", "pattern": "*.tracker.com", "decision": "block"}`. An `ask` rule refuses the connection too, because a connection cannot wait for a human.
+
+Every decision is audited as `egress.allow` or `egress.block`, with the host, port, tool and run.
+
+**Tools (container backend).**
+
+| Tool | Effect | Gate |
+| --- | --- | --- |
+| `run_command`, `run_python` | side effect, outbound | Sentinel; **asks for approval by default** (add an `allow` rule to relax it) |
+| `browser_open` | read, outbound | allowed in research mode; Sentinel-reviewed like `web_fetch`; core rules on the URL |
+| `browser_read` (text or accessibility snapshot), `browser_screenshot` | read | allowed in research mode; no network |
+| `browser_click`, `browser_type`, `browser_fill` | side effect, outbound | action mode only; Sentinel; approval if a rule or the Sentinel asks |
+| `browser_submit`, `browser_login` | side effect, outbound, **human-only** | always needs your approval |
+
+Inside the browser, a click or the Enter key cannot submit a form. Every non-GET request (form posts, fetch or XHR writes, beacons) is aborted at the network layer, and `submit` events are cancelled, unless `browser_submit` or `browser_login` (both approved) is running. The tool result then says that a submission was blocked. `browser_login` takes the password only as a vault reference (`{{secret:NAME}}`); a literal password fails schema validation before anything runs. The values are inserted after approval, redacted from that result by the gate, and redacted by the browser from every later reply. `browser_screenshot` saves a PNG under `screenshots/` in the workspace. Given a question, it shows the image to the model, which needs vision; without vision it fails loudly. All browser tools show the avatar as `working` / `browsing`, and `run_command` / `run_python` as `working` / `coding`.
+
+**Limits of this design.** Read these before you rely on it.
+
+- The Sentinel reviews the **action** (the URL, command or selector), not each connection. During an approved action, the code or page can reach any public host on the allowed ports. The proxy enforces the core rules and your `egress` rules, but it cannot judge intent per request. Encrypted (CONNECT) traffic is not inspected.
+- Leases are per runtime, not per task. While one task's approved action runs, a background process left behind by another task in the same container could also get out.
+- Only TCP through the proxy is possible: no UDP, ICMP or direct DNS. Docker's embedded DNS still resolves the relay's name.
+- A container is not a VM. It shares the kernel (on Docker Desktop, the WSL 2 or Hyper-V VM's kernel). A kernel exploit could escape it. Chromium runs without its own sandbox (`--no-sandbox`), because user namespaces are not available with all capabilities dropped; the container is the boundary.
+- Page scripts can change the in-page submit guard, which can let GET forms through. That is no worse than following a link. The network-level block on non-GET requests is the real enforcement, and page scripts cannot touch it.
+- File tools (`read_file`, `write_file`, ...) still use the directory jail on the host, on the same folder that is mounted at `/workspace`.
+- On Linux Docker Engine (not Desktop), `host.docker.internal` resolves to the bridge gateway, so set `egress_bind` to an address on that bridge (for example `172.17.0.1`). Start-up runs an end-to-end check of the relay path and refuses to start if it fails.
 
 ## Safety model
 
@@ -133,7 +215,7 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 
 **Memory.** Memory is fully inspectable and editable: `GET /memory`, `GET /memory?q=...`, `POST /memory`, `PATCH /memory/{id}` and `DELETE /memory/{id}`, which really forgets it.
 
-**Sandbox.** Every file tool is confined to `sandbox/<agent_id>/`. Absolute paths, drive letters, UNC paths, `..`, alternate data streams, reserved device names, and symlinks or junctions that lead out are all rejected. This is a directory jail, not an OS-level sandbox; a VM or container is on the roadmap.
+**Sandbox.** Every file tool is confined to `sandbox/<agent_id>/`. Absolute paths, drive letters, UNC paths, `..`, alternate data streams, reserved device names, and symlinks or junctions that lead out are all rejected. This is a directory jail, not an OS-level sandbox. Code execution and the browser exist only with the container backend (see above), which adds OS-level isolation and gated egress.
 
 ## Avatar states
 
@@ -163,11 +245,9 @@ The API binds to `127.0.0.1` and does not yet require authentication; see the ro
 
 ## Roadmap
 
-- **VM or container sandbox** for files and code execution, replacing the directory jail.
-- **Headless browser**, running inside the sandbox and gated by the Sentinel.
+- **A VM sandbox** (for example Firecracker or Hyper-V) as a stronger alternative to the container backend, and per-task egress leases.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
 - **Messaging channels** such as email, Signal and Matrix, as human-only actions.
-- **Vision**, once the model has a vision projector (for example an mmproj file for llama.cpp).
 - **A smaller dedicated Sentinel model** for faster reviews (already configurable via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
