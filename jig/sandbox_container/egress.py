@@ -79,8 +79,8 @@ class EgressProxy:
         self._ids = itertools.count(1)
         self._conns: set[asyncio.Task[Any]] = set()
 
-    async def start(self) -> int:
-        self._server = await asyncio.start_server(self._handle, self.bind, 0)
+    async def start(self, port: int = 0) -> int:
+        self._server = await asyncio.start_server(self._handle, self.bind, port)
         self.port = self._server.sockets[0].getsockname()[1]
         return self.port
 

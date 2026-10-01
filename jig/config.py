@@ -103,6 +103,19 @@ class SandboxConfig:
     egress_bind: str = "127.0.0.1"
     egress_ports: list[int] = field(default_factory=lambda: [80, 443])
     command_timeout_s: float = 120.0
+    # "compose": long-running sandbox services on an internal-only network (see docs/container.md).
+    # The proxy then listens on Jig's own address on that network, on egress_port.
+    exec_service: str = "sandbox-exec:7010"
+    browser_service: str = "sandbox-browser:7011"
+    egress_port: int = 3128
+
+
+@dataclass(frozen=True)
+class VaultConfig:
+    # "auto": Windows DPAPI on Windows, the OS keyring elsewhere.
+    # "keyfile": AES-256-GCM in the database, with a key derived from key_file (for containers).
+    backend: str = "auto"
+    key_file: str = ""
 
 
 @dataclass(frozen=True)
@@ -124,6 +137,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
+    vault: VaultConfig = field(default_factory=VaultConfig)
 
     @property
     def db_path(self) -> Path:
@@ -213,7 +227,22 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         vision=_build(VisionConfig, _section(raw, "vision"), "vision"),
         sandbox=_sandbox_config(_section(raw, "sandbox"), overrides.get("sandbox_backend")),
         model_launch=model_launch,
+        vault=_vault_config(_section(raw, "vault")),
     )
+
+
+def _vault_config(values: dict[str, Any]) -> VaultConfig:
+    values = dict(values)
+    if v := os.environ.get("JIG_VAULT_BACKEND"):
+        values["backend"] = v
+    if v := os.environ.get("JIG_VAULT_KEY_FILE"):
+        values["key_file"] = v
+    cfg = _build(VaultConfig, values, "vault")
+    if cfg.backend not in ("auto", "dpapi", "keyring", "keyfile"):
+        raise ConfigError(f"[vault] backend must be 'auto', 'dpapi', 'keyring' or 'keyfile', not {cfg.backend!r}")
+    if cfg.backend == "keyfile" and not cfg.key_file:
+        raise ConfigError("[vault] backend = 'keyfile' needs key_file (or JIG_VAULT_KEY_FILE), the path of the key")
+    return cfg
 
 
 def _sandbox_config(values: dict[str, Any], backend_override: str | None) -> SandboxConfig:
@@ -221,6 +250,6 @@ def _sandbox_config(values: dict[str, Any], backend_override: str | None) -> San
     if backend := backend_override or os.environ.get("JIG_SANDBOX_BACKEND"):
         values["backend"] = backend
     cfg = _build(SandboxConfig, values, "sandbox")
-    if cfg.backend not in ("directory", "container"):
-        raise ConfigError(f"[sandbox] backend must be 'directory' or 'container', not {cfg.backend!r}")
+    if cfg.backend not in ("directory", "container", "compose"):
+        raise ConfigError(f"[sandbox] backend must be 'directory', 'container' or 'compose', not {cfg.backend!r}")
     return cfg

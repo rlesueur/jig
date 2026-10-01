@@ -156,6 +156,10 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     app = FastAPI(title="Jig", version=__version__, lifespan=lifespan)
     app.state.auth = auth
     app.add_middleware(AuthMiddleware, auth=auth)
+    if config.sandbox.backend == "compose":
+        from ..sandbox_compose import SandboxPeerGuard
+
+        app.add_middleware(SandboxPeerGuard)  # added last, so it runs before authentication
 
     def J(request: Request) -> Jig:
         return request.app.state.jig

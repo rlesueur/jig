@@ -60,7 +60,7 @@ class Jig:
         self.audit = AuditLog(self.db)
         self.store = Store(self.db)
         self.memory = MemoryStore(self.db)
-        self.vault = Vault(self.db)
+        self.vault = Vault(self.db, config.vault)
         self.sandbox = Sandbox(config.sandbox_dir, config.runtime.agent_id)
         self.model = ModelClient(config.model, label="agent model")
         self.sentinel_model = ModelClient(config.sentinel, label="Sentinel model")
@@ -91,8 +91,9 @@ class Jig:
                            vision=self.vision, container=self.container)
 
     def _container_backend(self) -> Any:
-        """With ``[sandbox] backend = "container"``, build the Docker backend and register its tools."""
-        if self.config.sandbox.backend != "container":
+        """With ``[sandbox] backend = "container"`` (per-agent Docker) or ``"compose"`` (sandbox services next
+        to a containerised Jig), build the backend and register its tools."""
+        if self.config.sandbox.backend not in ("container", "compose"):
             return None
         from .sandbox_container import ContainerSandbox, EgressProxy
         from .tools.browser import register_browser_tools
@@ -102,6 +103,10 @@ class Jig:
                              rules=self.rules, audit=self.audit)
         register_exec_tools(self.registry)
         register_browser_tools(self.registry)
+        if self.config.sandbox.backend == "compose":
+            from .sandbox_compose import ComposeSandbox
+
+            return ComposeSandbox(self.config.sandbox, self.sandbox.root, egress)
         return ContainerSandbox(self.config.sandbox, self.sandbox.root, self.config.runtime.agent_id, egress)
 
     # Lifecycle -------------------------------------------------------------

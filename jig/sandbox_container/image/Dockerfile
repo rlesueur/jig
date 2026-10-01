@@ -2,7 +2,9 @@
 # Build with:  jig sandbox build
 # The runtime starts it with a read-only root filesystem, no capabilities, no-new-privileges,
 # CPU/memory/pids limits, only the agent's workspace mounted, and no direct network egress.
-FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
+# In container mode (compose.yaml) the same image runs the long-lived sandbox-exec and sandbox-browser
+# services (sandbox_service.py) with the same hardening.
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0
 
 # The image ships the browsers (in /ms-playwright) but not the Python package; pin it to the same release.
 RUN python3 -m pip install --no-cache-dir --break-system-packages playwright==1.63.0
@@ -11,7 +13,7 @@ RUN useradd --uid 10001 --user-group --create-home --home-dir /home/jig --shell 
     && mkdir -p /workspace /opt/jig \
     && chown jig:jig /workspace
 
-COPY relay.py browser_server.py /opt/jig/
+COPY relay.py browser_server.py sandbox_service.py /opt/jig/
 RUN chmod 0444 /opt/jig/*.py && python3 -c "import playwright.sync_api"
 
 ENV HOME=/home/jig \

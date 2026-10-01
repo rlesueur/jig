@@ -5,9 +5,11 @@ reference only at the moment the tool function is called (after the policy
 gate and Sentinel have reviewed the *reference*), and any secret value that
 appears in a tool result is redacted before the result goes back to the model.
 
-Backends: Windows DPAPI (ciphertext stored in SQLite, bound to the current
-Windows user) or the ``keyring`` library elsewhere. If neither is available,
-the vault refuses to start.
+Backends (``[vault] backend``): ``auto`` picks Windows DPAPI (ciphertext stored
+in SQLite, bound to the current Windows user) or the ``keyring`` library
+elsewhere; ``dpapi`` and ``keyring`` force one of them; ``keyfile`` encrypts
+with a key supplied as a file (``jig.vault_backends.keyfile``, for containers).
+If the selected backend is unavailable, the vault refuses to start.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import re
 import sys
 from typing import Any
 
+from .config import VaultConfig
 from .db import Database, dumps, now_iso
 from .errors import SecretNotFound, VaultUnavailable
 
@@ -64,11 +67,20 @@ class _DPAPI:
 
 
 class Vault:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, config: VaultConfig | None = None):
         self.db = db
         self._dpapi: _DPAPI | None = None
         self._keyring: Any = None
-        if sys.platform == "win32":
+        self._keyfile: Any = None
+        choice = (config or VaultConfig()).backend
+        if choice == "keyfile":
+            from .vault_backends.keyfile import KeyFileCipher
+
+            self._keyfile = KeyFileCipher(db, config.key_file)
+            self.backend = "keyfile"
+        elif choice == "dpapi" and sys.platform != "win32":
+            raise VaultUnavailable("[vault] backend = 'dpapi' needs Windows")
+        elif choice == "dpapi" or (choice == "auto" and sys.platform == "win32"):
             self._dpapi = _DPAPI()
             probe = b"jig-probe"
             if self._dpapi.decrypt(self._dpapi.encrypt(probe)) != probe:
@@ -81,7 +93,8 @@ class Vault:
             except ImportError as exc:
                 raise VaultUnavailable("Neither DPAPI nor the 'keyring' library is available") from exc
             if isinstance(keyring.get_keyring(), FailKeyring):
-                raise VaultUnavailable("'keyring' has no usable backend on this system")
+                raise VaultUnavailable("'keyring' has no usable backend on this system; in a container, set "
+                                       "[vault] backend = \"keyfile\" (see docs/container.md)")
             self._keyring = keyring
             self.backend = "keyring"
 
@@ -92,7 +105,9 @@ class Vault:
             raise ValueError("secret value must not be empty")
         ts = now_iso()
         cipher: bytes | None = None
-        if self._dpapi:
+        if self._keyfile:
+            cipher = self._keyfile.encrypt(name, value.encode("utf-8"))
+        elif self._dpapi:
             cipher = self._dpapi.encrypt(value.encode("utf-8"))
         else:
             self._keyring.set_password(_KEYRING_SERVICE, name, value)
@@ -131,6 +146,11 @@ class Vault:
         row = self.db.one("SELECT backend, ciphertext FROM secrets WHERE name = ?", (name,))
         if row is None:
             raise SecretNotFound(f"secret {name!r} does not exist")
+        if row["backend"] != self.backend:
+            raise VaultUnavailable(f"secret {name!r} was stored with the {row['backend']} backend, but this vault "
+                                   f"uses {self.backend}; set it again with the current backend")
+        if row["backend"] == "keyfile":
+            return self._keyfile.decrypt(name, row["ciphertext"]).decode("utf-8")
         if row["backend"] == "dpapi":
             if not self._dpapi:
                 raise VaultUnavailable("secret was stored with DPAPI, which is unavailable here")
