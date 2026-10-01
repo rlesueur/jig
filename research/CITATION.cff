@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this benchmark or paper, please cite it as below."
+title: "Always-On, Unattended, Local: Memory and Safety for Personal Agents on One Consumer GPU"
+type: software
+authors:
+  - family-names: "Le Sueur"
+    given-names: "Robyn"
+    # affiliation: ""   # add when known
+license: Apache-2.0
+repository-code: "https://github.com/rlesueur/jig"
+version: "0.1-pilot"
+date-released: "2026-10-02"
+keywords:
+  - personal agents
+  - prompt injection
+  - memory poisoning
+  - long-term memory
+  - local language models
