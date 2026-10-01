@@ -1,4 +1,24 @@
-# Jig
+<p align="center">
+  <a href="https://rlesueur.github.io/jig/"><img src="avatar/screenshots/jig-idle.png" alt="Jig, a neon mascot with a round dark head, glowing amber eyes, small horns and a flowing ribbon tail" width="260"></a>
+</p>
+
+<h1 align="center">Jig</h1>
+
+<p align="center"><strong>An open-source, always-on personal AI agent that runs on your own local model.</strong></p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-9a54ff" alt="Licence: Apache-2.0"></a>
+  <a href="https://github.com/rlesueur/jig/actions/workflows/pages.yml"><img src="https://github.com/rlesueur/jig/actions/workflows/pages.yml/badge.svg" alt="GitHub Pages deployment status"></a>
+  <img src="https://img.shields.io/badge/status-under%20active%20development-ffb246" alt="Status: under active development">
+</p>
+
+<p align="center">
+  <a href="https://rlesueur.github.io/jig/"><strong>Website and live avatar</strong></a> ·
+  <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 28-second video</a> ·
+  <a href="#running-it">Quick start</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 Jig is an open-source, always-on personal AI agent that runs **only on local models**. It works with any sufficiently capable model behind an OpenAI-compatible endpoint that supports tool calling, such as llama.cpp (including forks), Ollama, LM Studio or vLLM. Your memory, audit trail, rules and secrets stay on your machine, in files you can inspect and edit.
 
@@ -92,6 +112,7 @@ How to serve a vision model:
 Requirements: Python 3.11 or newer, and a local OpenAI-compatible server with a tool-capable model.
 
 ```powershell
+git clone https://github.com/rlesueur/jig.git
 cd jig
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
