@@ -14,6 +14,20 @@ top_p = 0.95
 top_k = 20
 min_p = 0.05
 
+# Optional: let Jig start and supervise llama-server itself (useful with 'jig autostart'). Leave this
+# out if you start the server yourself. Jig waits up to readiness_timeout_s for /v1/models to serve the
+# model and exits with an error if it does not; it never uses another server or model instead. If the
+# endpoint already answers, Jig uses it and starts nothing. Replace the example paths with your own.
+# [model.launch]
+# command = "C:/path/to/llama.cpp/llama-server.exe"
+# args = ["-m", "C:/path/to/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+#         "--mmproj", "C:/path/to/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf",
+#         "--host", "127.0.0.1", "--port", "8080", "-ngl", "99", "-c", "65536", "--jinja",
+#         "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.05", "--alias", "bonsai-2-27b"]
+# working_dir = ""            # relative to this file's folder; empty means this folder
+# readiness_timeout_s = 300   # loading a large model can take minutes
+# poll_interval_s = 2.0
+
 [sentinel]
 
 # Needs the vision projector: llama-server ... --mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf

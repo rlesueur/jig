@@ -134,7 +134,7 @@ class UIStatic(StaticFiles):
         return response
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     for required in (WEB_DIR / "index.html", AVATAR_JS):
         if not required.is_file():
             raise ConfigError(f"the web UI needs {required}, which is missing")
@@ -144,7 +144,7 @@ def create_app(config: Config) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        jig = Jig(config)
+        jig = Jig(config, start_reason=start_reason)
         await jig.start()
         app.state.jig = jig
         try:
@@ -248,11 +248,12 @@ def create_app(config: Config) -> FastAPI:
             "scheduler": {"last_tick": jig.scheduler.last_tick, "running": jig.scheduler.running_task_ids,
                           "max_concurrent": jig.scheduler.max_concurrent},
             "avatar": jig.tracker.current,
+            "start_reason": jig.start_reason,
         }
 
     @app.get("/state")
     async def state(request: Request) -> dict[str, Any]:
-        return J(request).tracker.current
+        return {**J(request).tracker.current, "start_reason": J(request).start_reason}
 
     @app.get("/tools")
     async def tools(request: Request) -> list[dict[str, Any]]:

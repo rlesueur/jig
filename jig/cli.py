@@ -17,9 +17,11 @@ from .vision import probe_vision
 
 
 def _serve(args: argparse.Namespace) -> int:
-    import uvicorn
+    import dataclasses
 
     from .api import create_app
+    from .instance import EXIT_INSTANCE_LOCKED, running_instance
+    from .lifecycle import configure_file_logging, run_server
 
     config = load_config(args.config)
     host = args.host or config.server.host
@@ -27,15 +29,22 @@ def _serve(args: argparse.Namespace) -> int:
     if port == 8080:
         print("Port 8080 is reserved for the model server; choose another port.", file=sys.stderr)
         return 2
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    config = dataclasses.replace(config, server=dataclasses.replace(config.server, host=host, port=port))
+    if args.log_file:
+        configure_file_logging(config.data_dir / "logs" / "jig.log")
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if holder := running_instance(config.data_dir):
+        print(f"Another Jig (pid {holder.get('pid')}, started {holder.get('started_at')}) already uses "
+              f"{config.data_dir}; stop it first with 'jig stop'.", file=sys.stderr)
+        return EXIT_INSTANCE_LOCKED
     print(f"Jig serving on http://{host}:{port}  (model {config.model.name or '(auto-discover)'} "
           f"at {config.model.base_url}; config {config.source})")
     print(f"Data: {config.data_dir}   Sandbox: {config.sandbox_dir}")
-    app = create_app(config)
+    app = create_app(config, start_reason=args.start_reason)
     print(f"Web UI: run 'jig ui' to open it signed in. API token: {config.data_dir / 'api-token'} "
           "('jig token show').")
-    uvicorn.run(app, host=host, port=port, log_level="info")
-    return 0
+    return run_server(app, host=host, port=port, data_dir=config.data_dir, log_to_file=args.log_file)
 
 
 async def _health(args: argparse.Namespace) -> int:
@@ -182,6 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="run the always-on agent and HTTP API")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
+    s.add_argument("--start-reason", choices=["manual", "autostart"], default="manual",
+                   help="recorded in the audit log and /status (autostart entries pass 'autostart')")
+    s.add_argument("--log-file", action="store_true",
+                   help="log to <data_dir>/logs/jig.log (rotating) instead of the console")
     c = sub.add_parser("chat", help="chat with a running Jig server")
     c.add_argument("--url", default="http://127.0.0.1:8766")
     c.add_argument("--mode", choices=["action", "research"], default="action")

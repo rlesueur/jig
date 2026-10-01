@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, TaskStatus
-from .db import later_iso, now_iso
+from .db import later_iso, now, now_iso
 
 if TYPE_CHECKING:
     from .runtime import Jig
@@ -15,6 +17,12 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _DEAD = {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.BLOCKED}
+# A gap between heartbeats larger than this (or 5 heartbeats, if longer) counts as a clock jump.
+CLOCK_JUMP_S = 60.0
+
+
+def _parse(ts: str) -> datetime:
+    return datetime.fromisoformat(ts)
 
 
 class Scheduler:
@@ -31,6 +39,7 @@ class Scheduler:
         self._wake = asyncio.Event()
         self._loop_task: asyncio.Task[None] | None = None
         self.last_tick: str | None = None
+        self._last_clock: tuple[float, float] | None = None
 
     @property
     def running_task_ids(self) -> list[str]:
@@ -95,9 +104,41 @@ class Scheduler:
             except TimeoutError:
                 pass
 
+    def _check_clock(self) -> None:
+        """Detect sleep, hibernation or a clock change between ticks, and keep schedules sane afterwards.
+
+        Overdue schedules are not replayed once per missed interval: each fires once on the next tick
+        (with the number of missed runs in its audit entry) and then continues from now. If the clock
+        went backwards, schedules that now look far in the future are brought back to one interval away.
+        """
+        wall, mono = time.time(), time.monotonic()
+        last, self._last_clock = self._last_clock, (wall, mono)
+        if last is None:
+            return
+        wall_gap, mono_gap = wall - last[0], mono - last[1]
+        if -CLOCK_JUMP_S < wall_gap < max(CLOCK_JUMP_S, 5 * self.heartbeat_s):
+            return
+        store = self.jig.store
+        overdue = [s["name"] for s in store.due_schedules()]
+        pulled_back = []
+        for s in store.list_schedules():
+            if s["enabled"] and _parse(s["next_run_at"]) > now() + timedelta(seconds=s["interval_s"]):
+                store.update_schedule(s["id"], next_run_at=later_iso(s["interval_s"]))
+                pulled_back.append(s["name"])
+        # Wall time far ahead of monotonic time means the clock was changed rather than the machine sleeping;
+        # on some platforms the monotonic clock also runs during sleep, so this is a hint, not a certainty.
+        cause = "clock moved backwards" if wall_gap < 0 else (
+            "clock changed" if wall_gap - mono_gap > CLOCK_JUMP_S else "sleep, hibernation or a stall")
+        log.warning("clock jump of %.0fs between heartbeats (%s); %d schedule(s) overdue", wall_gap, cause,
+                    len(overdue))
+        self.jig.audit.record("scheduler.clock_jump", f"{wall_gap:.0f}s gap between heartbeats ({cause})",
+                              actor="scheduler", wall_gap_s=round(wall_gap, 1), monotonic_gap_s=round(mono_gap, 1),
+                              cause=cause, overdue_schedules=overdue, rescheduled=pulled_back)
+
     def tick(self) -> None:
         store, audit = self.jig.store, self.jig.audit
         self.last_tick = now_iso()
+        self._check_clock()
 
         if self.paused:
             self._update_goals()
@@ -106,9 +147,10 @@ class Scheduler:
         for s in store.due_schedules():
             task = store.create_task(title=s["name"], description=s["prompt"], mode=Mode(s["mode"]),
                                      schedule_id=s["id"])
+            missed = int((now() - _parse(s["next_run_at"])).total_seconds() // s["interval_s"])
             store.update_schedule(s["id"], next_run_at=later_iso(s["interval_s"]), last_task_id=task["id"])
             audit.record("schedule.fired", f"schedule {s['name']!r} queued a task", actor="scheduler",
-                         task_id=task["id"], schedule_id=s["id"])
+                         task_id=task["id"], schedule_id=s["id"], missed_runs=missed)
             self.jig.publish_task(task)
 
         self.jig.tracker.set_monitoring(

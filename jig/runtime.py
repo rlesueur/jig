@@ -17,7 +17,9 @@ from .db import Database, new_id, now_iso
 from .errors import JigError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
+from .instance import InstanceLock
 from .model import ModelClient
+from .model_server import ModelServerSupervisor
 from .pause import RunPaused
 from .policy.approvals import ApprovalQueue
 from .policy.gate import CallContext, ToolExecutor
@@ -38,8 +40,20 @@ _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_END, EventType.SENTINE
 
 
 class Jig:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *, start_reason: str = "manual"):
         self.config = config
+        self.start_reason = start_reason
+        # Taken first: two runtimes must never open the same data directory.
+        self.instance_lock = InstanceLock(config.data_dir)
+        self.instance_lock.acquire(start_reason=start_reason, host=config.server.host, port=config.server.port,
+                                   config=str(config.source))
+        try:
+            self._init_components(config)
+        except BaseException:
+            self.instance_lock.release()
+            raise
+
+    def _init_components(self, config: Config) -> None:
         self.db = Database(config.db_path)
         self.bus = EventBus()
         self.tracker = AvatarStateTracker(self.bus)
@@ -68,6 +82,8 @@ class Jig:
                                    heartbeat_s=config.runtime.heartbeat_s)
         self._background: set[asyncio.Task[Any]] = set()
         self.capabilities: dict[str, Any] = {}
+        self.model_server = ModelServerSupervisor(config.model_launch, config.data_dir / "logs")
+        self._closed = False
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -91,6 +107,21 @@ class Jig:
     # Lifecycle -------------------------------------------------------------
     async def start(self, *, run_scheduler: bool = True, check_capabilities: bool = True) -> None:
         """Check the model servers and capabilities (failing loudly), recover interrupted work, start the heartbeat."""
+        try:
+            await self._start(run_scheduler=run_scheduler, check_capabilities=check_capabilities)
+        except BaseException:
+            try:
+                if self.container:
+                    await self.container.stop()
+            finally:
+                await self._close_resources()
+            raise
+
+    async def _start(self, *, run_scheduler: bool, check_capabilities: bool) -> None:
+        clients = [self.model]
+        if self.config.sentinel.base_url.rstrip("/") != self.config.model.base_url.rstrip("/"):
+            clients.append(self.sentinel_model)
+        model_server = await self.model_server.ensure_ready(clients)
         await self.model.health()
         await self.sentinel_model.health()
         if check_capabilities:
@@ -104,7 +135,8 @@ class Jig:
             self.capabilities["sandbox"] = await self.container.start()
         self.audit.record("runtime.start", "Jig started", actor="runtime", model=self.model.server_info,
                           sentinel=self.sentinel_model.server_info, capabilities=self.capabilities,
-                          vault_backend=self.vault.backend, sandbox=str(self.sandbox.root))
+                          vault_backend=self.vault.backend, sandbox=str(self.sandbox.root),
+                          start_reason=self.start_reason, model_server=model_server)
         self._recover()
         self._refresh_paused()
         if run_scheduler:
@@ -124,19 +156,50 @@ class Jig:
         return caps
 
     async def stop(self) -> None:
+        if self._closed:
+            return
         await self.scheduler.stop()
         for t in list(self._background):
             t.cancel()
         await asyncio.gather(*self._background, return_exceptions=True)
+        interrupted = self._mark_interrupted("Jig shut down")
         if self.container:
             await self.container.stop()
-        self.audit.record("runtime.stop", "Jig stopped", actor="runtime")
-        await self.http.aclose()
-        await self.model.aclose()
-        await self.sentinel_model.aclose()
-        self.db.close()
+        self.audit.record("runtime.stop", "Jig stopped", actor="runtime", interrupted_tasks=interrupted)
+        await self._close_resources()
+
+    async def _close_resources(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self.model_server.stop()
+            await self.http.aclose()
+            await self.model.aclose()
+            await self.sentinel_model.aclose()
+            self.db.close()
+        finally:
+            self.instance_lock.release()
+
+    def _mark_interrupted(self, why: str) -> list[str]:
+        """Put tasks that were mid-run back in the queue (they resume from their checkpoint) and close the
+        steps and chat runs that cannot resume, so nothing is left marked 'running'."""
+        ids = []
+        for status in (TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL):
+            for task in self.store.list_tasks(status=status):
+                self.set_task_status(task["id"], TaskStatus.QUEUED)
+                self.audit.record("task.interrupted", f"{why}; the task is queued and resumes from its checkpoint",
+                                  actor="runtime", task_id=task["id"], previous=status.value)
+                ids.append(task["id"])
+        self.db.execute("UPDATE run_steps SET status = 'interrupted', error = ?, finished_at = ? "
+                        "WHERE status = 'running'", (why, now_iso()))
+        for run in self.db.query("SELECT id FROM runs WHERE status = ? AND kind != 'task'", (RunStatus.RUNNING,)):
+            self.store.finish_run(run["id"], status=RunStatus.FAILED, error=why)
+        return ids
 
     def _recover(self) -> None:
+        self.db.execute("UPDATE run_steps SET status = 'interrupted', error = 'interrupted by a restart', "
+                        "finished_at = ? WHERE status = 'running'", (now_iso(),))
         for status in (TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL):
             for task in self.store.list_tasks(status=status):
                 self.store.update_task(task["id"], status=TaskStatus.QUEUED)

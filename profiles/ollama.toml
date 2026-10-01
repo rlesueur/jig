@@ -13,6 +13,11 @@ max_tokens = 8192
 temperature = 0.7
 top_p = 0.9
 
+# Optional, for 'jig autostart': Ollama usually runs as its own service, so only wait for it. Add
+# command = "ollama" and args = ["serve"] if you want Jig to start it instead.
+# [model.launch]
+# readiness_timeout_s = 120
+
 # A smaller model can review actions, which keeps the Sentinel quick:
 # [sentinel]
 # name = "qwen3:4b"

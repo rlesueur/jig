@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +41,25 @@ class EndpointConfig:
         if not value:
             raise ConfigError(f"environment variable {self.api_key_env} (api_key_env) is not set")
         return value
+
+
+@dataclass(frozen=True)
+class ModelLaunchConfig:
+    """``[model.launch]``: optionally start and supervise the model server, and wait for it to be ready.
+
+    With ``command`` empty, Jig starts nothing and only waits (for a server you run yourself, such as
+    the Ollama service). ``readiness_timeout_s = 0`` checks once and fails at once, as before.
+    """
+
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    # Relative to the config file's folder; empty means that folder.
+    working_dir: str = ""
+    env: dict[str, str] = field(default_factory=dict)
+    readiness_timeout_s: float = 0.0
+    poll_interval_s: float = 2.0
+    # How long a launched server gets to exit after it is asked to stop, before it is killed.
+    stop_timeout_s: float = 15.0
 
 
 @dataclass(frozen=True)
@@ -104,6 +123,7 @@ class Config:
     source: Path
     vision: VisionConfig = field(default_factory=VisionConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
 
     @property
     def db_path(self) -> Path:
@@ -137,6 +157,15 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     base = config_path.resolve().parent
 
     model_raw = dict(_section(raw, "model"))
+    launch_raw = model_raw.pop("launch", {})
+    if not isinstance(launch_raw, dict):
+        raise ConfigError("[model.launch] must be a table")
+    model_launch = _build(ModelLaunchConfig, launch_raw, "model.launch")
+    if model_launch.readiness_timeout_s < 0 or model_launch.poll_interval_s <= 0:
+        raise ConfigError("[model.launch] readiness_timeout_s must be >= 0 and poll_interval_s > 0")
+    if model_launch.command:
+        work = Path(model_launch.working_dir or ".")
+        model_launch = replace(model_launch, working_dir=str((work if work.is_absolute() else base / work).resolve()))
     if v := os.environ.get("JIG_MODEL_BASE_URL"):
         model_raw["base_url"] = v
     if v := os.environ.get("JIG_MODEL_NAME"):
@@ -183,6 +212,7 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         source=config_path.resolve(),
         vision=_build(VisionConfig, _section(raw, "vision"), "vision"),
         sandbox=_sandbox_config(_section(raw, "sandbox"), overrides.get("sandbox_backend")),
+        model_launch=model_launch,
     )
 
 
