@@ -19,6 +19,15 @@ class Store:
     def __init__(self, db: Database):
         self.db = db
 
+    # Runtime settings ------------------------------------------------------
+    def get_meta(self, key: str) -> str | None:
+        row = self.db.one("SELECT value FROM meta WHERE key = ?", (key,))
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.db.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, value))
+
     # Goals -----------------------------------------------------------------
     def create_goal(self, *, title: str, description: str) -> dict[str, Any]:
         ts = now_iso()
@@ -79,7 +88,8 @@ class Store:
             raise NotFound(f"task {task_id} does not exist")
         return _task_out(row)
 
-    def list_tasks(self, *, status: str | None = None, goal_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    def list_tasks(self, *, status: str | None = None, goal_id: str | None = None, limit: int = 200,
+                   newest_first: bool = False) -> list[dict[str, Any]]:
         sql, params = "SELECT * FROM tasks WHERE 1=1", []
         if status:
             sql += " AND status = ?"
@@ -87,7 +97,7 @@ class Store:
         if goal_id:
             sql += " AND goal_id = ?"
             params.append(goal_id)
-        sql += " ORDER BY created_at, rowid LIMIT ?"
+        sql += f" ORDER BY created_at {'DESC' if newest_first else 'ASC'}, rowid {'DESC' if newest_first else 'ASC'} LIMIT ?"
         params.append(limit)
         return [_task_out(r) for r in self.db.query(sql, tuple(params))]
 
@@ -171,6 +181,21 @@ class Store:
         if with_steps:
             row["step_records"] = self.list_steps(run_id)
         return row
+
+    def list_runs(self, *, task_id: str | None = None, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Run summaries, newest first, without messages or steps."""
+        sql = ("SELECT id, kind, task_id, session_id, mode, status, steps, final, error, started_at, finished_at "
+               "FROM runs WHERE 1=1")
+        params: list[Any] = []
+        if task_id:
+            sql += " AND task_id = ?"
+            params.append(task_id)
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
+        params.append(limit)
+        return self.db.query(sql, tuple(params))
 
     def runs_for_task(self, task_id: str) -> list[dict[str, Any]]:
         rows = self.db.query("SELECT id FROM runs WHERE task_id = ? ORDER BY started_at", (task_id,))

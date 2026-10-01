@@ -1,11 +1,10 @@
 """Shared names used across the runtime, the API and the avatar.
 
-The avatar component (built separately in ``avatar/``) renders the states in
-``AvatarState`` and the variants in ``TaskVariant``. Keep this module as the
-single source of truth so the two sides stay aligned.
-
-The avatar's own canonical names are ``monitoring`` (for ``sleeping``) and
-``approval`` (for ``needs-approval``); it accepts the names below as aliases.
+The avatar component (in ``avatar/``) renders the states in ``AvatarState``
+and the variants in ``TaskVariant``. These are the avatar's canonical names.
+Keep this module as the single source of truth so the two sides stay aligned.
+The avatar also accepts the older aliases ``sleeping``, ``needs-approval`` and
+``blocked``, but the runtime never emits them.
 """
 
 from __future__ import annotations
@@ -15,13 +14,14 @@ from enum import StrEnum
 
 class AvatarState(StrEnum):
     IDLE = "idle"
-    SLEEPING = "sleeping"  # background read-only monitoring only
+    MONITORING = "monitoring"  # background read-only work or active research schedules
     THINKING = "thinking"
-    WORKING = "working"  # always paired with a TaskVariant
+    WORKING = "working"  # always paired with a TaskVariant; may be flagged as background work
     TALKING = "talking"
-    NEEDS_APPROVAL = "needs-approval"
+    APPROVAL = "approval"
     SUCCESS = "success"
     ERROR = "error"
+    PAUSED = "paused"  # the agent or a task is paused by the user
 
 
 class TaskVariant(StrEnum):
@@ -93,6 +93,7 @@ class TaskStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    PAUSED = "paused"  # paused by the user; resumes from its checkpoint
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -141,3 +142,4 @@ class EventType(StrEnum):
     CHAT_DELTA = "chat.delta"
     MEMORY_CHANGED = "memory.changed"
     RULE_CHANGED = "rule.changed"
+    AGENT_STATUS = "agent.status"

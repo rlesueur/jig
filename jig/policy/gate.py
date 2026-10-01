@@ -25,6 +25,7 @@ from ..errors import (ApprovalDenied, JigError, ModeViolation, PolicyBlocked, Se
                       ToolError, ToolNotFound)
 from ..events import EventBus
 from ..model import ModelError, ToolCall
+from ..pause import until_paused
 from ..tools.registry import ToolContext, ToolRegistry
 from ..vault import Vault
 from .approvals import ApprovalQueue
@@ -43,6 +44,8 @@ class CallContext:
     intent: str
     # Called with True when the run pauses for an approval and False when it resumes.
     on_wait: Callable[[bool], Awaitable[None]] | None = None
+    # Set when the user pauses the run; an approval wait is interrupted and resumes later.
+    pause: asyncio.Event | None = None
 
 
 @dataclass
@@ -169,7 +172,8 @@ class ToolExecutor:
                 if ctx.on_wait:
                     await ctx.on_wait(True)
                 try:
-                    approval = await self.approvals.wait(approval["id"])
+                    approval = await until_paused(self.approvals.wait(approval["id"]), ctx.pause,
+                                                  f"the approval wait for {spec.name}")
                 finally:
                     if ctx.on_wait:
                         await ctx.on_wait(False)
@@ -185,7 +189,8 @@ class ToolExecutor:
                               run_id=ctx.run_id, tool=spec.name, secrets=sorted(used))
         tool_ctx = self.context_factory(ctx)
         self.bus.publish(EventType.TOOL_START, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
-                         category=spec.category.value, variant=spec.avatar_variant.value, call_id=call.id)
+                         category=spec.category.value, variant=spec.avatar_variant.value, effect=spec.effect.value,
+                         call_id=call.id)
         ok = False
         try:
             async with asyncio.timeout(TOOL_TIMEOUT_S):

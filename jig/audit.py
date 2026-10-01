@@ -35,10 +35,15 @@ class AuditLog:
         task_id: str | None = None,
         run_id: str | None = None,
         after_id: int = 0,
+        before_id: int | None = None,
+        newest_first: bool = False,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM audit WHERE id > ?"
         params: list[Any] = [after_id]
+        if before_id is not None:
+            sql += " AND id < ?"
+            params.append(before_id)
         if kind:
             # 'tool' matches 'tool.call', 'tool.result' and so on.
             sql += " AND (kind = ? OR kind LIKE ?)"
@@ -49,6 +54,6 @@ class AuditLog:
         if run_id:
             sql += " AND run_id = ?"
             params.append(run_id)
-        sql += " ORDER BY id LIMIT ?"
+        sql += f" ORDER BY id {'DESC' if newest_first else 'ASC'} LIMIT ?"
         params.append(limit)
         return self.db.query(sql, tuple(params))

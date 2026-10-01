@@ -41,7 +41,8 @@ async def test_approval_pauses_and_resumes_task(jig, events):
     statuses = [e.data["status"] for e in events if e.type == EventType.TASK_STATUS and e.data["task_id"] == task["id"]]
     assert statuses.index("waiting_approval") < statuses.index("done")
     states = [(e.data["state"], e.data["variant"]) for e in events if e.type == EventType.AVATAR_STATE]
-    assert (AvatarState.NEEDS_APPROVAL.value, None) in states
+    assert (AvatarState.APPROVAL.value, None) in states
+    assert "needs-approval" not in {s for s, _ in states}, "the runtime emits the avatar's canonical names"
     assert (AvatarState.WORKING.value, "writing") in states
 
 

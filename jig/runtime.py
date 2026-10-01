@@ -18,6 +18,7 @@ from .errors import JigError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .model import ModelClient
+from .pause import RunPaused
 from .policy.approvals import ApprovalQueue
 from .policy.gate import CallContext, ToolExecutor
 from .policy.rules import RuleStore
@@ -105,6 +106,7 @@ class Jig:
                           sentinel=self.sentinel_model.server_info, capabilities=self.capabilities,
                           vault_backend=self.vault.backend, sandbox=str(self.sandbox.root))
         self._recover()
+        self._refresh_paused()
         if run_scheduler:
             self.scheduler.start()
 
@@ -167,7 +169,69 @@ class Jig:
             self.audit.record("task.status", f"{before} -> {status}", actor="runtime", task_id=task_id,
                               before=before, after=status.value, error=fields.get("error"))
             self.publish_task(task)
+            if TaskStatus.PAUSED in (before, status):
+                self._refresh_paused()
         return task
+
+    def _refresh_paused(self) -> None:
+        self.tracker.set_paused(agent=self.scheduler.paused,
+                                tasks=len(self.store.list_tasks(status=TaskStatus.PAUSED)))
+
+    # Pause and resume ------------------------------------------------------
+    async def _await_pause(self, runner: asyncio.Task[None], timeout: float) -> None:
+        """Give a running task a moment to reach a safe point, so the reply usually shows the new status.
+        A task in the middle of a tool call pauses as soon as that call finishes."""
+        await asyncio.wait({runner}, timeout=timeout)
+
+    async def pause_task(self, task_id: str, *, wait_s: float = 5.0) -> dict[str, Any]:
+        task = self.store.get_task(task_id)
+        status = task["status"]
+        if status == TaskStatus.QUEUED:
+            self.audit.record("task.paused", "task paused by the user", actor="user", task_id=task_id)
+            return self.set_task_status(task_id, TaskStatus.PAUSED)
+        if status in (TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL):
+            runner = self.scheduler.request_pause(task_id, reason="task")
+            self.audit.record("task.pause_requested", "pause requested by the user; the task stops at its next "
+                              "safe point", actor="user", task_id=task_id)
+            await self._await_pause(runner, wait_s)
+            return {**self.store.get_task(task_id), "pause_requested": True}
+        raise ValueError(f"task {task_id} is {status} and cannot be paused")
+
+    def resume_task(self, task_id: str) -> dict[str, Any]:
+        task = self.store.get_task(task_id)
+        if task["status"] != TaskStatus.PAUSED:
+            raise ValueError(f"task {task_id} is {task['status']}, not paused")
+        self.audit.record("task.resumed", "task resumed by the user", actor="user", task_id=task_id)
+        task = self.set_task_status(task_id, TaskStatus.QUEUED, error=None)
+        self.scheduler.wake()
+        return task
+
+    def agent_status(self) -> dict[str, Any]:
+        return {"paused": self.scheduler.paused, "running": self.scheduler.running_task_ids,
+                "paused_tasks": [t["id"] for t in self.store.list_tasks(status=TaskStatus.PAUSED)]}
+
+    async def pause_agent(self, *, wait_s: float = 5.0) -> dict[str, Any]:
+        """Pause everything: schedules stop firing, no task starts, and running tasks stop at a safe point
+        and go back to the queue. Chat still works, because the user is driving it directly."""
+        if self.scheduler.paused:
+            raise ValueError("the agent is already paused")
+        runners = self.scheduler.running_tasks
+        self.scheduler.set_paused(True)
+        self.audit.record("agent.paused", "agent paused by the user", actor="user", interrupted=len(runners))
+        self.bus.publish(EventType.AGENT_STATUS, paused=True)
+        self._refresh_paused()
+        if runners:
+            await asyncio.wait(runners, timeout=wait_s)
+        return self.agent_status()
+
+    def resume_agent(self) -> dict[str, Any]:
+        if not self.scheduler.paused:
+            raise ValueError("the agent is not paused")
+        self.scheduler.set_paused(False)
+        self.audit.record("agent.resumed", "agent resumed by the user", actor="user")
+        self.bus.publish(EventType.AGENT_STATUS, paused=False)
+        self._refresh_paused()
+        return self.agent_status()
 
     def create_task(self, *, title: str, description: str, mode: Mode, delay_s: float = 0.0) -> dict[str, Any]:
         task = self.store.create_task(title=title, description=description, mode=mode, delay_s=delay_s)
@@ -181,7 +245,9 @@ class Jig:
         task = self.store.get_task(task_id)
         if task["status"] in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.BLOCKED):
             raise ValueError(f"task {task_id} is already {task['status']}")
-        self.scheduler.cancel(task_id)
+        if not self.scheduler.cancel(task_id) and (run := self.store.resumable_run(task_id)):
+            # A paused or re-queued task keeps a resumable run; close it so it is never picked up again.
+            self.store.finish_run(run["id"], status=RunStatus.CANCELLED, error="cancelled by the user")
         return self.set_task_status(task_id, TaskStatus.CANCELLED, error="cancelled by the user")
 
     def _task_prompt(self, task: dict[str, Any]) -> tuple[str, str]:
@@ -219,9 +285,17 @@ class Jig:
             self.set_task_status(task_id, TaskStatus.WAITING_APPROVAL if waiting else TaskStatus.RUNNING)
 
         spec = RunSpec(kind="task", mode=mode, intent=intent, task_id=task_id, run_id=run_id, resume=resume,
-                       on_wait=on_wait, is_shutdown=lambda: self.scheduler.stopping)
+                       on_wait=on_wait, is_shutdown=lambda: self.scheduler.stopping,
+                       pause=self.scheduler.pause_event(task_id))
         try:
             result = await self.agent.run(messages, spec)
+        except RunPaused:
+            # An explicit task pause parks the task; an agent-wide pause puts it back in the queue.
+            if self.scheduler.pause_reason(task_id) == "task":
+                self.set_task_status(task_id, TaskStatus.PAUSED)
+            else:
+                self.set_task_status(task_id, TaskStatus.QUEUED)
+            return
         except asyncio.CancelledError:
             raise
         except (JigError, OSError) as exc:

@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .constants import TRANSIENT_STATE_SECONDS, AvatarState, EventType, Mode
+from .constants import TRANSIENT_STATE_SECONDS, AvatarState, Effect, EventType, Mode, TaskVariant
 from .db import now_iso
 
 log = logging.getLogger(__name__)
@@ -119,9 +119,11 @@ _FOREGROUND_PRIORITY = {
 class AvatarStateTracker:
     """Derives one avatar state from all concurrent activity.
 
-    Precedence: needs-approval, then a transient success/error, then the most
-    salient foreground activity (talking > working > thinking), then sleeping
-    (background read-only work or active monitoring schedules), then idle.
+    Precedence: approval, then a transient success/error, then the most salient
+    foreground activity (talking > working > thinking), then paused (the agent
+    or a task is paused), then background read-only work that is using a tool
+    (``working`` with ``background: true``), then monitoring (other background
+    work or active research schedules), then idle.
     """
 
     def __init__(self, bus: EventBus):
@@ -129,7 +131,9 @@ class AvatarStateTracker:
         self._activities: dict[str, _Activity] = {}
         self._transient: tuple[AvatarState, float, dict[str, Any]] | None = None
         self._monitoring = False
-        self._current: dict[str, Any] = {"state": AvatarState.IDLE.value, "variant": None}
+        self._agent_paused = False
+        self._paused_tasks = 0
+        self._current: dict[str, Any] = {"state": AvatarState.IDLE.value, "variant": None, "background": False}
         self._timer: asyncio.TimerHandle | None = None
         bus.add_listener(self._on_event)
 
@@ -140,6 +144,11 @@ class AvatarStateTracker:
     def set_monitoring(self, monitoring: bool) -> None:
         if monitoring != self._monitoring:
             self._monitoring = monitoring
+            self._recompute()
+
+    def set_paused(self, *, agent: bool, tasks: int) -> None:
+        if (agent, tasks) != (self._agent_paused, self._paused_tasks):
+            self._agent_paused, self._paused_tasks = agent, tasks
             self._recompute()
 
     def _on_event(self, event: Event) -> None:
@@ -166,7 +175,10 @@ class AvatarStateTracker:
             else:
                 return
         elif t == EventType.TOOL_START:
-            act.phase, act.variant = AvatarState.WORKING, d.get("variant")
+            variant = d.get("variant")
+            if act.background and d.get("effect") == Effect.READ:
+                variant = TaskVariant.BROWSING.value  # background fetching or reading shows dimmed browsing
+            act.phase, act.variant = AvatarState.WORKING, variant
         elif t == EventType.APPROVAL_REQUESTED:
             act.pending_approvals.add(d["approval_id"])
         elif t == EventType.APPROVAL_RESOLVED:
@@ -203,29 +215,41 @@ class AvatarStateTracker:
         waiting = [a for a in acts if a.pending_approvals]
         if waiting:
             a = max(waiting, key=lambda a: a.updated)
-            return self._state(AvatarState.NEEDS_APPROVAL, None, a, pending=sum(len(w.pending_approvals) for w in waiting))
+            return self._state(AvatarState.APPROVAL, None, a, pending=sum(len(w.pending_approvals) for w in waiting))
         if self._transient and self._transient[1] > time.monotonic():
             state, _, ctx = self._transient
-            return {"state": state.value, "variant": None, **ctx}
+            return {"state": state.value, "variant": None, "background": False, **ctx}
         self._transient = None
         foreground = [a for a in acts if not a.background]
         if foreground:
             a = max(foreground, key=lambda a: (_FOREGROUND_PRIORITY[a.phase], a.updated))
             return self._state(a.phase, a.variant, a)
+        if self._agent_paused or self._paused_tasks:
+            return self._idle(AvatarState.PAUSED, agent_paused=self._agent_paused, paused_tasks=self._paused_tasks)
+        working = [a for a in acts if a.phase == AvatarState.WORKING]
+        if working:
+            a = max(working, key=lambda a: a.updated)
+            return self._state(AvatarState.WORKING, a.variant, a, background=True)
         if acts:
-            return self._state(AvatarState.SLEEPING, None, max(acts, key=lambda a: a.updated))
+            return self._state(AvatarState.MONITORING, None, max(acts, key=lambda a: a.updated))
         if self._monitoring:
-            return {"state": AvatarState.SLEEPING.value, "variant": None, "run_id": None, "task_id": None}
-        return {"state": AvatarState.IDLE.value, "variant": None, "run_id": None, "task_id": None}
+            return self._idle(AvatarState.MONITORING)
+        return self._idle(AvatarState.IDLE)
 
-    def _state(self, state: AvatarState, variant: str | None, a: _Activity, **extra: Any) -> dict[str, Any]:
-        return {"state": state.value, "variant": variant, "run_id": a.run_id, "task_id": a.task_id, **extra}
+    def _state(self, state: AvatarState, variant: str | None, a: _Activity, *, background: bool = False,
+               **extra: Any) -> dict[str, Any]:
+        return {"state": state.value, "variant": variant, "background": background, "run_id": a.run_id,
+                "task_id": a.task_id, **extra}
+
+    @staticmethod
+    def _idle(state: AvatarState, **extra: Any) -> dict[str, Any]:
+        return {"state": state.value, "variant": None, "background": False, "run_id": None, "task_id": None, **extra}
 
     def _recompute(self) -> None:
         derived = self._derive()
         derived["active"] = len(self._activities)
-        key = (derived["state"], derived["variant"])
-        if key != (self._current["state"], self._current["variant"]):
+        key = (derived["state"], derived["variant"], derived["background"])
+        if key != (self._current["state"], self._current["variant"], self._current["background"]):
             self._current = derived
             self.bus.publish(EventType.AVATAR_STATE, **derived)
         else:

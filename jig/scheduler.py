@@ -23,7 +23,11 @@ class Scheduler:
         self.max_concurrent = max_concurrent
         self.heartbeat_s = heartbeat_s
         self.stopping = False
+        # The agent-wide pause survives restarts; it is stored in the database.
+        self.paused = jig.store.get_meta("agent_paused") == "1"
         self._running: dict[str, asyncio.Task[None]] = {}
+        self._pause: dict[str, asyncio.Event] = {}
+        self._pause_reason: dict[str, str] = {}
         self._wake = asyncio.Event()
         self._loop_task: asyncio.Task[None] | None = None
         self.last_tick: str | None = None
@@ -31,6 +35,35 @@ class Scheduler:
     @property
     def running_task_ids(self) -> list[str]:
         return list(self._running)
+
+    @property
+    def running_tasks(self) -> list[asyncio.Task[None]]:
+        return list(self._running.values())
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume the whole agent: no schedules fire and no tasks start while paused."""
+        self.paused = paused
+        self.jig.store.set_meta("agent_paused", "1" if paused else "0")
+        if paused:
+            for task_id in list(self._running):
+                self.request_pause(task_id, reason="agent")
+        self.wake()
+
+    def pause_event(self, task_id: str) -> asyncio.Event | None:
+        return self._pause.get(task_id)
+
+    def pause_reason(self, task_id: str) -> str | None:
+        return self._pause_reason.get(task_id)
+
+    def request_pause(self, task_id: str, *, reason: str) -> asyncio.Task[None]:
+        """Ask a running task to stop at its next safe point. ``reason`` is 'task' or 'agent'."""
+        t = self._running.get(task_id)
+        if t is None:
+            raise ValueError(f"task {task_id} is not running")
+        if self._pause_reason.get(task_id) != "task":  # an explicit task pause wins over an agent pause
+            self._pause_reason[task_id] = reason
+        self._pause[task_id].set()
+        return t
 
     def start(self) -> None:
         self._loop_task = asyncio.create_task(self._loop(), name="jig-heartbeat")
@@ -66,6 +99,10 @@ class Scheduler:
         store, audit = self.jig.store, self.jig.audit
         self.last_tick = now_iso()
 
+        if self.paused:
+            self._update_goals()
+            return
+
         for s in store.due_schedules():
             task = store.create_task(title=s["name"], description=s["prompt"], mode=Mode(s["mode"]),
                                      schedule_id=s["id"])
@@ -93,11 +130,14 @@ class Scheduler:
 
     def _launch(self, task_id: str) -> None:
         self.jig.set_task_status(task_id, TaskStatus.RUNNING)
+        self._pause[task_id] = asyncio.Event()
         t = asyncio.create_task(self.jig.run_task(task_id), name=f"jig-task-{task_id}")
         self._running[task_id] = t
 
         def done(_: asyncio.Task[None]) -> None:
             self._running.pop(task_id, None)
+            self._pause.pop(task_id, None)
+            self._pause_reason.pop(task_id, None)
             self.wake()
 
         t.add_done_callback(done)

@@ -12,6 +12,7 @@ from ..constants import EventType, Mode, RunStatus
 from ..errors import JigError, ModelError, StepLimitExceeded
 from ..events import EventBus
 from ..model import ModelClient, ToolCall
+from ..pause import RunPaused, until_paused
 from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
@@ -31,6 +32,8 @@ class RunSpec:
     on_delta: DeltaSink | None = None
     on_wait: Callable[[bool], Awaitable[None]] | None = None
     is_shutdown: Callable[[], bool] = lambda: False
+    # Set to pause the run at the next safe point (see jig.pause); the run stays resumable.
+    pause: asyncio.Event | None = None
 
 
 @dataclass
@@ -79,7 +82,7 @@ class Agent:
         self.audit.record("run.start", f"{spec.kind} run in {spec.mode} mode{' (resumed)' if resuming else ''}",
                           **ids, run_kind=spec.kind, mode=spec.mode.value)
         call_ctx = CallContext(run_id=run_id, task_id=spec.task_id, mode=spec.mode, intent=spec.intent,
-                               on_wait=spec.on_wait)
+                               on_wait=spec.on_wait, pause=spec.pause)
         steps = sum(1 for m in messages if m["role"] == "assistant")
         try:
             if pending := _pending_tool_calls(messages):
@@ -88,8 +91,9 @@ class Agent:
             while True:
                 if steps >= limit:
                     raise StepLimitExceeded(f"run stopped after reaching the step limit of {limit} model calls")
+                result = await until_paused(self._model_step(messages, spec, run_id, steps + 1), spec.pause,
+                                            f"model call {steps + 1}")
                 steps += 1
-                result = await self._model_step(messages, spec, run_id, steps)
                 messages.append(result.assistant_message())
                 self.store.checkpoint_run(run_id, messages, steps)
                 if not result.tool_calls:
@@ -99,6 +103,12 @@ class Agent:
                     break
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
                 self.store.checkpoint_run(run_id, messages, steps)
+        except RunPaused as exc:
+            # The run record stays 'running' with its checkpoint, so resuming the task picks it up.
+            self.store.checkpoint_run(run_id, messages, steps)
+            self.audit.record("run.end", f"run paused: {exc}", **ids, status="paused")
+            self.bus.publish(EventType.RUN_END, status="paused", **ids)
+            raise
         except asyncio.CancelledError:
             status = "interrupted" if spec.is_shutdown() else RunStatus.CANCELLED.value
             if status == RunStatus.CANCELLED.value:
@@ -135,6 +145,10 @@ class Agent:
 
         try:
             result = await self.model.chat(messages, tools=tools, on_delta=on_delta)
+        except asyncio.CancelledError:
+            self.store.finish_step(step_id, status="cancelled", error="interrupted")
+            self.bus.publish(EventType.MODEL_END, step=idx, ok=False, **ids)
+            raise
         except JigError as exc:
             self.store.finish_step(step_id, status="error", error=str(exc))
             self.audit.record("model.call", f"model call failed: {type(exc).__name__}", **ids, step=idx,
@@ -155,8 +169,25 @@ class Agent:
                          idx: int) -> None:
         step_ids = [self.store.start_step(ctx.run_id, idx, "tool_call", c.name, {"id": c.id, "arguments": c.arguments_raw})
                     for c in calls]
-        outcomes = await asyncio.gather(*(self.executor.execute(c, ctx) for c in calls))
+        # Wait for every call, so a pause in one (an approval wait) never abandons another that is executing.
+        outcomes = await asyncio.gather(*(self.executor.execute(c, ctx) for c in calls), return_exceptions=True)
+        paused: RunPaused | None = None
+        failure: BaseException | None = None
         for step_id, outcome in zip(step_ids, outcomes, strict=True):
+            if isinstance(outcome, RunPaused):
+                self.store.finish_step(step_id, status="paused", error=str(outcome))
+                paused = outcome
+                continue
+            if isinstance(outcome, BaseException):
+                self.store.finish_step(step_id, status="error", error=f"{type(outcome).__name__}: {outcome}")
+                failure = failure or outcome
+                continue
             self.store.finish_step(step_id, status="ok" if outcome.ok else "error", output=outcome.as_dict(),
                                    error=outcome.error)
             messages.append({"role": "tool", "tool_call_id": outcome.call_id, "content": outcome.message_content()})
+        if failure is not None:
+            raise failure
+        if paused is not None:
+            # Keep the finished results; the paused calls have none yet, so they run again on resume.
+            self.store.checkpoint_run(ctx.run_id, messages, idx)
+            raise paused
