@@ -1,4 +1,8 @@
-"""HTTP API: chat, goals, tasks, schedules, approvals, rules, memory, notes, audit, vault and events."""
+"""HTTP API: chat, goals, tasks, schedules, approvals, rules, memory, notes, audit, vault and events.
+
+Every route needs the API token (see ``jig.auth``) except ``/health``, the web
+UI's static files and the browser session exchange.
+"""
 
 from __future__ import annotations
 
@@ -6,15 +10,19 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from ..auth import Auth, AuthMiddleware, TokenStore, clear_cookie_header, session_cookie_header
 from ..config import Config
 from ..constants import EventType, Mode
+from ..errors import ConfigError
 from ..errors import ModelServerUnavailable, NotFound, SecretNotFound, ToolArgumentError
 from ..events import SubscriberOverflow
 from ..policy.approvals import ApprovalConflict
@@ -96,11 +104,44 @@ class SecretIn(BaseModel):
     allowed_tools: list[str] = []
 
 
+class SessionIn(BaseModel):
+    token: str | None = None
+    code: str | None = None
+
+
 def _set(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(exclude_unset=True)
 
 
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+AVATAR_JS = Path(__file__).resolve().parents[2] / "avatar" / "jig-avatar.js"
+
+# The UI is dependency-free and same-origin only. The avatar's shadow DOM uses an inline <style>.
+UI_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+                               "form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-cache",
+}
+
+
+class UIStatic(StaticFiles):
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.update(UI_HEADERS)
+        return response
+
+
 def create_app(config: Config) -> FastAPI:
+    for required in (WEB_DIR / "index.html", AVATAR_JS):
+        if not required.is_file():
+            raise ConfigError(f"the web UI needs {required}, which is missing")
+    tokens = TokenStore(config.data_dir)
+    tokens.ensure()  # created on first run; fails loudly if it cannot be made private
+    auth = Auth(tokens)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         jig = Jig(config)
@@ -112,9 +153,57 @@ def create_app(config: Config) -> FastAPI:
             await jig.stop()
 
     app = FastAPI(title="Jig", version=__version__, lifespan=lifespan)
+    app.state.auth = auth
+    app.add_middleware(AuthMiddleware, auth=auth)
 
     def J(request: Request) -> Jig:
         return request.app.state.jig
+
+    # Web UI (public static files; every API call it makes is authenticated) ------------------
+    @app.get("/", include_in_schema=False)
+    async def ui_index() -> FileResponse:
+        return FileResponse(WEB_DIR / "index.html", headers=UI_HEADERS)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        return FileResponse(WEB_DIR / "favicon.svg", media_type="image/svg+xml", headers=UI_HEADERS)
+
+    @app.get("/avatar/jig-avatar.js", include_in_schema=False)
+    async def avatar_js() -> FileResponse:
+        return FileResponse(AVATAR_JS, media_type="text/javascript", headers=UI_HEADERS)
+
+    app.mount("/web", UIStatic(directory=WEB_DIR), name="web")
+
+    # Authentication ---------------------------------------------------------------------------
+    @app.post("/auth/session")
+    async def create_session(body: SessionIn) -> JSONResponse:
+        """Exchange the API token or a one-time login code for an HttpOnly session cookie."""
+        if body.code:
+            ok = auth.redeem_login_code(body.code)
+        elif body.token:
+            ok = auth.token_valid(body.token.strip())
+        else:
+            raise HTTPException(400, "send either 'token' or 'code'")
+        if not ok:
+            raise HTTPException(401, "that token or login code is not valid (login codes work once and expire)")
+        value, max_age = auth.new_session()
+        return JSONResponse({"authenticated": True, "expires_in": max_age},
+                            headers={"Set-Cookie": session_cookie_header(value, max_age)})
+
+    @app.get("/auth/session")
+    async def get_session(request: Request) -> dict[str, Any]:
+        principal = auth.authenticate({k.lower(): v for k, v in request.headers.items()})
+        return {"authenticated": principal is not None, "via": principal.via if principal else None}
+
+    @app.post("/auth/logout")
+    async def logout() -> JSONResponse:
+        return JSONResponse({"authenticated": False}, headers={"Set-Cookie": clear_cookie_header()})
+
+    @app.post("/auth/login-code")
+    async def login_code() -> dict[str, Any]:
+        """A one-time code for signing a browser in (used by 'jig ui'); it never carries the token itself."""
+        code, ttl = auth.new_login_code()
+        return {"code": code, "expires_in": ttl}
 
     @app.exception_handler(NotFound)
     @app.exception_handler(SecretNotFound)
@@ -136,13 +225,21 @@ def create_app(config: Config) -> FastAPI:
 
     # Health and state ------------------------------------------------------
     @app.get("/health")
-    async def health(request: Request) -> dict[str, Any]:
+    async def health() -> dict[str, Any]:
+        """Public liveness check. It says only that the server is up: no versions, models or paths."""
+        return {"status": "ok"}
+
+    @app.get("/status")
+    async def status(request: Request) -> dict[str, Any]:
         jig = J(request)
         model = await jig.model.health()
         sentinel = await jig.sentinel_model.health()
         return {
             "status": "ok",
             "version": __version__,
+            "model_endpoint": config.model.base_url,
+            "sentinel_endpoint": config.sentinel.base_url,
+            "agent": jig.agent_status(),
             "model": model,
             "sentinel_model": sentinel,
             "capabilities": jig.capabilities,
@@ -249,8 +346,9 @@ def create_app(config: Config) -> FastAPI:
                                       delay_s=body.delay_s)
 
     @app.get("/tasks")
-    async def list_tasks(request: Request, status: str | None = None, goal_id: str | None = None) -> list[dict[str, Any]]:
-        return J(request).store.list_tasks(status=status, goal_id=goal_id)
+    async def list_tasks(request: Request, status: str | None = None, goal_id: str | None = None,
+                         newest_first: bool = False, limit: int = Query(200, le=1000)) -> list[dict[str, Any]]:
+        return J(request).store.list_tasks(status=status, goal_id=goal_id, newest_first=newest_first, limit=limit)
 
     @app.get("/tasks/{task_id}")
     async def get_task(request: Request, task_id: str) -> dict[str, Any]:
@@ -260,6 +358,31 @@ def create_app(config: Config) -> FastAPI:
     @app.post("/tasks/{task_id}/cancel")
     async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
         return J(request).cancel_task(task_id)
+
+    @app.post("/tasks/{task_id}/pause")
+    async def pause_task(request: Request, task_id: str) -> dict[str, Any]:
+        return await J(request).pause_task(task_id)
+
+    @app.post("/tasks/{task_id}/resume")
+    async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
+        return J(request).resume_task(task_id)
+
+    @app.get("/agent")
+    async def agent_status(request: Request) -> dict[str, Any]:
+        return J(request).agent_status()
+
+    @app.post("/agent/pause")
+    async def pause_agent(request: Request) -> dict[str, Any]:
+        return await J(request).pause_agent()
+
+    @app.post("/agent/resume")
+    async def resume_agent(request: Request) -> dict[str, Any]:
+        return J(request).resume_agent()
+
+    @app.get("/runs")
+    async def list_runs(request: Request, task_id: str | None = None, kind: str | None = None,
+                        limit: int = Query(50, le=500)) -> list[dict[str, Any]]:
+        return J(request).store.list_runs(task_id=task_id, kind=kind, limit=limit)
 
     @app.get("/runs/{run_id}")
     async def get_run(request: Request, run_id: str) -> dict[str, Any]:
@@ -385,9 +508,10 @@ def create_app(config: Config) -> FastAPI:
     # Audit -----------------------------------------------------------------
     @app.get("/audit")
     async def audit(request: Request, kind: str | None = None, task_id: str | None = None,
-                    run_id: str | None = None, after_id: int = 0,
-                    limit: int = Query(200, le=5000)) -> list[dict[str, Any]]:
-        rows = J(request).audit.query(kind=kind, task_id=task_id, run_id=run_id, after_id=after_id, limit=limit)
+                    run_id: str | None = None, after_id: int = 0, before_id: int | None = None,
+                    newest_first: bool = False, limit: int = Query(200, le=5000)) -> list[dict[str, Any]]:
+        rows = J(request).audit.query(kind=kind, task_id=task_id, run_id=run_id, after_id=after_id,
+                                      before_id=before_id, newest_first=newest_first, limit=limit)
         for r in rows:
             r["data"] = json.loads(r.pop("data_json"))
         return rows

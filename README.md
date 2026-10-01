@@ -120,8 +120,15 @@ python -m venv .venv
 # Point jig.toml (or a profile) at your server, then:
 .\.venv\Scripts\jig health                    # checks the endpoints and runs the capability probes
 .\.venv\Scripts\jig serve                     # always-on agent and API on http://127.0.0.1:8766
+.\.venv\Scripts\jig ui                        # opens the web UI, already signed in
 .\.venv\Scripts\jig chat --url http://127.0.0.1:8766
 ```
+
+### Web UI
+
+`jig serve` also serves a dependency-free web UI at `http://127.0.0.1:8766/`. It has the live avatar (on the real `/events` stream), streaming chat with collapsed thinking, activity (goals, tasks and runs, with create, cancel, pause and resume), the approvals inbox with the Sentinel's verdict and reason, memory (list, search, edit, forget), the custom rules editor (core rules are read-only), the audit log and the model status. The avatar is served from `avatar/jig-avatar.js` in this repository, not copied, so the UI needs an editable install (`pip install -e .`) or a source checkout.
+
+Run `jig ui` to open it signed in (see [Access and the API token](#access-and-the-api-token)). `jig ui --print-url` prints the one-time link instead of opening a browser.
 
 ### Choosing a model server
 
@@ -240,29 +247,43 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 
 ## Avatar states
 
-`/events` (WebSocket) and `/events/sse` stream every runtime event, including `avatar.state` events with `{state, variant, run_id, task_id}`. `GET /state` returns the current state. Names live in `jig/constants.py`:
+`/events` (WebSocket) and `/events/sse` stream every runtime event, including `avatar.state` events with `{state, variant, background, run_id, task_id}`. `GET /state` returns the current state. The names are the avatar's own (`avatar/README.md`) and live in `jig/constants.py`:
 
-`idle`, `sleeping` (background read-only work or active research schedules), `thinking`, `working` with a variant (`browsing`, `writing`, `coding`, `shopping`, `scheduling`), `talking`, `needs-approval`, `success` and `error`. The last two are shown for 3 seconds.
+`idle`, `monitoring` (active research schedules, nothing running), `thinking`, `working` with a variant (`browsing`, `writing`, `coding`, `shopping`, `scheduling`), `talking`, `approval`, `paused` (the agent or a task is paused), `success` and `error`. The last two are shown for 3 seconds.
 
-Each tool category maps to a variant: web to `browsing`, files to `writing`, time to `scheduling`, and so on. When several things happen at once, the precedence is needs-approval, then success/error, then talking, working, thinking, then sleeping, then idle.
+Each tool category maps to a variant: web to `browsing`, files to `writing`, time to `scheduling`, and so on. Proactive read-only research is reported as `working` / `browsing` with `background: true`, which the avatar draws dimmed, half-lidded and slower (`setState('working', {task: 'browsing', background: true})`). When several things happen at once, the precedence is approval, then success/error, then foreground talking, working, thinking, then paused, then background working, then monitoring, then idle.
+
+### Pause and resume
+
+`POST /tasks/{id}/pause` pauses a task and `POST /tasks/{id}/resume` puts it back in the queue; it continues from its last checkpoint and reuses any approval already given. A pause takes effect at the next safe point: between steps, during a model call or while waiting for an approval. A tool that is already running is allowed to finish first. `POST /agent/pause` pauses the whole agent (it survives restarts): schedules stop firing, no task starts, and running tasks are interrupted and re-queued. Chat still works. `POST /agent/resume` undoes it, and `GET /agent` reports it.
 
 ## API
 
 | Area | Endpoints |
 | --- | --- |
-| Health | `GET /health`, `GET /state`, `GET /tools` |
+| Health | `GET /health` (public, `{"status": "ok"}` only), `GET /status`, `GET /state`, `GET /tools` |
+| Auth | `POST /auth/login-code`, `GET/POST /auth/session`, `POST /auth/logout` |
+| Agent | `GET /agent`, `POST /agent/pause`, `POST /agent/resume` |
 | Events | `WS /events`, `GET /events/sse`, `GET /events/recent?after=` |
 | Chat | `POST /chat` (NDJSON stream: `start`, `reasoning`, `content`, `event`, `done` / `error`), `GET /sessions/{id}` |
 | Goals | `POST /goals`, `GET /goals`, `GET /goals/{id}`, `POST /goals/{id}/cancel` |
-| Tasks | `POST /tasks`, `GET /tasks`, `GET /tasks/{id}`, `POST /tasks/{id}/cancel`, `GET /runs/{id}` |
+| Tasks | `POST /tasks`, `GET /tasks?newest_first=&limit=`, `GET /tasks/{id}`, `POST /tasks/{id}/cancel`, `POST /tasks/{id}/pause`, `POST /tasks/{id}/resume`, `GET /runs?task_id=&kind=`, `GET /runs/{id}` |
 | Schedules | `POST /schedules`, `GET /schedules`, `PATCH /schedules/{id}`, `DELETE /schedules/{id}` |
 | Approvals | `GET /approvals?status=pending`, `GET /approvals/{id}`, `POST /approvals/{id}` `{approve, note}` |
 | Rules | `GET/POST /rules`, `GET/PATCH/DELETE /rules/{id}`, `GET /rules/core` |
 | Memory | `GET/POST /memory`, `GET/PATCH/DELETE /memory/{id}`, `GET /notes` |
-| Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&limit=` |
+| Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&before_id=&newest_first=&limit=` |
 | Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` |
 
-The API binds to `127.0.0.1` and does not yet require authentication; see the roadmap.
+### Access and the API token
+
+The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI's static files needs authentication, including `/events`, `/events/sse` and `/approvals`.
+
+- **The token.** On first start Jig generates a random 256-bit token and saves it as `<data_dir>/api-token`. On Windows the file's ACL is cut down to your own account (inheritance removed) and then read back and checked; on other systems it is mode `0600`. If the permissions cannot be set or are looser than that, Jig refuses to start. `jig token show` prints it and `jig token rotate` replaces it; a rotation takes effect at once and signs out every browser session.
+- **Programs** send `Authorization: Bearer <token>`, on the WebSocket handshake too. `jig chat`, `jig ui` and the scripts in `scripts/` read the token file themselves.
+- **The browser** never holds the token. `jig ui` asks the API for a one-time login code (valid for 2 minutes, single use) and opens `http://127.0.0.1:8766/#code=...`. The code is in the URL fragment, which the browser never sends to the server, so it does not appear in logs. The page exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie (an HMAC of the token with a 12-hour expiry) and removes the fragment from the address bar. You can also paste the token into the sign-in dialog. Requests that use the cookie and change something, and WebSocket handshakes that use it, must come from the UI's own origin, which stops other sites and pages from driving the API.
+- **WebSockets** are authenticated during the handshake, either by the bearer header or by the cookie plus the `Origin` check. The token is never put in a query string. A rejected handshake is closed with code 1008.
+- **`/health` is public** so supervisors and container health checks can probe Jig without a secret. It returns only `{"status": "ok"}`. The model endpoint, model name and capability results are under `GET /status`, which needs authentication.
 
 ## Roadmap
 
@@ -272,7 +293,7 @@ The API binds to `127.0.0.1` and does not yet require authentication; see the ro
 - **A smaller dedicated Sentinel model** for faster reviews (already configurable via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
-- An API token for local clients, embeddings-backed memory search, and cron-style schedules.
+- Embeddings-backed memory search and cron-style schedules.
 
 ## Licence
 

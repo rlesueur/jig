@@ -90,12 +90,18 @@ async def test_health_check_fails_loudly_for_wrong_model(config):
 
 
 def test_http_api_crud(config):
-    with TestClient(create_app(config)) as client:
-        health = client.get("/health").json()
-        assert health["status"] == "ok"
-        assert health["model"]["model"] == (config.model.name or health["model"]["model"])
-        assert health["capabilities"]["agent"]["tool_calling"] is True
-        assert client.get("/state").json()["state"] == "idle"
+    app = create_app(config)
+    token = app.state.auth.tokens.get()
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+        status = client.get("/status").json()
+        assert status["status"] == "ok"
+        assert status["model"]["model"] == (config.model.name or status["model"]["model"])
+        assert status["model_endpoint"] == config.model.base_url
+        assert status["capabilities"]["agent"]["tool_calling"] is True
+        assert status["agent"]["paused"] is False
+        state = client.get("/state").json()
+        assert state["state"] == "idle" and state["background"] is False
 
         m = client.post("/memory", json={"content": "Likes walking in the Peak District", "tags": ["hobby"]}).json()
         assert client.get("/memory", params={"q": "walking"}).json()[0]["id"] == m["id"]

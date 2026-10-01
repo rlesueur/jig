@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jig</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <link rel="stylesheet" href="/web/style.css">
+  <script type="module" src="/web/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="brand">
+      <jig-avatar id="mini-avatar" shape="circle" framing="icon" aria-hidden="true"></jig-avatar>
+      <h1>Jig</h1>
+    </div>
+    <div class="top-actions">
+      <span class="pill" id="conn" role="status" aria-live="polite" data-tone="muted">Not connected</span>
+      <button type="button" id="agent-toggle" class="btn" disabled>Pause agent</button>
+      <button type="button" id="logout" class="btn btn-quiet" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <div id="errors" class="errors" role="alert" aria-live="assertive"></div>
+
+  <div class="layout" id="app" hidden>
+    <aside class="side" aria-label="Jig's state">
+      <section class="card avatar-card" aria-labelledby="avatar-heading">
+        <h2 id="avatar-heading" class="sr-only">Live avatar</h2>
+        <div class="avatar-wrap"><jig-avatar id="avatar" framing="full"></jig-avatar></div>
+        <p class="avatar-caption" aria-live="polite">
+          <span id="avatar-state">idle</span><span id="avatar-task"></span><span id="avatar-bg" hidden> · background</span>
+        </p>
+      </section>
+
+      <section class="card" aria-labelledby="status-heading">
+        <div class="card-head">
+          <h2 id="status-heading">Status</h2>
+          <button type="button" class="btn btn-small" id="status-refresh">Refresh</button>
+        </div>
+        <dl class="kv" id="status-list">
+          <dt>Connection</dt><dd id="st-conn">—</dd>
+          <dt>Model endpoint</dt><dd id="st-endpoint">—</dd>
+          <dt>Model</dt><dd id="st-model">—</dd>
+          <dt>Context</dt><dd id="st-context">—</dd>
+          <dt>Capability check</dt><dd id="st-caps">—</dd>
+          <dt>Sentinel</dt><dd id="st-sentinel">—</dd>
+          <dt>Agent</dt><dd id="st-agent">—</dd>
+          <dt>Vault</dt><dd id="st-vault">—</dd>
+        </dl>
+      </section>
+    </aside>
+
+    <main id="main" tabindex="-1">
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="true">Chat</button>
+        <button type="button" role="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false" tabindex="-1">Activity</button>
+        <button type="button" role="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false" tabindex="-1">Approvals <span class="badge" id="approvals-badge" hidden>0</span></button>
+        <button type="button" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1">Memory</button>
+        <button type="button" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1">Rules</button>
+        <button type="button" role="tab" id="tab-audit" aria-controls="panel-audit" aria-selected="false" tabindex="-1">Audit log</button>
+      </nav>
+
+      <!-- Chat -->
+      <section class="panel" role="tabpanel" id="panel-chat" aria-labelledby="tab-chat">
+        <div class="chat-log" id="chat-log" aria-live="polite" aria-label="Conversation"></div>
+        <form class="chat-form" id="chat-form">
+          <label for="chat-input" class="sr-only">Message</label>
+          <textarea id="chat-input" rows="2" placeholder="Message Jig (Enter to send, Shift+Enter for a new line)" required></textarea>
+          <div class="chat-controls">
+            <label>Mode
+              <select id="chat-mode">
+                <option value="action">Action</option>
+                <option value="research">Research (read-only)</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn-quiet" id="chat-new">New conversation</button>
+            <button type="submit" class="btn btn-primary" id="chat-send">Send</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Activity -->
+      <section class="panel" role="tabpanel" id="panel-activity" aria-labelledby="tab-activity" hidden>
+        <div class="grid-2">
+          <form class="card form" id="goal-form">
+            <h2>New goal</h2>
+            <label for="goal-desc">What should Jig achieve?</label>
+            <textarea id="goal-desc" rows="3" required></textarea>
+            <label for="goal-title">Title (optional)</label>
+            <input id="goal-title" type="text">
+            <button type="submit" class="btn btn-primary">Create goal</button>
+          </form>
+          <form class="card form" id="task-form">
+            <h2>New task</h2>
+            <label for="task-title">Title</label>
+            <input id="task-title" type="text" required>
+            <label for="task-desc">Instructions</label>
+            <textarea id="task-desc" rows="2" required></textarea>
+            <div class="row">
+              <label>Mode
+                <select id="task-mode">
+                  <option value="action">Action</option>
+                  <option value="research">Research (read-only, background)</option>
+                </select>
+              </label>
+              <label>Start in (seconds) <input id="task-delay" type="number" min="0" step="1" value="0"></label>
+            </div>
+            <button type="submit" class="btn btn-primary">Create task</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Goals</h2><button type="button" class="btn btn-small" data-refresh="activity">Refresh</button></div>
+          <div id="goals" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Standalone and scheduled tasks</h2>
+          <div id="tasks" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Recent runs</h2>
+          <div class="table-wrap">
+            <table class="table" id="runs">
+              <caption class="sr-only">Recent runs</caption>
+              <thead><tr><th scope="col">Run</th><th scope="col">Kind</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Steps</th><th scope="col">Started</th><th scope="col">Result or error</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Approvals -->
+      <section class="panel" role="tabpanel" id="panel-approvals" aria-labelledby="tab-approvals" hidden>
+        <div class="card">
+          <div class="card-head"><h2>Waiting for you</h2><button type="button" class="btn btn-small" data-refresh="approvals">Refresh</button></div>
+          <div id="approvals-pending" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Recently answered</h2>
+          <div id="approvals-done" class="list"></div>
+        </div>
+      </section>
+
+      <!-- Memory -->
+      <section class="panel" role="tabpanel" id="panel-memory" aria-labelledby="tab-memory" hidden>
+        <div class="grid-2">
+          <form class="card form" id="memory-search" role="search">
+            <h2>Search memory</h2>
+            <label for="memory-q">Search words</label>
+            <div class="row">
+              <input id="memory-q" type="search">
+              <button type="submit" class="btn">Search</button>
+              <button type="button" class="btn btn-quiet" id="memory-clear">Show all</button>
+            </div>
+          </form>
+          <form class="card form" id="memory-add">
+            <h2>Add a memory</h2>
+            <label for="memory-content">Content</label>
+            <textarea id="memory-content" rows="2" required></textarea>
+            <div class="row">
+              <label>Kind <input id="memory-kind" type="text" value="fact"></label>
+              <label>Tags (comma-separated) <input id="memory-tags" type="text"></label>
+            </div>
+            <button type="submit" class="btn btn-primary">Add</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2 id="memory-heading">Memories</h2>
+          <div id="memories" class="list" aria-labelledby="memory-heading"></div>
+        </div>
+      </section>
+
+      <!-- Rules -->
+      <section class="panel" role="tabpanel" id="panel-rules" aria-labelledby="tab-rules" hidden>
+        <div class="card">
+          <h2>Core rules (read-only)</h2>
+          <p class="muted">Hard-coded. They cannot be changed or overridden, and they only ever make a decision stricter.</p>
+          <ul id="core-rules" class="rule-list"></ul>
+        </div>
+        <form class="card form" id="rule-form">
+          <h2>New custom rule</h2>
+          <div class="row wrap">
+            <label>Tool (glob) <input id="rule-tool" type="text" required placeholder="web_fetch or note_*"></label>
+            <label>Decision
+              <select id="rule-decision">
+                <option value="allow">Allow</option>
+                <option value="ask" selected>Ask</option>
+                <option value="block">Block</option>
+              </select>
+            </label>
+            <label>Argument (optional) <input id="rule-arg" type="text" placeholder="url"></label>
+            <label>Pattern (optional) <input id="rule-pattern" type="text" placeholder="https://shop.*"></label>
+            <label>Priority <input id="rule-priority" type="number" value="0" step="1"></label>
+          </div>
+          <label for="rule-note">Note</label>
+          <input id="rule-note" type="text">
+          <button type="submit" class="btn btn-primary">Add rule</button>
+        </form>
+        <div class="card">
+          <h2>Custom rules</h2>
+          <div class="table-wrap">
+            <table class="table" id="rules">
+              <caption class="sr-only">Custom rules</caption>
+              <thead><tr><th scope="col">Tool</th><th scope="col">Decision</th><th scope="col">Argument</th><th scope="col">Pattern</th><th scope="col">Priority</th><th scope="col">Enabled</th><th scope="col">Note</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Audit -->
+      <section class="panel" role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden>
+        <form class="card form" id="audit-form">
+          <h2>Audit log</h2>
+          <p class="muted">Append-only. Newest first.</p>
+          <div class="row wrap">
+            <label>Kind <input id="audit-kind" type="text" placeholder="tool, approval, memory…"></label>
+            <label>Task id <input id="audit-task" type="text"></label>
+            <button type="submit" class="btn">Filter</button>
+          </div>
+        </form>
+        <div class="card">
+          <div id="audit" class="audit-list"></div>
+          <button type="button" class="btn" id="audit-more" hidden>Load older entries</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="login" aria-labelledby="login-heading">
+    <form id="login-form" method="dialog">
+      <h2 id="login-heading">Sign in to Jig</h2>
+      <p>Run <code>jig ui</code> to open this page already signed in, or paste the API token from <code>jig token show</code>. The token is exchanged for a session cookie and is not stored by the page.</p>
+      <label for="login-token">API token</label>
+      <input id="login-token" type="password" autocomplete="off" required>
+      <p id="login-error" class="error-text" role="alert"></p>
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+  </dialog>
+</body>
+</html>

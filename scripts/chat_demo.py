@@ -9,13 +9,17 @@ import json
 import httpx
 import websockets
 
+from jig.auth import TokenStore
+from jig.config import load_config
+
 
 async def main(url: str, message: str) -> None:
     states: list[str] = []
     stop = asyncio.Event()
+    auth = {"Authorization": f"Bearer {TokenStore(load_config().data_dir).get()}"}
 
     async def watch() -> None:
-        async with websockets.connect(url.replace("http", "ws", 1) + "/events") as ws:
+        async with websockets.connect(url.replace("http", "ws", 1) + "/events", additional_headers=auth) as ws:
             while not stop.is_set():
                 try:
                     event = json.loads(await asyncio.wait_for(ws.recv(), timeout=0.5))
@@ -23,12 +27,13 @@ async def main(url: str, message: str) -> None:
                     continue
                 if event["type"] == "avatar.state":
                     d = event["data"]
-                    states.append(d["state"] + (f":{d['variant']}" if d.get("variant") else ""))
+                    states.append(d["state"] + (f":{d['variant']}" if d.get("variant") else "")
+                                  + (" (background)" if d.get("background") else ""))
 
     watcher = asyncio.create_task(watch())
     await asyncio.sleep(0.5)
     reasoning = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=None)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=None), headers=auth) as client:
         async with client.stream("POST", f"{url}/chat", json={"message": message}) as r:
             print("jig> ", end="", flush=True)
             async for line in r.aiter_lines():

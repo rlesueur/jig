@@ -15,6 +15,9 @@ from pathlib import Path
 import httpx
 import websockets
 
+from jig.auth import TokenStore
+from jig.config import load_config
+
 GOAL = ("Read https://example.com and then save a two-sentence summary of what that page says to "
         "example-summary.md in the workspace.")
 
@@ -24,10 +27,11 @@ async def main(url: str, out_dir: Path) -> int:
     log_path = out_dir / "events.jsonl"
     avatar: list[tuple[str, str, str | None]] = []
     stop = asyncio.Event()
+    auth = {"Authorization": f"Bearer {TokenStore(load_config().data_dir).get()}"}
 
     async def watch() -> None:
         ws_url = url.replace("http", "ws", 1) + "/events"
-        async with websockets.connect(ws_url) as ws, asyncio.timeout(900):
+        async with websockets.connect(ws_url, additional_headers=auth) as ws, asyncio.timeout(900):
             with log_path.open("w", encoding="utf-8") as fh:
                 while not stop.is_set():
                     try:
@@ -47,9 +51,9 @@ async def main(url: str, out_dir: Path) -> int:
 
     watcher = asyncio.create_task(watch())
     await asyncio.sleep(0.5)
-    async with httpx.AsyncClient(base_url=url, timeout=30) as api:
-        health = (await api.get("/health")).json()
-        print(f"Jig {health['version']} with model {health['model']['model']} at {health['model']['base_url']}")
+    async with httpx.AsyncClient(base_url=url, timeout=30, headers=auth) as api:
+        status = (await api.get("/status")).raise_for_status().json()
+        print(f"Jig {status['version']} with model {status['model']['model']} at {status['model']['base_url']}")
         rule = (await api.post("/rules", json={"tool": "write_file", "decision": "ask",
                                                "note": "demo: always ask before writing files"})).json()
         print(f"Custom rule {rule['id']}: write_file -> ask")
@@ -65,7 +69,7 @@ async def main(url: str, out_dir: Path) -> int:
                 print(f"\n>>> APPROVAL {ap['id']} for {ap['tool']} {json.dumps(ap['args'])[:160]}")
                 for r in ap["reasons"]:
                     print(f"    reason [{r['rule']}]: {r['reason']}")
-                await asyncio.sleep(2)  # let the avatar sit in needs-approval for a moment
+                await asyncio.sleep(2)  # let the avatar sit in the approval state for a moment
                 await api.post(f"/approvals/{ap['id']}", json={"approve": True, "note": "approved in demo"})
                 approved.add(ap["id"])
                 print(">>> approved\n")
