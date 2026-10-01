@@ -106,6 +106,9 @@ How to serve a vision model:
 | `jig/events.py` | Event bus and the derived avatar state |
 | `jig/constants.py` | All shared names: avatar states, task variants, modes and statuses |
 | `jig/api/app.py` | HTTP and WebSocket API |
+| `jig/autostart/` | Opt-in start at logon: Windows Task Scheduler (tested), launchd and systemd (untested), the launcher, CLI and API |
+| `jig/instance.py`, `jig/lifecycle.py` | Single-instance lock per data directory, `jig stop`, graceful shutdown on logoff, rotating log files |
+| `jig/model_server.py` | Optional `[model.launch]` supervision and the bounded readiness wait |
 
 ## Running it
 
@@ -167,6 +170,60 @@ With `jig serve` running:
 .\.venv\Scripts\python scripts\demo.py --url http://127.0.0.1:8766       # goal -> plan -> approval -> done
 .\.venv\Scripts\python scripts\chat_demo.py --url http://127.0.0.1:8766  # streaming chat with avatar states
 ```
+
+## Running Jig always-on
+
+Jig can start by itself when you log in, but **only if you turn this on**. It is never enabled by default, by an installer or by the agent. `jig autostart enable` first shows exactly what it will register: the command line, the trigger, the account it runs as, the log location and the settings. It registers nothing until you answer `y` (or pass `--yes` in a script). Turning it on or off is recorded in the audit log (`autostart.enabled`, `autostart.disabled`).
+
+```powershell
+.\.venv\Scripts\jig autostart show       # what would be registered, including the full task XML; changes nothing
+.\.venv\Scripts\jig autostart enable     # shows the plan, asks y/N; --yes for scripts, --now to start it straight away
+.\.venv\Scripts\jig autostart status     # registered or not, last run, last result, and whether Jig is running
+.\.venv\Scripts\jig autostart disable    # removes everything enable registered
+.\.venv\Scripts\jig stop                 # graceful shutdown of the Jig that uses this data directory
+```
+
+`--port` and `--data-dir` choose what the autostarted Jig uses (by default, the config's). The same actions are in the API, behind the usual token: `GET /autostart` (status and the plan), `POST /autostart/enable` with `{"confirm": true}` (anything else is refused) and `POST /autostart/disable`. The web UI has an Autostart row in the Status card; turning it on shows the same disclosure and needs your OK.
+
+**What gets registered.**
+
+| OS | Entry | Trigger | Runs as | Restarts | Status |
+| --- | --- | --- | --- | --- | --- |
+| Windows | Task Scheduler task `\Jig\Jig Agent` | at **your** logon, after 30 s | you, interactive token, not elevated; no password stored | the launcher retries a failed start 3 times, 60 s apart | tested on Windows 11 |
+| macOS | `~/Library/LaunchAgents/io.github.rlesueur.jig.plist` | at login (`RunAtLoad`) | you | launchd, on a failed exit (`KeepAlive` / `SuccessfulExit = false`) | **untested** |
+| Linux | `~/.config/systemd/user/jig.service` | when your user manager starts (login) | you (`systemd --user`) | `Restart=on-failure`, 60 s apart | **untested** |
+
+On Windows the task runs `.venv\Scripts\pythonw.exe -m jig.autostart.launch --config ... --data-dir ... --port ...`, so there is no console window. It needs no administrator rights. Its settings: no execution time limit, start as soon as possible after a missed start, run on battery and keep running when unplugged, and one instance at a time. Task Scheduler's own restart-on-failure only covers a failure to launch: a non-zero exit code does not trigger it (we checked). So the small launcher runs `jig serve` and restarts it itself, but never after a clean stop, and never when another Jig already holds the data directory. The macOS and Linux backends generate the files above (their content is unit-tested) but have **not been run on a real Mac or Linux machine**. Please report what you find.
+
+**Logs.** `<data_dir>/logs/jig.log` (Jig) and, on Windows, `autostart.log` (the launcher). Both rotate at 5 MB, keeping 5 files. A model server that Jig starts writes to `model-server.log`. `disable` leaves the logs in place.
+
+**Starting the model server too (optional).** Jig is model-agnostic, so it starts nothing unless you ask it to. Add `[model.launch]` to have Jig start and supervise your server, whatever it is, and stop it again when Jig stops. Or leave out `command` and set only a readiness timeout, to wait for a server that runs as its own service, such as Ollama:
+
+```toml
+[model.launch]
+command = "C:/path/to/llama-server.exe"      # or "ollama", with args = ["serve"]
+args = ["-m", "C:/path/to/model.gguf", "--port", "8080", "--jinja"]
+working_dir = ""                             # relative to the config file
+readiness_timeout_s = 300                    # 0 (the default) checks once and fails at once
+poll_interval_s = 2.0
+```
+
+At start-up Jig polls `/v1/models` until the configured model is served, and logs its progress. If the endpoint is not ready in time, or the launched server exits, Jig exits with a clear error, and the launcher, launchd or systemd retries. This is a bounded wait, not a fallback: Jig never uses another server or model. If the endpoint already answers, Jig uses it and starts nothing. `profiles/llamacpp-bonsai.toml` has a full example.
+
+**Robustness.**
+
+- **One Jig per data directory.** `<data_dir>/jig.lock` is held with an OS file lock for as long as Jig runs. A second Jig on the same data directory refuses to start and says who holds it. The OS releases the lock when the process exits, even after a crash.
+- **Graceful shutdown** on `jig stop`, Ctrl+C, SIGTERM (launchd, systemd) and Windows logoff or shutdown. A windowless process gets no console events, so Jig handles `WM_ENDSESSION` through a hidden window and holds the logoff for up to 20 s while it stops. Running tasks are put back in the queue with their checkpoint (`task.interrupted` in the audit log) and resume on the next start; unfinished steps are marked `interrupted`. Nothing is left marked `running`. After a hard kill (`schtasks /End`, Task Manager, power loss), the next start does the same recovery.
+- **Sleep, hibernation and clock changes.** If the gap between two heartbeats is over 60 s, the scheduler records `scheduler.clock_jump` with the gap and the overdue schedules. Each overdue schedule runs **once**, not once per missed interval, with `missed_runs` in its audit entry, and then carries on from now. If the clock went backwards, schedules that now look far in the future are brought back to one interval away.
+- **Start-up reason.** `GET /status` and `GET /state` include `start_reason` (`manual` or `autostart`), and so does the `runtime.start` audit entry.
+
+**Security notes.**
+
+- Autostart runs Jig as you, with your normal rights, never elevated. It can do nothing at logon that it could not do when you start it by hand. The API still binds to `127.0.0.1` and needs the token.
+- Only you can change the entry: the task, the LaunchAgent or the user unit belongs to your account. The command line points into your Jig folder and virtual environment. Anyone who can write there can already run code as you, but keep that folder private.
+- Turn it off with `jig autostart disable` (or the Status card). It removes the task and its now-empty `\Jig` folder, the plist or the unit. If Jig is still running, stop it with `jig stop`.
+
+**Boot before logon (not implemented).** On Windows, starting at boot would need a task that runs "whether the user is logged on or not", with your password stored in Task Scheduler and admin rights to register it. It would run without your interactive logon session. DPAPI can still work for a stored-credential (password) logon, but not for the S4U "do not store password" type, and it is easy to get wrong. A Windows service in session 0 would not have your profile at all. Jig therefore starts at logon only. On Linux, `loginctl enable-linger $USER` starts your user manager, and so Jig, at boot. Note that a desktop keyring is usually still locked until you log in, so vault access fails until then.
 
 ## Container sandbox and headless browser
 
@@ -274,6 +331,7 @@ Each tool category maps to a variant: web to `browsing`, files to `writing`, tim
 | Memory | `GET/POST /memory`, `GET/PATCH/DELETE /memory/{id}`, `GET /notes` |
 | Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&before_id=&newest_first=&limit=` |
 | Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` |
+| Autostart | `GET /autostart`, `POST /autostart/enable` `{confirm: true, start_now}`, `POST /autostart/disable` |
 
 ### Access and the API token
 
