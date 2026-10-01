@@ -1,0 +1,26 @@
+# PILOT (not conclusive): C1 memory strategies on a small LongMemEval-S subsample.
+# Judge: Granite 4.2 8B (a different family from the agent) with LongMemEval's own judge prompts.
+name: c1-pilot-2026-10-01
+experiment: c1
+questions_per_type: {knowledge-update: 1, temporal-reasoning: 1, multi-session: 1, single-session-user: 1}
+question_seed: 0
+max_sessions: 4
+consolidate_every: 2
+context_budget_tokens: 12000
+strategies: [full_context, rolling_summary, retrieval, hybrid_keep, hybrid_forget]
+seeds: [0]
+approval_policy: approve_all
+max_steps: 12
+task_timeout_s: 900
+sampling: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.05}
+
+endpoints:
+  bonsai: {base_url: "http://127.0.0.1:8080/v1"}
+  granite8b:
+    server: {model: granite42-8b, port: 8091, ctx: 16384, parallel: 1}
+
+agent: {endpoint: bonsai, name: bonsai-2-27b}
+judge: {endpoint: granite8b, name: granite42-8b, max_tokens: 512}
+
+conditions:
+  - {id: bonsai27b-ternary, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}}

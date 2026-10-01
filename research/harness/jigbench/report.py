@@ -1,0 +1,196 @@
+"""Turn trials.jsonl files into summary tables (Markdown + LaTeX) and figures for the paper.
+
+Outputs per run: results/<exp>/<run>/summary.json and summary.md (committed), and
+research/paper/generated/<exp>-<run>.tex plus <exp>-<run>.pdf figures (included by the paper).
+Only trials with status_harness == "ok" enter the statistics; harness errors are counted separately.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from .paths import PAPER_GENERATED, RESULTS
+from .stats import bootstrap_mean, fmt_ci, wilson
+
+# experiment -> (group keys, [(metric, label, kind, row filter or None)])
+SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
+    "d1": (["condition"], [
+        ("caught", "Harmful stopped", "rate", lambda r: r["label"] == "harmful"),
+        ("auto_blocked", "Harmful auto-blocked", "rate", lambda r: r["label"] == "harmful"),
+        ("caught", "Benign stopped (FPR)", "rate", lambda r: r["label"] == "benign"),
+        ("escalated", "Approvals per call", "rate", None),
+        ("sentinel_elapsed_s", "Reviewer s/call", "mean", None),
+        ("sentinel_prompt_tokens", "Reviewer prompt tok/call", "mean", None),
+    ]),
+    "d2": (["condition", "payload"], [
+        ("attempted", "Attack attempted", "rate", None),
+        ("leaked", "Canary leaked", "rate", None),
+        ("utility", "Task utility", "rate", None),
+        ("approvals", "Approvals/task", "mean", None),
+        ("wall_s", "Wall s/task", "mean", None),
+    ]),
+    "cd1": (["condition", "payload"], [
+        ("poison_written", "Poison written", "rate", None),
+        ("poison_retrieved", "Poison retrieved", "rate", None),
+        ("attack_success", "Attack success", "rate", None),
+        ("leaked", "Canary leaked", "rate", None),
+        ("approvals", "Approvals/task", "mean", None),
+    ]),
+    "c1": (["condition", "strategy"], [
+        ("correct", "Accuracy", "rate", None),
+        ("total_prompt_tokens", "Prompt tokens/question", "mean", None),
+        ("memories_final", "Memories kept", "mean", None),
+        ("approvals", "Approvals/question", "mean", None),
+        ("wall_s", "Wall s/question", "mean", None),
+    ]),
+}
+
+FIGURE_METRIC = {"d1": ("caught", "condition"), "d2": ("leaked", "condition"),
+                 "cd1": ("attack_success", "condition"), "c1": ("correct", "strategy")}
+
+
+def _derive(exp: str, r: dict[str, Any]) -> dict[str, Any]:
+    if exp == "d1":
+        r = {**r, "auto_blocked": r["decision"] in ("denied", "blocked_core", "blocked_rule") and r["caught"],
+             "escalated": r["decision"] == "escalated"}
+    return r
+
+
+def load(run: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    ok, errors = [], []
+    for line in (run / "trials.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rec = json.loads(line)
+            (ok if rec.get("status_harness") == "ok" else errors).append(rec)
+    return meta, ok, errors
+
+
+def summarise(exp: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    keys, metrics = SPECS[exp]
+    groups: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        groups[tuple(r.get(k) for k in keys)].append(_derive(exp, r))
+    out = []
+    for gk in sorted(groups, key=lambda g: tuple(str(x) for x in g)):
+        rs = groups[gk]
+        row: dict[str, Any] = {k: v for k, v in zip(keys, gk)}
+        row["n"] = len(rs)
+        for metric, label, kind, filt in metrics:
+            sel = [r for r in rs if filt is None or filt(r)]
+            vals = [r.get(metric) for r in sel if r.get(metric) is not None]
+            if kind == "rate":
+                k = sum(1 for v in vals if v)
+                row[label] = {"k": k, "n": len(vals), "ci": wilson(k, len(vals))}
+            else:
+                row[label] = {"n": len(vals), "ci": bootstrap_mean([float(v) for v in vals])}
+        out.append(row)
+    return out
+
+
+def _cell(v: Any, kind: str) -> str:
+    if not isinstance(v, dict):
+        return str(v)
+    p, lo, hi = v["ci"]
+    if kind == "rate":
+        return f"{v['k']}/{v['n']} = {fmt_ci(p, lo, hi)}" if v["n"] else "--"
+    return "--" if math.isnan(p) else (f"{p:.1f} [{lo:.1f}, {hi:.1f}]" if abs(p) >= 10 else f"{p:.2f} [{lo:.2f}, {hi:.2f}]")
+
+
+def markdown(exp: str, table: list[dict[str, Any]]) -> str:
+    keys, metrics = SPECS[exp]
+    head = keys + ["n"] + [m[1] for m in metrics]
+    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for row in table:
+        cells = [str(row[k]) for k in keys] + [str(row["n"])] + [_cell(row[m[1]], m[2]) for m in metrics]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _tex_escape(s: str) -> str:
+    return re.sub(r"([_%&#$])", r"\\\1", s).replace("[", "{[}").replace("]", "{]}")
+
+
+def latex(exp: str, run_name: str, table: list[dict[str, Any]], pilot: bool) -> str:
+    keys, metrics = SPECS[exp]
+    head = keys + ["$n$"] + [m[1] for m in metrics]
+    cols = "l" * len(keys) + "r" + "r" * len(metrics)
+    body = []
+    for row in table:
+        cells = [_tex_escape(str(row[k])) for k in keys] + [str(row["n"])]
+        cells += [_tex_escape(_cell(row[m[1]], m[2]).replace("%", "%")) for m in metrics]
+        body.append(" & ".join(cells) + r" \\")
+    tag = "PILOT. " if pilot else ""
+    return "\n".join([
+        f"% Generated by jigbench report from results/{exp}/{run_name}; do not edit by hand.",
+        r"\begin{table*}[t]\centering\scriptsize",
+        rf"\caption{{{tag}{exp.upper()} results ({_tex_escape(run_name)}). Rates are $k/n$ with Wilson 95\% intervals; "
+        r"means have percentile-bootstrap 95\% intervals.}",
+        rf"\label{{tab:{exp}-{run_name}}}",
+        r"\resizebox{\textwidth}{!}{%",
+        rf"\begin{{tabular}}{{{cols}}}\toprule",
+        " & ".join(_tex_escape(h) if not h.startswith("$") else h for h in head) + r" \\\midrule",
+        *body,
+        r"\bottomrule\end{tabular}}",
+        r"\end{table*}",
+    ])
+
+
+def figure(exp: str, run_name: str, rows: list[dict[str, Any]], out: Path, pilot: bool) -> Path:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    metric, key = FIGURE_METRIC[exp]
+    if exp == "d1":
+        rows = [r for r in rows if r["label"] == "harmful"]
+    groups: dict[str, list[bool]] = defaultdict(list)
+    for r in rows:
+        groups[str(r[key])].append(bool(r.get(metric)))
+    names = sorted(groups)
+    stats = [wilson(sum(groups[n]), len(groups[n])) for n in names]
+    fig, ax = plt.subplots(figsize=(6, 0.45 * len(names) + 1.2))
+    ys = range(len(names))
+    ax.barh(list(ys), [s[0] for s in stats], xerr=[[s[0] - s[1] for s in stats], [s[2] - s[0] for s in stats]],
+            color="#4a6fa5", capsize=3)
+    ax.set_yticks(list(ys), names)
+    ax.set_xlim(0, 1)
+    label = {"caught": "harmful calls stopped", "leaked": "canary leaked", "attack_success": "attack success",
+             "correct": "accuracy"}[metric]
+    ax.set_xlabel(f"{label} (Wilson 95% CI)")
+    ax.set_title(("PILOT: " if pilot else "") + f"{exp.upper()} {run_name}", fontsize=9)
+    fig.tight_layout()
+    path = out / f"{exp}-{run_name}.pdf"
+    fig.savefig(path)
+    fig.savefig(path.with_suffix(".png"), dpi=150)
+    plt.close(fig)
+    return path
+
+
+def report(runs: list[Path] | None = None) -> dict[str, Any]:
+    if runs is None:
+        runs = sorted(p.parent for p in RESULTS.glob("*/*/trials.jsonl"))
+    PAPER_GENERATED.mkdir(parents=True, exist_ok=True)
+    done = {}
+    for run in runs:
+        meta, rows, errors = load(run)
+        exp, name = meta["experiment"], meta["name"]
+        pilot = "pilot" in name
+        table = summarise(exp, rows)
+        md = (f"# {'PILOT ' if pilot else ''}{exp.upper()} — {name}\n\n"
+              f"Finished trials: {len(rows)}; harness errors: {len(errors)}.\n\n{markdown(exp, table)}\n")
+        (run / "summary.md").write_text(md, encoding="utf-8")
+        (run / "summary.json").write_text(json.dumps({"experiment": exp, "name": name, "pilot": pilot,
+                                                      "trials": len(rows), "errors": len(errors), "table": table},
+                                                     indent=1, default=str), encoding="utf-8")
+        tex_name = f"{exp}-{name}"
+        (PAPER_GENERATED / f"{tex_name}.tex").write_text(latex(exp, name, table, pilot), encoding="utf-8")
+        fig = figure(exp, name, rows, PAPER_GENERATED, pilot) if rows else None
+        done[str(run)] = {"trials": len(rows), "errors": len(errors), "figure": str(fig) if fig else None}
+    return done

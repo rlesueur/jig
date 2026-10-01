@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jigbench"
+version = "0.1.0"
+description = "Reproducible benchmark harness for memory and unattended safety in always-on local agents (Jig testbed)"
+authors = [{ name = "Robyn Le Sueur" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = ["jig", "pyyaml>=6", "httpx>=0.27", "matplotlib>=3.8", "scipy>=1.11", "psutil>=5.9",
+                "huggingface_hub>=0.24"]
+
+[project.scripts]
+jigbench = "jigbench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["jigbench*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
