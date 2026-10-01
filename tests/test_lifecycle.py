@@ -4,6 +4,7 @@ real Windows session-end message), the bounded model readiness wait, and schedul
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -169,7 +170,7 @@ sandbox_dir = "sandbox"
 
 
 async def test_readiness_wait_fails_loudly_within_timeout(tmp_path):
-    config = load_config(_dead_endpoint_config(tmp_path, timeout_s=3))
+    config = load_config(_dead_endpoint_config(tmp_path, timeout_s=3), data_dir=tmp_path / "data")
     runtime = Jig(config)
     started = time.monotonic()
     with pytest.raises(ModelServerNotReady, match=r"was not ready within 3s .*Last error: .*unreachable"):
@@ -183,7 +184,7 @@ async def test_readiness_wait_fails_loudly_within_timeout(tmp_path):
 
 async def test_launched_server_that_exits_fails_at_once(tmp_path):
     launch = f"command = '{sys.executable}'\nargs = [\"-c\", \"import sys; print('boom'); sys.exit(7)\"]"
-    config = load_config(_dead_endpoint_config(tmp_path, timeout_s=60, launch=launch))
+    config = load_config(_dead_endpoint_config(tmp_path, timeout_s=60, launch=launch), data_dir=tmp_path / "data")
     runtime = Jig(config)
     started = time.monotonic()
     with pytest.raises(ModelServerNotReady, match="exited with code 7"):
@@ -196,7 +197,8 @@ def test_serve_exits_non_zero_when_model_never_ready(tmp_path):
     cfg = _dead_endpoint_config(tmp_path, timeout_s=3)
     started = time.monotonic()
     proc = subprocess.run([sys.executable, "-m", "jig.cli", "--config", str(cfg), "serve", "--port",
-                           str(free_port())], capture_output=True, text=True, timeout=60)
+                           str(free_port())], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "JIG_DATA_DIR": str(tmp_path / "data")})
     assert proc.returncode == 3  # uvicorn's start-up failure code; the launcher retries any non-zero exit
     assert "was not ready within 3s" in proc.stdout + proc.stderr
     assert time.monotonic() - started < 30
