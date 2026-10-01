@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-from ..instance import EXIT_INSTANCE_LOCKED
+from ..instance import EXIT_INSTANCE_LOCKED, read_info
 from ..lifecycle import LOG_BACKUPS, LOG_FORMAT, LOG_MAX_BYTES, StopSignals
 from .base import LaunchSpec
 
@@ -73,7 +73,11 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Jig stopped cleanly after %.0fs", ran)
             return 0
         if code == EXIT_INSTANCE_LOCKED:
-            log.error("another Jig already uses %s; not retrying (see jig.log)", spec.data_dir)
+            holder = read_info(spec.data_dir) or {}
+            log.error("not started: another Jig (pid %s, port %s, started %s by %s) already holds the lock on %s; "
+                      "not retrying. Stop it with 'jig stop' and run the task again (see jig.log)",
+                      holder.get("pid", "?"), holder.get("port", "?"), holder.get("started_at", "?"),
+                      holder.get("start_reason", "?"), spec.data_dir)
             return code
         failures = 1 if ran >= HEALTHY_RUN_S else failures + 1
         if failures > args.retries:

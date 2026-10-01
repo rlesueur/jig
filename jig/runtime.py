@@ -82,7 +82,9 @@ class Jig:
                                    heartbeat_s=config.runtime.heartbeat_s)
         self._background: set[asyncio.Task[Any]] = set()
         self.capabilities: dict[str, Any] = {}
-        self.model_server = ModelServerSupervisor(config.model_launch, config.data_dir / "logs")
+        self.model_server = ModelServerSupervisor(
+            config.model_launch, config.data_dir / "logs",
+            audit=lambda kind, summary, **data: self.audit.record(kind, summary, actor="runtime", **data))
         self._closed = False
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
@@ -138,6 +140,14 @@ class Jig:
                             client.model_name, ctx, self.config.runtime.min_context_tokens)
         if self.container:
             self.capabilities["sandbox"] = await self.container.start()
+        if self.model_server.configured:
+            if model_server["already_running"]:
+                self.audit.record("model_server.already_running", "model server already running; not launching",
+                                  actor="runtime", base_url=self.config.model.base_url, model=self.model.model_name,
+                                  capabilities_checked=check_capabilities)
+            else:
+                self.audit.record("model_server.launched", f"launched the model server (pid {model_server['pid']})",
+                                  actor="runtime", base_url=self.config.model.base_url, **model_server)
         self.audit.record("runtime.start", "Jig started", actor="runtime", model=self.model.server_info,
                           sentinel=self.sentinel_model.server_info, capabilities=self.capabilities,
                           vault_backend=self.vault.backend, sandbox=str(self.sandbox.root),

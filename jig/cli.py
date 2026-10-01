@@ -37,8 +37,9 @@ def _serve(args: argparse.Namespace) -> int:
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if holder := running_instance(config.data_dir):
-        print(f"Another Jig (pid {holder.get('pid')}, started {holder.get('started_at')}) already uses "
-              f"{config.data_dir}; stop it first with 'jig stop'.", file=sys.stderr)
+        print(f"Not starting: another Jig (pid {holder.get('pid')}, port {holder.get('port')}, started "
+              f"{holder.get('started_at')} by {holder.get('start_reason')}) already uses {config.data_dir} and "
+              "holds its lock; stop it first with 'jig stop'.", file=sys.stderr)
         return EXIT_INSTANCE_LOCKED
     print(f"Jig serving on http://{host}:{port}  (model {config.model.name or '(auto-discover)'} "
           f"at {config.model.base_url}; config {config.source})")

@@ -249,9 +249,21 @@ args = ["-m", "C:/path/to/model.gguf", "--port", "8080", "--jinja"]
 working_dir = ""                             # relative to the config file
 readiness_timeout_s = 300                    # 0 (the default) checks once and fails at once
 poll_interval_s = 2.0
+max_restarts = 3                             # restarts of a launched server that exits on its own
+restart_delay_s = 5.0
 ```
 
-At start-up Jig polls `/v1/models` until the configured model is served, and logs its progress. If the endpoint is not ready in time, or the launched server exits, Jig exits with a clear error, and the launcher, launchd or systemd retries. This is a bounded wait, not a fallback: Jig never uses another server or model. If the endpoint already answers, Jig uses it and starts nothing. `profiles/llamacpp-bonsai.toml` has a full example.
+At start-up Jig polls `/v1/models` until the configured model is served, and logs its progress. If the endpoint is not ready in time, or the launched server exits, Jig exits with a clear error, and the launcher, launchd or systemd retries. This is a bounded wait, not a fallback: Jig never uses another server or model. `profiles/llamacpp-bonsai.toml` has a full example. Keep paths that are specific to your machine in an untracked config, such as `jig.local.toml` (gitignored), passed with `--config`.
+
+If the configured endpoint is **already in use** when Jig starts (for example a server you started by hand):
+
+- it serves the configured model: Jig uses it, launches nothing, and still runs the capability checks. It logs and audits `model server already running; not launching` (`model_server.already_running`). Jig does not supervise or stop a server it did not start;
+- it answers HTTP 503 (llama.cpp while it loads): Jig launches nothing and waits for it, within `readiness_timeout_s`;
+- anything else holds the port: Jig refuses to start and says so, because a second server could not bind the port.
+
+A server that Jig launched itself is stopped when Jig stops. If it exits on its own, Jig restarts it up to `max_restarts` times in a row (a run of 10 minutes or more resets the count), and audits each event (`model_server.exited`, `model_server.restarted`, `model_server.gave_up`).
+
+In container mode (`deployment = "container"` or `JIG_DEPLOYMENT=container`, both set by the image and `deploy/jig.toml`), autostart does not apply: `jig autostart enable` refuses, `GET /autostart` returns `"applicable": false`, and the Status card explains that Docker keeps Jig running.
 
 **Robustness.**
 

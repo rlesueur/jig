@@ -8,6 +8,15 @@ for the server you run yourself.
 The wait is bounded by ``readiness_timeout_s``. If the endpoint is not serving the configured model in
 time, start-up fails with :class:`ModelServerNotReady`, so whatever started Jig (a terminal, Task
 Scheduler, launchd or systemd) sees a failure. Jig never switches to a different server or model.
+
+With a ``command``, the configured endpoint decides what happens at start-up:
+
+* it already serves the configured model (for example a server started by hand): Jig uses it and
+  launches nothing ("model server already running; not launching"); it does not supervise it;
+* it answers HTTP 503 (llama.cpp while it loads a model): Jig launches nothing and waits for it;
+* something else holds the port: Jig fails at once, since a second server could not bind it;
+* nothing listens: Jig launches the command, and if that server later exits on its own, restarts it
+  up to ``max_restarts`` times in a row before giving up (logged and audited each time).
 """
 
 from __future__ import annotations
@@ -15,11 +24,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
 
 from .config import ModelLaunchConfig
 from .errors import ModelServerUnavailable
@@ -32,12 +46,37 @@ class ModelServerNotReady(ModelServerUnavailable):
     """The model endpoint did not become ready within the readiness timeout, or its launched server exited."""
 
 
+# A launched server that ran at least this long before exiting counts as a fresh failure, not a repeated one.
+HEALTHY_RUN_S = 600.0
+
+AuditFn = Callable[..., Any]
+
+
+def _endpoint_address(base_url: str) -> tuple[str, int]:
+    parts = urlsplit(base_url)
+    return parts.hostname or "127.0.0.1", parts.port or (443 if parts.scheme == "https" else 80)
+
+
+def _port_in_use(host: str, port: int, timeout_s: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
 class ModelServerSupervisor:
-    def __init__(self, launch: ModelLaunchConfig, log_dir: Path):
+    def __init__(self, launch: ModelLaunchConfig, log_dir: Path, *, audit: AuditFn | None = None):
         self.launch = launch
         self.log_path = log_dir / "model-server.log"
         self.process: subprocess.Popen[bytes] | None = None
         self.reused_running = False
+        self.restarts = 0
+        self._audit = audit
+        self._clients: list[ModelClient] = []
+        self._started_at = 0.0
+        self._watcher: asyncio.Task[None] | None = None
+        self._stopping = False
 
     @property
     def configured(self) -> bool:
@@ -46,23 +85,109 @@ class ModelServerSupervisor:
     def command_line(self) -> list[str]:
         return [self.launch.command, *self.launch.args]
 
+    def _record(self, kind: str, summary: str, **data: Any) -> None:
+        if self._audit is not None:
+            self._audit(kind, summary, **data)
+
     async def ensure_ready(self, clients: list[ModelClient]) -> dict[str, Any]:
-        """Start the server if configured (and not already answering), then wait for every endpoint."""
+        """Start the server if configured (see the module docstring for an endpoint that is already in
+        use), then wait for every endpoint."""
+        self._clients = clients
         if self.configured:
-            try:
-                await clients[0].health()
-                self.reused_running = True
-                log.info("model server at %s is already answering; not starting [model.launch] command",
-                         clients[0].config.base_url)
-            except ModelServerUnavailable:
-                self._spawn()
+            await self._launch_unless_running(clients[0])
         for client in clients:
             await wait_until_ready(client, timeout_s=self.launch.readiness_timeout_s,
                                    poll_interval_s=self.launch.poll_interval_s, process=self.process,
                                    process_log=self.log_path if self.process else None)
+        if self.process is not None:
+            self._watcher = asyncio.create_task(self._watch(), name="jig-model-server-watch")
+        return self.info()
+
+    def info(self) -> dict[str, Any]:
         return {"launched": self.process is not None, "pid": self.process.pid if self.process else None,
-                "already_running": self.reused_running,
+                "already_running": self.reused_running, "restarts": self.restarts,
                 "command": self.command_line() if self.configured else None}
+
+    async def _launch_unless_running(self, client: ModelClient) -> None:
+        base_url = client.config.base_url
+        try:
+            await client.health()
+        except ModelServerUnavailable as exc:
+            not_serving = str(exc)
+        else:
+            self.reused_running = True
+            log.info("model server already running at %s (serving %s); not launching %s", base_url,
+                     client.model_name, subprocess.list2cmdline(self.command_line()))
+            return
+        host, port = _endpoint_address(base_url)
+        if not await asyncio.to_thread(_port_in_use, host, port, client.config.connect_timeout_s):
+            self._spawn()
+            return
+        # Something holds the port, so a second server could not bind it. Only a server that is still
+        # loading (llama.cpp answers 503 until the model is loaded) is waited for; anything else is an error.
+        try:
+            async with httpx.AsyncClient(timeout=client.config.connect_timeout_s) as http:
+                status = (await http.get(base_url.rstrip("/") + "/models")).status_code
+        except httpx.HTTPError as probe_exc:
+            status, not_serving = None, f"{not_serving}; probe: {probe_exc!r}"
+        if status == 503:
+            self.reused_running = True
+            log.info("model server already running at %s but still loading (HTTP 503); not launching, waiting "
+                     "up to %.0fs for it", base_url, self.launch.readiness_timeout_s)
+            return
+        raise ModelServerNotReady(
+            f"{host}:{port} is already in use by something that is not a working model server for this config "
+            f"({not_serving}). Jig did not launch [model.launch] command, because it could not bind that port. "
+            "Stop whatever is using the port, or point [model] base_url at the right server.")
+
+    async def _watch(self) -> None:
+        """Restart a launched server that exits on its own, up to max_restarts times in a row."""
+        failures = 0
+        while not self._stopping:
+            p = self.process
+            if p is None:
+                return
+            while p.poll() is None:
+                await asyncio.sleep(self.launch.poll_interval_s)
+            if self._stopping:
+                return
+            ran = time.monotonic() - self._started_at
+            failures = 1 if ran >= HEALTHY_RUN_S else failures + 1
+            if failures > self.launch.max_restarts:
+                msg = (f"the model server Jig launched (pid {p.pid}) exited with code {p.returncode} after "
+                       f"{ran:.0f}s; it has failed {failures} times in a row, more than max_restarts = "
+                       f"{self.launch.max_restarts}, so Jig is not restarting it again. See {self.log_path}")
+                log.error(msg)
+                self._record("model_server.gave_up", msg, pid=p.pid, exit_code=p.returncode, failures=failures)
+                self.process = None
+                return
+            msg = (f"the model server Jig launched (pid {p.pid}) exited with code {p.returncode} after {ran:.0f}s; "
+                   f"restarting it in {self.launch.restart_delay_s:.0f}s (restart {failures} of "
+                   f"{self.launch.max_restarts}). See {self.log_path}")
+            log.error(msg)
+            self._record("model_server.exited", msg, pid=p.pid, exit_code=p.returncode, restart=failures)
+            await asyncio.sleep(self.launch.restart_delay_s)
+            if self._stopping:
+                return
+            try:
+                self._spawn()
+                self.restarts += 1
+                for client in self._clients:
+                    await wait_until_ready(client, timeout_s=self.launch.readiness_timeout_s,
+                                           poll_interval_s=self.launch.poll_interval_s, process=self.process,
+                                           process_log=self.log_path)
+            except ModelServerNotReady as exc:
+                log.error("restarting the model server failed: %s", exc)
+                self._record("model_server.restart_failed", str(exc), restart=failures)
+                if self.process is not None and self.process.poll() is None:
+                    self.process.kill()
+                    await asyncio.to_thread(self.process.wait)
+                if self.process is None:
+                    return
+                continue
+            log.info("model server restarted (pid %d) and ready", self.process.pid)
+            self._record("model_server.restarted", f"model server restarted (pid {self.process.pid}) and ready",
+                         pid=self.process.pid, restart=failures)
 
     def _spawn(self) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,11 +204,17 @@ class ModelServerSupervisor:
             raise ModelServerNotReady(f"could not start the model server {self.command_line()}: {exc}") from exc
         finally:
             out.close()
+        self._started_at = time.monotonic()
         log.info("started model server (pid %d): %s; output in %s", self.process.pid,
                  subprocess.list2cmdline(self.command_line()), self.log_path)
 
     async def stop(self) -> None:
         """Stop only a server that Jig itself started."""
+        self._stopping = True
+        if self._watcher is not None:
+            self._watcher.cancel()
+            await asyncio.gather(self._watcher, return_exceptions=True)
+            self._watcher = None
         p, self.process = self.process, None
         if p is None or p.poll() is not None:
             return

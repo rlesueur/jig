@@ -60,6 +60,10 @@ class ModelLaunchConfig:
     poll_interval_s: float = 2.0
     # How long a launched server gets to exit after it is asked to stop, before it is killed.
     stop_timeout_s: float = 15.0
+    # If a server Jig launched exits on its own, Jig restarts it up to this many times in a row
+    # (a run of 10 minutes or more resets the count), waiting restart_delay_s first.
+    max_restarts: int = 3
+    restart_delay_s: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -180,6 +184,8 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     model_launch = _build(ModelLaunchConfig, launch_raw, "model.launch")
     if model_launch.readiness_timeout_s < 0 or model_launch.poll_interval_s <= 0:
         raise ConfigError("[model.launch] readiness_timeout_s must be >= 0 and poll_interval_s > 0")
+    if model_launch.max_restarts < 0 or model_launch.restart_delay_s < 0:
+        raise ConfigError("[model.launch] max_restarts and restart_delay_s must be >= 0")
     deployment = os.environ.get("JIG_DEPLOYMENT") or raw.get("deployment", "host")
     if deployment not in ("host", "container"):
         raise ConfigError(f"deployment (or JIG_DEPLOYMENT) must be 'host' or 'container', not {deployment!r}")
