@@ -1,0 +1,102 @@
+# Model set for the Jig research programme (checked on Hugging Face on 2026-10-01).
+# `sha256` is the LFS hash Hugging Face reports for the file; fetch_models.py verifies every
+# download against it and refuses to keep a file that does not match.
+# Licences were read from each repository's `license:` tag via the Hugging Face API.
+
+models_dir = "C:/Users/you/models/jig-research"
+min_free_gb = 100
+
+[models.bonsai-27b-ternary]
+role = "test model (agent); ternary PTQ of Qwen3.8-27B"
+repo = "prism-ml/Ternary-Bonsai-2-27B-gguf"
+file = "Ternary-Bonsai-2-27B-PTQ1_0.gguf"
+sha256 = "53107f530aa52eb0"   # prefix only: the file was downloaded before this programme; see note
+licence = "Apache-2.0"
+base_model = "Qwen/Qwen3.8-27B"
+family = "qwen3.8"
+params_b = 27
+quant = "PTQ1_0 (1.75 bpw ternary)"
+server_build = "prism"
+local_path = "C:/Users/you/models/llama-cpp-gguf/Ternary-Bonsai-2-27B-PTQ1_0.gguf"
+download = false
+note = "Already served on port 8080 by the user; used read-only through the normal API."
+
+[models.qwen38-27b-q4km]
+role = "standard-quantisation counterpart of the test model (agent and same-model Sentinel)"
+repo = "ggml-org/Qwen3.8-27B-GGUF"
+file = "Qwen3.8-27B-Q4_K_M.gguf"
+sha256 = "c600de0300ae8a0e"
+licence = "Apache-2.0"
+base_model = "Qwen/Qwen3.8-27B"
+family = "qwen3.8"
+params_b = 27
+quant = "Q4_K_M"
+server_build = "prism"
+download = true
+
+[models.gemma-4-26b-a4b]
+role = "other family, same size class (MoE, 4B active); agent and different-family Sentinel"
+repo = "unsloth/gemma-4-26B-A4B-it-GGUF"
+file = "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
+sha256 = "f2c28b3dc4776931"
+licence = "Apache-2.0"
+base_model = "google/gemma-4-26B-A4B-it"
+family = "gemma-4"
+params_b = 26
+quant = "UD-Q4_K_M"
+server_build = "prism"
+download = true
+
+[models.granite42-8b]
+role = "small Sentinel candidate, different family"
+repo = "ibm-granite/granite-4.2-8b-GGUF"
+file = "granite-4.2-8b-Q4_K_M.gguf"
+sha256 = "16a9369d0805f80b"
+licence = "Apache-2.0"
+base_model = "ibm-granite/granite-4.2-8b"
+family = "granite-4.2"
+params_b = 8
+quant = "Q4_K_M"
+server_build = "prism"
+download = true
+
+[models.gemma-4-e4b]
+role = "small Sentinel candidate (about 4B effective)"
+repo = "ggml-org/gemma-4-E4B-it-GGUF"
+file = "gemma-4-E4B-it-Q4_0.gguf"
+sha256 = "a555b900214b477d"
+licence = "Apache-2.0"
+base_model = "google/gemma-4-E4B-it"
+family = "gemma-4"
+params_b = 4
+quant = "Q4_0"
+server_build = "prism"
+download = true
+
+[models.qwen3-vl-8b]
+role = "small Sentinel candidate, Qwen lineage (previous generation)"
+repo = "unsloth/Qwen3-VL-8B-Instruct-GGUF"
+file = "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
+sha256 = "e3d1a6e87c5cb31e054f2c3bc0dd82ffde052f613de5eef3665b7bd33c9b703e"
+licence = "Apache-2.0"
+base_model = "Qwen/Qwen3-VL-8B-Instruct"
+family = "qwen3"
+params_b = 8
+quant = "UD-Q4_K_XL"
+server_build = "prism"
+local_path = "C:/Users/you/models/qwen-image-2.1/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf"
+download = false
+note = "Already on disk; full SHA-256 verified against Hugging Face on 2026-10-01."
+
+[models.granite-guardian41-8b]
+role = "dedicated open guard model (risk classifier) as a Sentinel"
+repo = "ibm-granite/granite-guardian-4.1-8b-GGUF"
+file = "granite-guardian-4.1-8b-Q4_K_M.gguf"
+sha256 = "979114c9e6a589a1"
+licence = "Apache-2.0"
+base_model = "ibm-granite/granite-guardian-4.1-8b"
+family = "granite-guardian"
+params_b = 8
+quant = "Q4_K_M"
+server_build = "prism"
+download = true

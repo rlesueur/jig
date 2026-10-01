@@ -1,0 +1,46 @@
+{
+ "bonsai-27b-ternary": {
+  "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+  "file": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+  "path": "C:\Users\you\\models\\llama-cpp-gguf\\Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+  "size_bytes": 5946648928,
+  "sha256": "53107f530aa52eb00912263ab1ee29bd199261c87cd7b4ad4ca1318c1fe33ee3",
+  "sha256_expected": "53107f530aa52eb00912263ab1ee29bd199261c87cd7b4ad4ca1318c1fe33ee3",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T22:39:58+00:00"
+ },
+ "granite42-8b": {
+  "repo": "ibm-granite/granite-4.2-8b-GGUF",
+  "file": "granite-4.2-8b-Q4_K_M.gguf",
+  "path": "C:\Users\you\\models\\jig-research\\granite-4.2-8b-Q4_K_M.gguf",
+  "size_bytes": 5347917952,
+  "sha256": "16a9369d0805f80b7377d25d87f937a90c05dc04ad79173a52001e42c9aab311",
+  "sha256_expected": "16a9369d0805f80b7377d25d87f937a90c05dc04ad79173a52001e42c9aab311",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T22:54:11+00:00"
+ },
+ "gemma-4-e4b": {
+  "repo": "ggml-org/gemma-4-E4B-it-GGUF",
+  "file": "gemma-4-E4B-it-Q4_0.gguf",
+  "path": "C:\Users\you\\models\\jig-research\\gemma-4-E4B-it-Q4_0.gguf",
+  "size_bytes": 4590807392,
+  "sha256": "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
+  "sha256_expected": "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T23:03:25+00:00"
+ },
+ "qwen3-vl-8b": {
+  "repo": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
+  "file": "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
+  "path": "C:\Users\you\\models\\qwen-image-2.1\\Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf",
+  "size_bytes": 5148699488,
+  "sha256": "e3d1a6e87c5cb31e054f2c3bc0dd82ffde052f613de5eef3665b7bd33c9b703e",
+  "sha256_expected": "e3d1a6e87c5cb31e054f2c3bc0dd82ffde052f613de5eef3665b7bd33c9b703e",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T23:03:28+00:00"
+ }
+}
