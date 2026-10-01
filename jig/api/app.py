@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..auth import Auth, AuthMiddleware, TokenStore, clear_cookie_header, session_cookie_header
+from ..autostart.api import autostart_router
 from ..config import Config
 from ..constants import EventType, Mode
 from ..errors import ConfigError
@@ -158,6 +159,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
 
     def J(request: Request) -> Jig:
         return request.app.state.jig
+
+    app.include_router(autostart_router(config))
 
     # Web UI (public static files; every API call it makes is authenticated) ------------------
     @app.get("/", include_in_schema=False)

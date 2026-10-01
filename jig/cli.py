@@ -1,4 +1,5 @@
-"""Command-line entry point: ``jig serve``, ``jig chat``, ``jig health``, ``jig token`` and ``jig ui``."""
+"""Command-line entry point: ``jig serve``, ``jig chat``, ``jig health``, ``jig token``, ``jig ui``,
+``jig autostart`` and ``jig stop``."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import sys
 
 import httpx
 
+from .autostart import cli as autostart_cli
 from .config import load_config
 from .errors import JigError
 from .model import ModelClient
@@ -195,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="recorded in the audit log and /status (autostart entries pass 'autostart')")
     s.add_argument("--log-file", action="store_true",
                    help="log to <data_dir>/logs/jig.log (rotating) instead of the console")
+    autostart_cli.add_parsers(sub)
     c = sub.add_parser("chat", help="chat with a running Jig server")
     c.add_argument("--url", default="http://127.0.0.1:8766")
     c.add_argument("--mode", choices=["action", "research"], default="action")
@@ -214,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args)
         if args.command == "sandbox":
             return _sandbox(args)
+        if args.command == "autostart":
+            return autostart_cli.run(args)
+        if args.command == "stop":
+            return autostart_cli.run_stop(args)
         if args.command == "health":
             return asyncio.run(_health(args))
         if args.command == "token":
