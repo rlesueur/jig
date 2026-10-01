@@ -15,3 +15,38 @@ demo-output/
 jig.local.toml
 # Promotional material is managed outside this repository
 promo/
+
+# Secrets and local state, wherever they end up
+api-token
+*.token
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.pem
+*.key
+workspace/
+# Virtual environments and caches
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.cache/
+node_modules/
+# Model weights
+models/
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+# Local Pages build
+_site/
+# Editor and OS clutter
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
