@@ -13,5 +13,5 @@ demo-output/
 *.db-wal
 *.db-shm
 jig.local.toml
-# The avatar component lives in its own folder and is managed separately
-avatar/
+# Promotional material is managed outside this repository
+promo/

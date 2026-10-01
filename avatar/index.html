@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jig avatar — animation states</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06040f;
+      --panel: #0f0b22;
+      --line: #2a2150;
+      --text: #ece6ff;
+      --muted: #9a90c4;
+      --amber: #ffb246;
+      --violet: #9a54ff;
+      --cyan: #40d6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(1200px 700px at 30% 0%, #160f36 0%, var(--bg) 60%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header { padding: 22px 32px 0; display: flex; align-items: baseline; gap: 14px; }
+    header h1 { margin: 0; font-size: 22px; letter-spacing: 0.02em; }
+    header p { margin: 0; color: var(--muted); }
+    main { display: grid; grid-template-columns: minmax(320px, 520px) 1fr; gap: 28px; padding: 22px 32px 40px; }
+    .stage { display: flex; flex-direction: column; gap: 14px; }
+    .hero { width: 100%; aspect-ratio: 1; height: auto; }
+    .hero jig-avatar { width: 100%; height: 100%; }
+    .status { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; }
+    .status strong { color: var(--text); font-weight: 600; }
+    .controls { display: flex; flex-direction: column; gap: 20px; }
+    section { background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+    section h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      font: inherit; font-size: 14px; color: var(--text); cursor: pointer;
+      background: #191335; border: 1px solid #342a66; border-radius: 999px; padding: 6px 14px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: #241b4a; }
+    button[aria-pressed="true"] { border-color: var(--amber); background: #33204a; box-shadow: 0 0 0 1px var(--amber) inset; }
+    .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    input[type="range"] { width: 260px; accent-color: var(--amber); }
+    .icons { display: flex; flex-wrap: wrap; gap: 18px; }
+    .icon { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); width: 72px; text-align: center; }
+    .icon jig-avatar { width: 48px; height: 48px; }
+    .reference { display: flex; gap: 14px; align-items: center; }
+    .reference img { width: 120px; height: 120px; border-radius: 14px; border: 1px solid var(--line); }
+    .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+    .error { color: #ff8a9a; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Jig</h1>
+    <p>Animated avatar states for an always-on, local-model personal agent</p>
+  </header>
+  <main>
+    <div class="stage">
+      <div class="hero"><jig-avatar id="hero" state="idle" framing="full"></jig-avatar></div>
+      <div class="status">
+        <span>State: <strong id="status-state">idle</strong></span>
+        <span>Task: <strong id="status-task">—</strong></span>
+        <span>Frame rate: <strong id="fps">—</strong></span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <section>
+        <h2>State</h2>
+        <div class="buttons" id="state-buttons"></div>
+      </section>
+
+      <section>
+        <h2>Working task</h2>
+        <div class="buttons" id="task-buttons"></div>
+      </section>
+
+      <section>
+        <h2>Voice level (talking)</h2>
+        <div class="row">
+          <input id="audio" type="range" min="0" max="1" step="0.01" value="0" aria-label="Audio level">
+          <output id="audio-out">0.00</output>
+          <button id="mic" type="button" aria-pressed="false">Use microphone</button>
+        </div>
+        <p class="note" id="mic-note">The slider feeds <code>setAudioLevel()</code>. The microphone option measures your real input level.</p>
+      </section>
+
+      <section>
+        <h2>Icon size (48px)</h2>
+        <div class="icons" id="icons"></div>
+        <p class="note">The first icon mirrors the large avatar; the others each hold a fixed state.</p>
+      </section>
+
+      <section>
+        <h2>Options</h2>
+        <div class="row">
+          <label><input type="checkbox" id="reduced"> Force reduced motion</label>
+        </div>
+        <p class="note">The component also follows the operating system's <code>prefers-reduced-motion</code> setting.</p>
+      </section>
+
+      <section class="reference">
+        <img src="assets/jig-mascot-reference.jpg" alt="Approved Jig mascot artwork">
+        <p class="note">Approved mascot artwork, kept for on-model comparison.</p>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    import { STATES, TASKS } from './jig-avatar.js';
+
+    const hero = document.getElementById('hero');
+    const stateButtons = document.getElementById('state-buttons');
+    const taskButtons = document.getElementById('task-buttons');
+    const icons = document.getElementById('icons');
+    const audio = document.getElementById('audio');
+    const audioOut = document.getElementById('audio-out');
+    const micButton = document.getElementById('mic');
+    const micNote = document.getElementById('mic-note');
+
+    const STATE_LABELS = {
+      idle: 'Idle', monitoring: 'Monitoring', thinking: 'Thinking', working: 'Working', talking: 'On a call',
+      approval: 'Needs approval', success: 'Success', error: 'Blocked', paused: 'Paused',
+    };
+    const TASK_LABELS = {
+      browsing: 'Browsing / research', writing: 'Writing / email', coding: 'Coding', shopping: 'Shopping / payments',
+      scheduling: 'Scheduling',
+    };
+
+    let lastTask = 'browsing';
+    const mirror = [];
+
+    function apply(state, task) {
+      const opts = state === 'working' ? { task: task || lastTask } : {};
+      if (opts.task) lastTask = opts.task;
+      hero.setState(state, opts);
+      for (const el of mirror) el.setState(state, opts);
+    }
+
+    for (const s of STATES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = STATE_LABELS[s];
+      b.dataset.state = s;
+      b.addEventListener('click', () => apply(s));
+      stateButtons.append(b);
+    }
+    for (const t of TASKS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = TASK_LABELS[t];
+      b.dataset.task = t;
+      b.addEventListener('click', () => apply('working', t));
+      taskButtons.append(b);
+    }
+
+    function addIcon(label, state, task, isMirror) {
+      const wrap = document.createElement('div');
+      wrap.className = 'icon';
+      const el = document.createElement('jig-avatar');
+      el.setAttribute('shape', 'circle');
+      wrap.append(el, Object.assign(document.createElement('span'), { textContent: label }));
+      icons.append(wrap);
+      el.setState(state, task ? { task } : {});
+      if (isMirror) mirror.push(el);
+      return el;
+    }
+    addIcon('Live', 'idle', null, true);
+    addIcon('Idle', 'idle');
+    addIcon('Monitoring', 'monitoring');
+    addIcon('Thinking', 'thinking');
+    addIcon('Research', 'working', 'browsing');
+    addIcon('Email', 'working', 'writing');
+    addIcon('Coding', 'working', 'coding');
+    addIcon('Paying', 'working', 'shopping');
+    addIcon('Calendar', 'working', 'scheduling');
+    addIcon('Approval', 'approval');
+    addIcon('Success', 'success');
+    addIcon('Blocked', 'error');
+
+    hero.addEventListener('jig-statechange', (e) => {
+      const { state, task } = e.detail;
+      document.getElementById('status-state').textContent = state;
+      document.getElementById('status-task').textContent = task || '—';
+      for (const b of stateButtons.children) b.setAttribute('aria-pressed', String(b.dataset.state === state));
+      for (const b of taskButtons.children) b.setAttribute('aria-pressed', String(state === 'working' && b.dataset.task === task));
+      const url = new URL(location.href);
+      url.searchParams.set('state', state);
+      if (task) url.searchParams.set('task', task); else url.searchParams.delete('task');
+      history.replaceState(null, '', url);
+    });
+
+    function setLevel(v) {
+      hero.setAudioLevel(v);
+      for (const el of mirror) el.setAudioLevel(v);
+      audioOut.value = v.toFixed(2);
+    }
+    audio.addEventListener('input', () => setLevel(Number(audio.value)));
+
+    let micStream = null;
+    micButton.addEventListener('click', async () => {
+      if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+        micStream = null;
+        micButton.setAttribute('aria-pressed', 'false');
+        micButton.textContent = 'Use microphone';
+        return;
+      }
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        micNote.textContent = `Microphone unavailable: ${err.message}`;
+        micNote.classList.add('error');
+        return;
+      }
+      micButton.setAttribute('aria-pressed', 'true');
+      micButton.textContent = 'Stop microphone';
+      const ac = new AudioContext();
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 1024;
+      ac.createMediaStreamSource(micStream).connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      const loop = () => {
+        if (!micStream) { ac.close(); return; }
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += v * v;
+        const level = Math.min(1, Math.sqrt(sum / buf.length) * 6);
+        audio.value = level;
+        setLevel(level);
+        requestAnimationFrame(loop);
+      };
+      loop();
+    });
+
+    document.getElementById('reduced').addEventListener('change', (e) => {
+      for (const el of document.querySelectorAll('jig-avatar')) {
+        if (e.target.checked) el.setAttribute('reduced-motion', '');
+        else el.removeAttribute('reduced-motion');
+      }
+    });
+
+    let frames = 0, since = performance.now();
+    const fpsEl = document.getElementById('fps');
+    (function count(now) {
+      frames++;
+      if (now - since >= 1000) {
+        fpsEl.textContent = `${Math.round((frames * 1000) / (now - since))} fps`;
+        frames = 0;
+        since = now;
+      }
+      requestAnimationFrame(count);
+    })(since);
+
+    const params = new URLSearchParams(location.search);
+    if (params.has('audio')) {
+      audio.value = params.get('audio');
+      setLevel(Number(params.get('audio')));
+    }
+    apply(params.get('state') || 'idle', params.get('task'));
+  </script>
+</body>
+</html>
