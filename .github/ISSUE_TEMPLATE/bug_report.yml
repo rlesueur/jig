@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in Jig does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security vulnerabilities, please use the private process in SECURITY.md instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands, API calls or prompts, and any relevant config (remove secrets and personal data).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and error messages
+      description: Output from `jig serve`, `jig health` or the test run. Remove secrets and personal data.
+      render: text
+  - type: input
+    id: commit
+    attributes:
+      label: Jig commit
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and Python version
+      placeholder: e.g. Windows 11, Python 3.12
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model server and model
+      placeholder: e.g. Ollama 0.x with a 14B tool-calling model, 32K context
+    validations:
+      required: true
+  - type: dropdown
+    id: sandbox
+    attributes:
+      label: Sandbox backend
+      options:
+        - directory
+        - container
+    validations:
+      required: true
