@@ -29,17 +29,25 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
-const statusBadge = (s) => el('span', { class: 'status', dataset: { s }, text: s.replace(/_/g, ' ') });
+const STATUS_WORDS = {
+  waiting_approval: 'waiting for your OK', pending: 'waiting for you', ask_user: 'ask you first', ask: 'ask first',
+  interrupted: 'interrupted', planning: 'planning',
+};
+const statusBadge = (s) => el('span', { class: 'status', dataset: { s }, text: STATUS_WORDS[s] || s.replace(/_/g, ' ') });
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-GB') : '—');
 const json = (v) => JSON.stringify(v, null, 2);
-const empty = (text) => el('p', { class: 'empty', text });
+const face = (cls = 'face') => el('img', { class: cls, src: '/web/jig-face.svg', alt: '', width: 40, height: 40 });
+const empty = (text, more) => el('div', { class: 'empty-state' }, face('face face-empty'),
+  el('div', {}, el('p', { class: 'empty', text }), more ? el('p', { class: 'hint', text: more }) : null));
 
 /* ---------- errors: always visible ---------- */
 
 function showError(message) {
   const box = $('errors');
-  const toast = el('div', { class: 'toast' },
-    el('p', { text: message }),
+  const toast = el('div', { class: 'toast', 'data-testid': 'error-toast' },
+    el('div', { class: 'toast-body' },
+      el('p', { class: 'toast-title', text: 'Sorry, that didn\u2019t work' }),
+      el('p', { class: 'toast-detail', text: message })),
     el('button', { type: 'button', text: 'Dismiss', onclick: () => toast.remove() }));
   box.append(toast);
   while (box.children.length > 5) box.firstElementChild.remove();
@@ -218,7 +226,7 @@ let ws = null;
 let wsRetry = 0;
 let wsTimer = 0;
 let wsWanted = false;
-const avatars = [$('avatar'), $('mini-avatar')];
+const avatars = [$('avatar'), $('mini-avatar'), $('companion-avatar')];
 
 function setConn(text, tone) {
   const pill = $('conn');
@@ -291,6 +299,35 @@ function applyAvatar(d) {
   $('avatar-state').textContent = d.state;
   $('avatar-task').textContent = d.state === 'working' && d.variant ? `: ${d.variant}` : '';
   $('avatar-bg').hidden = !background;
+  const words = avatarWords(d.state, d.variant, background);
+  $('avatar-says').textContent = words;
+  $('companion-says').textContent = words;
+  document.documentElement.dataset.jigState = d.state;
+}
+
+const WORKING_WORDS = {
+  browsing: 'Jig is reading and looking things up.',
+  writing: 'Jig is writing.',
+  coding: 'Jig is running some code.',
+  shopping: 'Jig is working on a purchase.',
+  scheduling: 'Jig is checking the time or your calendar.',
+};
+const STATE_WORDS = {
+  idle: 'Jig is here and ready when you are.',
+  monitoring: 'Jig is keeping an eye on things in the background.',
+  thinking: 'Jig is thinking\u2026',
+  talking: 'Jig is talking.',
+  approval: 'Jig needs your OK before carrying on. See Approvals.',
+  success: 'All done! Jig finished that.',
+  error: 'Something went wrong. The details are on screen.',
+  paused: 'Jig is paused. Nothing new starts until you resume.',
+};
+
+/** The avatar's state in plain words, for everyone and for screen readers. */
+function avatarWords(state, variant, background) {
+  let words = state === 'working' ? WORKING_WORDS[variant] : STATE_WORDS[state];
+  if (!words) words = `Jig is ${state}${variant ? `: ${variant}` : ''}.`;
+  return background ? `${words.replace(/\.$/, '')}, quietly in the background (read-only).` : words;
 }
 
 const refreshers = { activity: loadActivity, approvals: loadApprovals, memory: loadMemory, rules: loadRules,
@@ -380,23 +417,36 @@ function nearBottom() {
   return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 80;
 }
 
+function welcome() {
+  return el('div', { class: 'welcome', 'data-testid': 'chat-welcome' }, face('face face-welcome'),
+    el('div', {},
+      el('p', { class: 'welcome-title', text: 'Hello! What shall we do?' }),
+      el('p', { class: 'hint', text: 'Ask a question or give Jig something to do. Actions that change, send or spend anything '
+        + 'are checked against your rules and by the Sentinel, and anything that needs your OK waits for you in Approvals.' })));
+}
+
 function addMessage(role, text = '') {
+  chatLog.querySelector('.welcome')?.remove();
   const content = el('div', { class: 'content', text });
-  const msg = el('article', { class: `msg ${role}`, 'aria-label': role === 'user' ? 'You said' : 'Jig replied' },
-    el('div', { class: 'who', text: role === 'user' ? 'You' : 'Jig' }), content);
+  const msg = el('article', { class: `msg ${role}`, 'aria-label': role === 'user' ? 'You said' : 'Jig replied',
+    'data-testid': role === 'user' ? 'chat-user' : 'chat-jig' },
+    el('div', { class: 'who' }, role === 'user' ? null : face('face face-who'), role === 'user' ? 'You' : 'Jig'), content);
   chatLog.append(msg);
   chatLog.scrollTop = chatLog.scrollHeight;
   return { msg, content };
 }
 
+const VERDICT_WORDS = { allow: 'looks fine', ask_user: 'ask you first', deny: 'do not do this' };
+
 function describeChatEvent(ev) {
   const d = ev.data;
   switch (ev.type) {
     case 'tool.start': return `Using ${d.tool} (${d.variant})`;
-    case 'tool.end': return d.ok ? null : `${d.tool} did not complete`;
-    case 'sentinel.verdict': return `Sentinel on ${d.tool}: ${d.verdict.replace('_', ' ')} (${d.risk} risk). ${d.reason}`;
-    case 'approval.requested': return d.resumed ? null : `Waiting for your approval of ${d.tool}`;
-    case 'approval.resolved': return `Approval for ${d.tool}: ${d.status}`;
+    case 'tool.end': return d.ok ? null : `${d.tool} didn\u2019t complete`;
+    case 'sentinel.verdict':
+      return `Sentinel checked ${d.tool}: ${VERDICT_WORDS[d.verdict] || d.verdict} (${d.verdict}), ${d.risk} risk. ${d.reason}`;
+    case 'approval.requested': return d.resumed ? null : `Jig would like your OK to use ${d.tool}`;
+    case 'approval.resolved': return `You ${d.status === 'approved' ? 'approved' : d.status === 'denied' ? 'denied' : `answered (${d.status})`} ${d.tool}`;
     default: return null;
   }
 }
@@ -413,7 +463,7 @@ async function sendChat(message) {
 
   const fail = (text) => {
     msg.classList.add('error');
-    msg.append(el('p', { class: 'error-text', text }));
+    msg.append(el('p', { class: 'error-text', text: `Jig couldn\u2019t finish this reply: ${text}` }));
     showError(`Chat: ${text}`);
   };
 
@@ -424,7 +474,7 @@ async function sendChat(message) {
     } else if (item.type === 'reasoning') {
       if (!thinking) {
         const pre = el('pre');
-        thinking = { pre, box: el('details', {}, el('summary', { text: 'Thinking' }), pre) };
+        thinking = { pre, box: el('details', { class: 'thinking' }, el('summary', { text: 'Thinking' }), pre) };
         msg.insertBefore(thinking.box, content);
       }
       thinking.pre.textContent += item.text;
@@ -439,7 +489,8 @@ async function sendChat(message) {
         }
         const li = el('li', { text });
         if (item.event.type === 'approval.requested') {
-          li.append(' ', el('button', { type: 'button', class: 'btn btn-small btn-warn', text: 'Review',
+          li.classList.add('asks');
+          li.append(' ', el('button', { type: 'button', class: 'btn btn-small btn-warn', text: 'Review', 'data-testid': 'chat-review',
             onclick: () => selectTab($('tab-approvals')) }));
         }
         events.append(li);
@@ -521,15 +572,20 @@ $('chat-input').addEventListener('keydown', (e) => {
 });
 $('chat-new').addEventListener('click', () => {
   sessionId = null;
-  chatLog.replaceChildren();
+  chatLog.replaceChildren(welcome());
   $('chat-input').focus();
 });
+chatLog.append(welcome());
 
 /* ---------- activity: goals, tasks, runs ---------- */
 
 function taskItem(t) {
   const actions = el('div', { class: 'item-actions' });
   const label = `task ${t.title}`;
+  if (t.status === 'waiting_approval') {
+    actions.append(el('button', { type: 'button', class: 'btn btn-small btn-warn', text: 'Review', 'aria-label': `Review ${label}`,
+      'data-testid': 'task-review', onclick: () => selectTab($('tab-approvals')) }));
+  }
   if (['queued', 'running', 'waiting_approval'].includes(t.status)) {
     actions.append(el('button', { type: 'button', class: 'btn btn-small', text: 'Pause', 'aria-label': `Pause ${label}`,
       onclick: (e) => act(e.currentTarget, async () => { await api(`/tasks/${t.id}/pause`, { method: 'POST' }); loadActivity(); }) }));
@@ -547,7 +603,7 @@ function taskItem(t) {
       }) }));
   }
   const outcome = t.error || t.result;
-  return el('div', { class: 'item' },
+  return el('div', { class: 'item', 'data-testid': 'task', dataset: { id: t.id, status: t.status } },
     el('div', { class: 'item-head' }, statusBadge(t.status), el('span', { class: 'title', text: t.title }),
       el('span', { class: 'status', dataset: { s: 'mode' }, text: t.mode }), actions),
     el('div', { class: 'meta', text: `${t.id} · created ${when(t.created_at)}${t.finished_at ? ` · finished ${when(t.finished_at)}` : ''}` }),
@@ -580,7 +636,7 @@ async function loadActivity() {
         }) }));
     }
     const subtasks = byGoal.get(g.id) || [];
-    return el('div', { class: 'item' },
+    return el('div', { class: 'item', 'data-testid': 'goal', dataset: { id: g.id, status: g.status } },
       el('div', { class: 'item-head' }, statusBadge(g.status), el('span', { class: 'title', text: g.title }), actions),
       el('div', { class: 'meta', text: `${g.id} · created ${when(g.created_at)}` }),
       g.plan ? el('p', { class: 'body', text: g.plan.summary }) : null,
@@ -588,11 +644,11 @@ async function loadActivity() {
       g.result ? el('details', { class: 'body' }, el('summary', { text: 'Result' }), el('pre', { text: g.result })) : null,
       subtasks.length ? el('div', { class: 'subtasks' }, subtasks.map(taskItem)) : null);
   }));
-  if (!goals.length) goalList.append(empty('No goals yet.'));
+  if (!goals.length) goalList.append(empty('No goals yet.', 'Tell Jig what you\u2019d like to achieve above, and it will plan the steps.'));
 
   const standalone = tasks.filter((t) => !t.goal_id).slice(0, 50);
   $('tasks').replaceChildren(...standalone.map(taskItem));
-  if (!standalone.length) $('tasks').append(empty('No standalone tasks.'));
+  if (!standalone.length) $('tasks').append(empty('No standalone tasks yet.', 'One-off and scheduled tasks you create appear here.'));
 
   $('runs').tBodies[0].replaceChildren(...runs.map((r) => el('tr', {},
     el('td', {}, el('code', { text: r.id })), el('td', { text: r.kind }), el('td', { text: r.mode }),
@@ -628,33 +684,99 @@ for (const b of document.querySelectorAll('[data-refresh]')) {
 
 /* ---------- approvals ---------- */
 
-function approvalItem(a, open) {
+/* What each tool would do, in plain words. Every argument is always listed in full as well. */
+const ASK = {
+  write_file: 'write a file', memory_forget: 'forget a memory', memory_add: 'remember something', note_write: 'save a note',
+  web_fetch: 'fetch a web page', browser_open: 'open a web page', browser_click: 'click on a web page',
+  browser_type: 'type into a web page', browser_fill: 'fill in a form field', browser_submit: 'submit a form',
+  browser_login: 'sign in to a website', run_command: 'run a command', run_python: 'run some Python code',
+};
+const q = (v) => `\u201c${v}\u201d`;
+const WILL = {
+  write_file: (x) => `Jig will write ${String(x.content ?? '').length.toLocaleString('en-GB')} characters to the file ${q(x.path)} in its `
+    + `workspace${x.overwrite ? ', replacing that file if it already exists.' : '. If that file already exists, nothing is replaced and the step fails.'}`,
+  memory_forget: (x) => `Jig will permanently delete memory #${x.memory_id}.`,
+  memory_add: (x) => `Jig will remember: ${q(x.content)}.`,
+  note_write: (x) => `Jig will save a private note titled ${q(x.title)}.`,
+  web_fetch: (x) => `Jig will fetch ${x.url}${x.headers && Object.keys(x.headers).length ? ' with the request headers listed below' : ''}.`,
+  browser_open: (x) => `Jig will open ${x.url} in its sandboxed browser.`,
+  browser_click: (x) => `Jig will click the element ${q(x.selector)} on the current page.`,
+  browser_type: (x) => `Jig will type ${q(x.text)} into ${q(x.selector)}${x.press_enter ? ' and then press Enter' : ''}.`,
+  browser_fill: (x) => `Jig will fill ${q(x.selector)} with ${q(x.value)}.`,
+  browser_submit: (x) => `Jig will submit the form ${q(x.selector)} on the current page.`,
+  browser_login: (x) => `Jig will sign in on the current page as ${q(x.username)}.`,
+  run_command: (x) => `Jig will run this command in its sandbox: ${x.command}`,
+  run_python: () => 'Jig will run the Python code below in its sandbox.',
+};
+const VERDICT_LABEL = { allow: 'Looks fine', ask_user: 'Ask you first', deny: 'Do not do this' };
+const RISK_MARK = { low: '\u25CF', medium: '\u25B2', high: '\u25A0' };
+
+function argValue(v) {
+  if (typeof v === 'boolean') return el('span', { text: v ? 'yes' : 'no' });
+  if (v === null || v === undefined) return el('span', { class: 'muted-inline', text: 'not set' });
+  if (typeof v === 'object') return el('pre', { class: 'args', text: json(v) });
+  const s = String(v);
+  return s.length > 80 || s.includes('\n') ? el('pre', { class: 'args', text: s }) : el('code', { text: s });
+}
+
+function approvalItem(a) {
   const s = a.sentinel;
-  const verdict = el('div', { class: 'verdict' },
-    s ? el('div', { class: 'verdict-head' }, el('strong', { text: 'Sentinel' }), statusBadge(s.verdict),
-      el('span', { text: `${s.risk} risk` })) : el('div', { class: 'verdict-head', text: 'Not reviewed by the Sentinel (no outbound or side effect).' }),
-    s ? el('p', { class: 'body', text: s.reason }) : null);
-  const reasons = el('ul', { class: 'reasons' }, a.reasons.map((r) => el('li', { text: `${r.rule}: ${r.reason}` })));
+  const pendingNow = a.status === 'pending';
+  const titleId = `ap-title-${a.id}`;
+  const doing = ASK[a.tool] || `use the tool ${a.tool}`;
+  const willText = WILL[a.tool] ? WILL[a.tool](a.args) : `Jig will run ${a.tool} with exactly the details below.`;
+  const argList = el('dl', { class: 'args-list' }, Object.entries(a.args).flatMap(([k, v]) => [el('dt', { text: k }), el('dd', {}, argValue(v))]));
+
+  const verdict = s
+    ? el('section', { class: 'verdict', dataset: { verdict: s.verdict, risk: s.risk }, 'aria-label': 'Sentinel\u2019s verdict', 'data-testid': 'sentinel-verdict' },
+      el('h4', { text: 'Sentinel\u2019s verdict' }),
+      el('div', { class: 'verdict-line' },
+        el('span', { class: 'verdict-label', dataset: { verdict: s.verdict } }, VERDICT_LABEL[s.verdict] || s.verdict, el('span', { class: 'code', text: ` (${s.verdict})` })),
+        el('span', { class: 'risk', dataset: { risk: s.risk }, 'data-testid': 'sentinel-risk' },
+          el('span', { 'aria-hidden': 'true', text: `${RISK_MARK[s.risk] || '\u25C6'} ` }), `${s.risk[0].toUpperCase()}${s.risk.slice(1)} risk`)),
+      el('p', { class: 'verdict-reason', text: s.reason }))
+    : el('section', { class: 'verdict', dataset: { verdict: 'none' }, 'aria-label': 'Sentinel\u2019s verdict', 'data-testid': 'sentinel-verdict' },
+      el('h4', { text: 'Sentinel\u2019s verdict' }),
+      el('p', { class: 'verdict-reason', text: 'Not reviewed by the Sentinel: this action has no outbound or side effect.' }));
+
+  const why = el('section', { class: 'why', 'aria-label': 'Why you are being asked' },
+    el('h4', { text: 'Why you\u2019re being asked' }),
+    el('ul', { class: 'reasons' }, a.reasons.map((r) => el('li', {}, el('code', { text: r.rule }), `: ${r.reason}`))));
+
+  const whatBox = el('section', { class: 'will-happen', 'aria-label': 'What will happen', 'data-testid': 'approval-what' },
+    el('h4', { text: pendingNow ? 'What will happen if you approve' : 'What Jig asked to do' }),
+    el('p', { class: 'will-text', text: willText }),
+    pendingNow ? argList : el('details', {}, el('summary', { text: 'All the details' }), argList));
+
   const parts = [
-    el('div', { class: 'item-head' }, statusBadge(a.status), el('span', { class: 'title', text: a.tool })),
-    el('div', { class: 'meta', text: `${a.id} · task ${a.task_id || '—'} · requested ${when(a.created_at)}${a.resolved_at ? ` · answered ${when(a.resolved_at)}` : ''}` }),
-    el('div', { class: 'body', text: 'Why approval is needed:' }), reasons, verdict,
-    el('details', { class: 'body', open }, el('summary', { text: 'Arguments' }), el('pre', { class: 'args', text: json(a.args) })),
+    el('div', { class: 'approval-head' }, face('face face-ask'),
+      el('div', { class: 'approval-heading' },
+        el('h3', { id: titleId, class: 'approval-title', text: pendingNow ? `Jig would like your OK to ${doing}` : `Jig asked to ${doing}` }),
+        el('p', { class: 'meta', text: `${a.tool} · requested ${when(a.created_at)}${a.resolved_at ? ` · answered ${when(a.resolved_at)}` : ''}` })),
+      statusBadge(a.status)),
+    whatBox, verdict, why,
+    el('details', { class: 'tech' }, el('summary', { text: 'Technical details' }),
+      el('p', { class: 'meta', text: `Approval ${a.id} · task ${a.task_id || '—'} · tool ${a.tool}` }),
+      el('pre', { class: 'args', text: json(a.args) })),
   ];
-  if (a.note) parts.push(el('p', { class: 'meta', text: `Note: ${a.note}` }));
-  if (a.status === 'pending') {
+  if (a.note) parts.push(el('p', { class: 'meta', text: `Your note: ${a.note}` }));
+  if (pendingNow) {
     const noteId = `note-${a.id}`;
-    const note = el('input', { id: noteId, type: 'text', placeholder: 'Optional note' });
+    const note = el('input', { id: noteId, type: 'text', placeholder: 'For example, why you said yes or no', 'data-testid': 'approval-note' });
     const answer = (approve) => (e) => act(e.currentTarget, async () => {
       await api(`/approvals/${a.id}`, { method: 'POST', body: { approve, note: note.value.trim() || null } });
       loadApprovals();
     });
-    parts.push(el('div', { class: 'row body' },
-      el('label', { for: noteId }, 'Note', note),
-      el('button', { type: 'button', class: 'btn btn-approve', text: 'Approve', 'aria-label': `Approve ${a.tool}`, onclick: answer(true) }),
-      el('button', { type: 'button', class: 'btn btn-deny', text: 'Deny', 'aria-label': `Deny ${a.tool}`, onclick: answer(false) })));
+    parts.push(el('div', { class: 'decide' },
+      el('label', { for: noteId }, 'Add a note (optional)', note),
+      el('div', { class: 'decide-buttons' },
+        el('button', { type: 'button', class: 'btn btn-approve', text: 'Approve', 'aria-label': `Approve ${a.tool}`,
+          'data-testid': 'approval-approve', onclick: answer(true) }),
+        el('button', { type: 'button', class: 'btn btn-deny', text: 'Deny', 'aria-label': `Deny ${a.tool}`,
+          'data-testid': 'approval-deny', onclick: answer(false) }))));
   }
-  return el('div', { class: 'item' }, parts);
+  return el('article', { class: `item approval${pendingNow ? ' is-pending' : ''}`, 'aria-labelledby': titleId,
+    'data-testid': 'approval', dataset: { id: a.id, status: a.status } }, parts);
 }
 
 async function loadApprovals() {
@@ -665,11 +787,11 @@ async function loadApprovals() {
     if (err.status !== 401) showError(err.message);
     return;
   }
-  $('approvals-pending').replaceChildren(...pendingList.map((a) => approvalItem(a, true)));
-  if (!pendingList.length) $('approvals-pending').append(empty('Nothing is waiting for you.'));
+  $('approvals-pending').replaceChildren(...pendingList.map(approvalItem));
+  if (!pendingList.length) $('approvals-pending').append(empty('Nothing needs your OK right now.', 'When Jig wants to do something that needs you, it will wait here.'));
   const answered = all.filter((a) => a.status !== 'pending').slice(0, 20);
-  $('approvals-done').replaceChildren(...answered.map((a) => approvalItem(a, false)));
-  if (!answered.length) $('approvals-done').append(empty('No answered approvals yet.'));
+  $('approvals-done').replaceChildren(...answered.map(approvalItem));
+  if (!answered.length) $('approvals-done').append(empty('You haven\u2019t answered any requests yet.'));
   const badge = $('approvals-badge');
   badge.hidden = pendingList.length === 0;
   badge.textContent = String(pendingList.length);
@@ -683,7 +805,7 @@ let memoryQuery = '';
 const splitTags = (s) => s.split(/[\s,]+/).map((t) => t.trim()).filter(Boolean);
 
 function memoryItem(m) {
-  const item = el('div', { class: 'item' });
+  const item = el('div', { class: 'item memory', 'data-testid': 'memory', dataset: { id: String(m.id) } });
   const view = () => {
     item.replaceChildren(
       el('div', { class: 'item-head' }, el('span', { class: 'title', text: m.content }),
@@ -734,7 +856,11 @@ async function loadMemory() {
   }
   $('memory-heading').textContent = memoryQuery ? `Memories matching "${memoryQuery}"` : 'Memories';
   $('memories').replaceChildren(...rows.map(memoryItem));
-  if (!rows.length) $('memories').append(empty(memoryQuery ? 'No memories match.' : 'No memories yet.'));
+  if (!rows.length) {
+    $('memories').append(memoryQuery
+      ? empty(`Nothing in Jig\u2019s memory matches ${q(memoryQuery)}.`, 'Try other words, or choose Show all.')
+      : empty('Jig hasn\u2019t remembered anything yet.', 'Add a memory above, or tell Jig something about yourself in the chat.'));
+  }
 }
 
 $('memory-search').addEventListener('submit', (e) => {
@@ -803,7 +929,7 @@ async function loadRules() {
   $('core-rules').replaceChildren(...core.map((r) => el('li', {}, el('code', { text: r.id }), ' ', statusBadge(r.decision), ' ', r.description)));
   const body = $('rules').tBodies[0];
   body.replaceChildren(...custom.map(ruleRow));
-  if (!custom.length) body.append(el('tr', {}, el('td', { colspan: '8' }, empty('No custom rules. Tools use their default decision.'))));
+  if (!custom.length) body.append(el('tr', {}, el('td', { colspan: '8' }, empty('No custom rules yet, so each tool uses its default decision.'))));
 }
 
 $('rule-form').addEventListener('submit', (e) => {
@@ -856,7 +982,7 @@ async function loadAudit(reset) {
     auditPaged = true;
   }
   list.append(...rows.map(auditRow));
-  if (reset && !rows.length) list.append(empty('No audit entries match.'));
+  if (reset && !rows.length) list.append(empty('No audit entries match those filters.'));
   if (rows.length) auditOldest = rows[rows.length - 1].id;
   $('audit-more').hidden = rows.length < 100;
 }
