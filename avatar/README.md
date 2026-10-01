@@ -11,7 +11,7 @@ cd jig\avatar
 python -m http.server 8765 --bind 127.0.0.1
 ```
 
-Open <http://127.0.0.1:8765/>. You can deep-link to a state with query parameters, for example `?state=working&task=coding`, `?state=working&task=browsing&background=1` or `?state=talking&audio=0.6`.
+Open <http://127.0.0.1:8765/>. You can deep-link to a state with query parameters, for example `?state=working&task=coding`, `?state=working&task=browsing&background=1` or `?state=talking&audio=0.6`. Add `theme=light` to see the light theme, or use the Theme buttons.
 
 ## Usage
 
@@ -62,8 +62,27 @@ The `background` option is separate from the `background` state alias, which sti
 | `shape` | `rounded` (default), `circle` for avatars and icons, or `none` for a transparent background. |
 | `framing` | `auto` (default; switches to `icon` below 110px), `icon` (head-and-shoulders crop with reduced detail), or `full`. |
 | `reduced-motion` | Forces reduced motion. Otherwise the component follows `prefers-reduced-motion`. |
+| `theme` | `dark` (default) or `light`. Also available as the `theme` property. Any other value throws a `RangeError`. |
 
-Size the element with CSS. The canvas follows it through a `ResizeObserver` and renders at the device pixel ratio, capped at 2.
+Size the element with CSS.
+
+### Light theme
+
+`theme="light"` draws the same character with the same rig, for cream and other light pages. Neon glow relies on additive light, which disappears on a pale background, so the light pass re-inks the drawing instead:
+
+- **Colour.** Every ribbon, shard, spark and prop colour keeps its hue, but drops to a deep, more saturated lightness, like printed ink. Near-white highlights become plum ink. Strokes are drawn normally rather than added together, so nothing turns white where colours overlap.
+- **Depth.** The outer glow becomes a soft coloured drop-shadow below each stroke. Each line has a solid ink body and a thin satin highlight. Radial glows drop to under half strength, and a soft plum ground shadow sits under the tail.
+- **Head.** The head stays a dark plum, slightly warmer and lighter at the top left, with a soft shadow. It is Jig's silhouette in both themes, and it keeps the amber eyes as bright as in dark mode.
+- **Background.** The background is always transparent, whatever the `shape`. In light mode Jig never sits in a dark porthole. `shape="circle"` still clips the drawing to a circle.
+- **Dimming.** Background work and the paused state fade towards the page instead of towards black. State signs (thinking bubbles, talk arcs, pause bars, the approval bubble and the error cross) always draw at full strength, so they stay legible.
+
+Changing `theme` cross-fades between the two renderings over 0.6 s (0.15 s with reduced motion). The first frame uses the theme set at connection, with no fade. Without the attribute, the component renders exactly as before.
+
+```js
+jig.theme = 'light'; // or jig.setAttribute('theme', 'light')
+const mq = matchMedia('(prefers-color-scheme: dark)');
+jig.theme = mq.matches ? 'dark' : 'light';
+``` The canvas follows it through a `ResizeObserver` and renders at the device pixel ratio, capped at 2.
 
 ## States
 

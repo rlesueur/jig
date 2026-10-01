@@ -13,6 +13,35 @@ const frac = (v) => v - Math.floor(v);
 const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${clamp(a, 0, 1)})`;
 const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 
+export const THEMES = ['dark', 'light'];
+
+/* Light theme: the neon palette re-inked for cream paper. Bright colours keep their hue but drop to a deep,
+   saturated lightness so they read as printed ink rather than light; near-whites become plum ink. */
+const INK = [62, 30, 86];
+const PAPER = [250, 242, 230];
+function inkOf(c) {
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const L = (max + min) / 2;
+  const d = max - min;
+  if (d < 0.14 && L > 0.72) return INK;
+  if (L <= 0.42) return c;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = d === 0 ? 0 : Math.min(1, d / (1 - Math.abs(2 * L - 1)) * 1.05 + 0.08);
+  const l = 0.33 + (L - 0.42) * 0.28;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [f(0) * 255, f(8) * 255, f(4) * 255];
+}
+
 const C = {
   magenta: [255, 64, 236],
   violet: [154, 84, 255],
@@ -271,7 +300,7 @@ const TEMPLATE = `
 
 export class JigAvatar extends HTMLElement {
   static get observedAttributes() {
-    return ['state', 'task', 'background', 'audio-level', 'shape', 'framing', 'reduced-motion'];
+    return ['state', 'task', 'background', 'audio-level', 'shape', 'framing', 'reduced-motion', 'theme'];
   }
 
   constructor() {
@@ -304,6 +333,12 @@ export class JigAvatar extends HTMLElement {
     this._visible = true;
     this._reflecting = false;
     this._onReduced = () => {};
+    this._lightK = 0; /* 0 = dark rendering, 1 = light; eased towards the theme so switches cross-fade */
+    this._lightSettled = false;
+    this._light = false;
+    this._onHead = false;
+    this._addOp = 'lighter';
+    this._bufs = [];
   }
 
   connectedCallback() {
@@ -318,6 +353,10 @@ export class JigAvatar extends HTMLElement {
     this._io.observe(this);
     if (!this.hasAttribute('role')) this.setAttribute('role', 'img');
     this._updateLabel();
+    if (!this._lightSettled) {
+      this._lightK = this.theme === 'light' ? 1 : 0; /* the first frame starts in the right theme, no fade */
+      this._lightSettled = true;
+    }
     track(this);
   }
 
@@ -350,7 +389,24 @@ export class JigAvatar extends HTMLElement {
       if (value !== null && !['auto', 'icon', 'full'].includes(value)) {
         throw new RangeError(`jig-avatar: unknown framing "${value}". Expected auto, icon or full`);
       }
+    } else if (name === 'theme') {
+      if (value !== null && !THEMES.includes(value)) {
+        throw new RangeError(`jig-avatar: unknown theme "${value}". Expected ${THEMES.join(' or ')}`);
+      }
     }
+  }
+
+  /** 'dark' (default: neon on navy-black) or 'light' (deep inks on a transparent background, for cream pages). */
+  get theme() {
+    const value = this.getAttribute('theme');
+    return value === 'light' ? 'light' : 'dark';
+  }
+
+  set theme(value) {
+    if (!THEMES.includes(value)) {
+      throw new RangeError(`jig-avatar: unknown theme "${value}". Expected ${THEMES.join(' or ')}`);
+    }
+    this.setAttribute('theme', value);
   }
 
   get state() {
@@ -515,13 +571,65 @@ export class JigAvatar extends HTMLElement {
       b.rot += b.vr * dt;
     }
 
+    const lightTarget = this.theme === 'light' ? 1 : 0;
+    if (this._lightK !== lightTarget) {
+      const step = dt / (reduced ? 0.15 : 0.6);
+      this._lightK = lightTarget > this._lightK ? Math.min(lightTarget, this._lightK + step) : Math.max(lightTarget, this._lightK - step);
+    }
+
     this._render(m);
   }
 
   /* ---------- rendering ---------- */
 
+  /* Each theme is a complete pass; between themes both passes are drawn and cross-faded. */
   _render(m) {
+    const k = ease(this._lightK);
+    if (k <= 0 || k >= 1) {
+      this._light = k >= 1;
+      this._paint(m);
+      return;
+    }
+    const main = this._ctx;
+    const W = this._canvas.width;
+    const H = this._canvas.height;
+    const bufs = [0, 1].map((i) => {
+      let b = this._bufs[i];
+      if (!b) {
+        b = document.createElement('canvas').getContext('2d');
+        this._bufs[i] = b;
+      }
+      if (b.canvas.width !== W || b.canvas.height !== H) {
+        b.canvas.width = W;
+        b.canvas.height = H;
+      }
+      return b;
+    });
+    try {
+      this._light = false;
+      this._ctx = bufs[0];
+      this._paint(m);
+      this._light = true;
+      this._ctx = bufs[1];
+      this._paint(m);
+    } finally {
+      this._ctx = main;
+    }
+    main.setTransform(1, 0, 0, 1, 0, 0);
+    main.globalCompositeOperation = 'source-over';
+    main.clearRect(0, 0, W, H);
+    main.globalAlpha = 1 - k;
+    main.drawImage(bufs[0].canvas, 0, 0);
+    main.globalCompositeOperation = 'lighter';
+    main.globalAlpha = k;
+    main.drawImage(bufs[1].canvas, 0, 0);
+    main.globalCompositeOperation = 'source-over';
+    main.globalAlpha = 1;
+  }
+
+  _paint(m) {
     const ctx = this._ctx;
+    this._addOp = this._light ? 'source-over' : 'lighter';
     const cur = this._cur;
     const W = this._canvas.width;
     const H = this._canvas.height;
@@ -552,10 +660,10 @@ export class JigAvatar extends HTMLElement {
     const d = this._dpr * scale;
     ctx.setTransform(d, 0, 0, d, this._dpr * (this._cssW / 2) - view.x * d, this._dpr * (this._cssH / 2) - view.y * d);
 
-    if (shape !== 'none') this._drawBackground(view);
+    if (shape !== 'none' && !this._light) this._drawBackground(view);
     this._pose = this._computePose(m);
 
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = this._addOp;
     this._drawVortex(view);
     this._drawAura();
     this._drawSonar();
@@ -578,7 +686,7 @@ export class JigAvatar extends HTMLElement {
     this._drawHead();
     ctx.restore();
 
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = this._addOp;
     this._drawShards(shardFrames, true);
     this._drawTaskFront(shardFrames);
     this._drawBurst();
@@ -609,6 +717,11 @@ export class JigAvatar extends HTMLElement {
       g = lerp(g, y, p.desat);
       b = lerp(b, y, p.desat);
     }
+    if (this._light && !this._onHead) {
+      /* on paper, dimming fades towards the page instead of towards black */
+      const c = inkOf([r, g, b]);
+      return p.dim > 0.001 ? mix(c, PAPER, p.dim * 0.35) : c;
+    }
     if (p.dim > 0.001) {
       const k = 1 - p.dim * 0.3;
       r *= k;
@@ -620,6 +733,10 @@ export class JigAvatar extends HTMLElement {
 
   /* Layered strokes approximate a neon tube without the cost of shadowBlur. */
   _neon(path, colour, w, a = 1, core = true) {
+    if (this._light) {
+      this._ink(path, colour, w, a, core);
+      return;
+    }
     const ctx = this._ctx;
     const A = a * this._alphaK;
     if (A <= 0.003) return;
@@ -649,9 +766,39 @@ export class JigAvatar extends HTMLElement {
     ctx.globalAlpha = 1;
   }
 
-  _glow(x, y, r, colour, a) {
+  /* Light theme stroke: a soft coloured drop-shadow below, a solid saturated ink line, and a satin highlight. */
+  _ink(path, colour, w, a, core) {
     const ctx = this._ctx;
     const A = a * this._alphaK;
+    if (A <= 0.003) return;
+    const glow = w;
+    w = Math.max(w * 1.5, this._minW * 1.2);
+    ctx.strokeStyle = Array.isArray(colour) ? rgba(colour, 1) : colour;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (!this._icon) {
+      ctx.save();
+      ctx.translate(0, 5 + glow * 0.8);
+      ctx.globalAlpha = clamp(0.1 * A, 0, 1);
+      ctx.lineWidth = glow * 3 + 4;
+      ctx.stroke(path);
+      ctx.restore();
+    }
+    ctx.globalAlpha = clamp(0.95 * A, 0, 1);
+    ctx.lineWidth = w;
+    ctx.stroke(path);
+    if (core) {
+      ctx.strokeStyle = Array.isArray(colour) ? rgba(mix(colour, [255, 255, 255], 0.5), 1) : 'rgb(255,250,245)';
+      ctx.globalAlpha = clamp(0.5 * A, 0, 1);
+      ctx.lineWidth = Math.max(w * 0.3, this._minW * 0.5);
+      ctx.stroke(path);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  _glow(x, y, r, colour, a) {
+    const ctx = this._ctx;
+    const A = a * this._alphaK * (this._light && !this._onHead ? 0.45 : 1);
     if (A <= 0.003) return;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, rgba(colour, A));
@@ -1311,6 +1458,19 @@ export class JigAvatar extends HTMLElement {
     const t = this._t;
     const cols = [C.violet, C.magenta, C.cyan, C.violet, C.blue];
     const ctx = this._ctx;
+    if (this._light) {
+      /* a soft plum ground shadow anchors Jig on the page */
+      const g = ctx.createRadialGradient(TAIL_TIP.x, TAIL_TIP.y + 14, 4, TAIL_TIP.x, TAIL_TIP.y + 14, 190);
+      g.addColorStop(0, rgba(INK, 0.22 * this._alphaK));
+      g.addColorStop(1, rgba(INK, 0));
+      ctx.save();
+      ctx.translate(TAIL_TIP.x, TAIL_TIP.y + 14);
+      ctx.scale(1, 0.24);
+      ctx.translate(-TAIL_TIP.x, -(TAIL_TIP.y + 14));
+      ctx.fillStyle = g;
+      ctx.fillRect(TAIL_TIP.x - 190, TAIL_TIP.y + 14 - 190, 380, 380);
+      ctx.restore();
+    }
     for (let i = 0; i < 5; i++) {
       const rx = 34 + i * 30;
       const p = new Path2D();
@@ -1372,7 +1532,7 @@ export class JigAvatar extends HTMLElement {
       for (let j = 2; j < left.length; j += 2) bandPath.lineTo(left[j], left[j + 1]);
       for (let j = right.length - 2; j >= 0; j -= 2) bandPath.lineTo(right[j], right[j + 1]);
       bandPath.closePath();
-      ctx.fillStyle = rgba(col, 0.24 * iconK * this._alphaK * (1 + P.audio * 0.5));
+      ctx.fillStyle = rgba(col, (this._light ? 0.42 : 0.24) * iconK * this._alphaK * (1 + P.audio * 0.5));
       ctx.fill(bandPath);
       this._neon(smoothPath(centre), col, this._icon ? 5 : 3.8, (1 + P.audio * 0.3) * iconK);
       if (!this._icon) this._neon(smoothPath(left), col, 1.2, 0.55, false);
@@ -1487,7 +1647,7 @@ export class JigAvatar extends HTMLElement {
       ctx.fillStyle = g;
       ctx.fill(p);
       ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalCompositeOperation = this._addOp;
       this._neon(p, this._tone(C.violet, amber * 0.4), 3, 1);
       const inner = new Path2D();
       const mid = [lerp(hn.b1[0], hn.b2[0], 0.5), lerp(hn.b1[1], hn.b2[1], 0.5)];
@@ -1499,16 +1659,31 @@ export class JigAvatar extends HTMLElement {
 
     const headPath = new Path2D();
     headPath.ellipse(0, 0, HEAD.rx, HEAD.ry, 0, 0, TAU);
+    /* the head stays a dark plum in both themes: it is the character's silhouette and frames the amber eyes */
+    this._onHead = true;
     const fill = ctx.createRadialGradient(-30, -40, 10, 0, 0, HEAD.rx + 10);
-    fill.addColorStop(0, rgba(this._tone([24, 16, 58]), 1));
-    fill.addColorStop(0.7, rgba(this._tone([10, 6, 28]), 1));
-    fill.addColorStop(1, rgba(this._tone([18, 8, 46]), 1));
+    if (this._light) {
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = rgba(this._tone([90, 40, 110]), 1);
+      ctx.translate(0, 18);
+      ctx.fill(headPath);
+      ctx.restore();
+      fill.addColorStop(0, rgba(this._tone([92, 52, 128]), 1));
+      fill.addColorStop(0.55, rgba(this._tone([44, 20, 66]), 1));
+      fill.addColorStop(1, rgba(this._tone([30, 12, 46]), 1));
+    } else {
+      fill.addColorStop(0, rgba(this._tone([24, 16, 58]), 1));
+      fill.addColorStop(0.7, rgba(this._tone([10, 6, 28]), 1));
+      fill.addColorStop(1, rgba(this._tone([18, 8, 46]), 1));
+    }
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = fill;
     ctx.fill(headPath);
     this._headFill = fill;
+    this._onHead = false;
 
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = this._addOp;
     const rim = ctx.createConicGradient(-Math.PI / 2, 0, 0);
     const rc = (c) => rgba(this._tone(c, amber * 0.55), 1);
     rim.addColorStop(0, rc(C.cyan));
@@ -1519,13 +1694,15 @@ export class JigAvatar extends HTMLElement {
     rim.addColorStop(0.9, rc(C.magenta));
     rim.addColorStop(1, rc(C.cyan));
     this._neon(headPath, rim, 4.2, 1);
+    this._onHead = true;
     const sheen = new Path2D();
     sheen.ellipse(0, 0, HEAD.rx - 16, HEAD.ry - 16, 0, Math.PI * 1.08, Math.PI * 1.42);
     this._neon(sheen, this._tone(C.violet), 1.6, 0.5, false);
 
     this._drawFace();
+    this._onHead = false;
     ctx.restore();
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = this._addOp;
   }
 
   _drawFace() {
@@ -1547,7 +1724,7 @@ export class JigAvatar extends HTMLElement {
       ctx.translate(ex, ey);
       const normalA = faceA * (1 - happy);
       if (normalA > 0.01 && open > 0.04) {
-        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalCompositeOperation = this._addOp;
         this._glow(0, 0, r * 1.75, this._tone(C.orange, P.amberPulse * 0.3), 0.42 * normalA * Math.min(1, open));
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = normalA;
@@ -1591,7 +1768,7 @@ export class JigAvatar extends HTMLElement {
           ctx.restore();
         }
         ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalCompositeOperation = this._addOp;
         this._neon(eye, this._tone(C.amber, 0.2), 2.4, normalA * (0.6 + 0.4 * Math.min(1, open)), false);
       }
       if (normalA > 0.01 && open < 0.3) {
@@ -1599,14 +1776,14 @@ export class JigAvatar extends HTMLElement {
         const lash = new Path2D();
         lash.moveTo(-r * 0.8, 4);
         lash.quadraticCurveTo(0, r * 0.5, r * 0.8, 4);
-        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalCompositeOperation = this._addOp;
         this._neon(lash, this._tone(C.amber), 4, normalA * k);
       }
       if (happy > 0.01) {
         const arc = new Path2D();
         arc.moveTo(-r * 0.8, r * 0.25);
         arc.quadraticCurveTo(0, -r * 0.85, r * 0.8, r * 0.25);
-        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalCompositeOperation = this._addOp;
         this._neon(arc, this._tone(C.amber), 6, happy * faceA);
         this._glow(0, -6, r * 1.4, this._tone(C.orange), 0.35 * happy * faceA);
       }
@@ -1631,7 +1808,7 @@ export class JigAvatar extends HTMLElement {
     ctx.fillStyle = openM > 0.15 ? 'rgb(40,10,30)' : mg;
     ctx.fill(mouth);
     ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = this._addOp;
     this._neon(mouth, this._tone(C.amber), 2.4, faceA * 0.9);
     if (openM > 0.15) {
       const tongue = new Path2D();
@@ -1712,7 +1889,7 @@ export class JigAvatar extends HTMLElement {
     for (const b of this._burst) {
       const life = b.life / b.max;
       ctx.globalAlpha = (1 - life) * this._alphaK;
-      ctx.fillStyle = rgba(b.c, 1);
+      ctx.fillStyle = rgba(this._light ? inkOf(b.c) : b.c, 1);
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(b.rot);
@@ -1723,7 +1900,17 @@ export class JigAvatar extends HTMLElement {
   }
 
   _drawOverlays() {
-    const ctx = this._ctx;
+    const alphaK = this._alphaK;
+    /* translucent ink washes out on paper, so the state signs stay at full strength in low-energy states */
+    if (this._light) this._alphaK = Math.max(alphaK, 1);
+    try {
+      this._drawSigns();
+    } finally {
+      this._alphaK = alphaK;
+    }
+  }
+
+  _drawSigns() {
     const cur = this._cur;
     const P = this._pose;
     const t = this._t;

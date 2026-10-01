@@ -54,6 +54,21 @@
     .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
     .error { color: #ff8a9a; }
     @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f6eedf;
+      --panel: #fffaf2;
+      --line: #ead8bf;
+      --text: #2d2219;
+      --muted: #65513f;
+      --amber: #c8482e;
+    }
+    :root[data-theme="light"] body { background: radial-gradient(1200px 700px at 30% 0%, #fff6e8 0%, var(--bg) 60%); }
+    :root[data-theme="light"] button { background: #fffaf2; border-color: #d9c3a5; }
+    :root[data-theme="light"] button:hover { background: #fbeedb; }
+    :root[data-theme="light"] button[aria-pressed="true"] { background: #fde9e2; }
+    :root[data-theme="light"] .error { color: #b0241c; }
+    button:focus-visible, input:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -101,6 +116,15 @@
         <h2>Icon size (48px)</h2>
         <div class="icons" id="icons"></div>
         <p class="note">The first icon mirrors the large avatar; the others each hold a fixed state.</p>
+      </section>
+
+      <section>
+        <h2>Theme</h2>
+        <div class="buttons" id="theme-buttons" role="group" aria-label="Avatar theme">
+          <button type="button" data-theme="dark" aria-pressed="true">Dark</button>
+          <button type="button" data-theme="light" aria-pressed="false">Light</button>
+        </div>
+        <p class="note">Sets the <code>theme</code> attribute on every avatar. Light draws deep inks with soft shadows on a transparent background, for cream pages.</p>
       </section>
 
       <section>
@@ -189,9 +213,22 @@
     addIcon('Coding', 'working', 'coding');
     addIcon('Paying', 'working', 'shopping');
     addIcon('Calendar', 'working', 'scheduling');
+    addIcon('Talking', 'talking');
     addIcon('Approval', 'approval');
     addIcon('Success', 'success');
     addIcon('Blocked', 'error');
+    addIcon('Paused', 'paused');
+
+    const themeButtons = document.getElementById('theme-buttons');
+    function setTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      for (const el of document.querySelectorAll('jig-avatar')) el.theme = theme;
+      for (const b of themeButtons.children) b.setAttribute('aria-pressed', String(b.dataset.theme === theme));
+      const url = new URL(location.href);
+      if (theme === 'light') url.searchParams.set('theme', 'light'); else url.searchParams.delete('theme');
+      history.replaceState(null, '', url);
+    }
+    for (const b of themeButtons.children) b.addEventListener('click', () => setTheme(b.dataset.theme));
 
     hero.addEventListener('jig-statechange', (e) => {
       const { state, task, background } = e.detail;
@@ -277,6 +314,7 @@
       setLevel(Number(params.get('audio')));
     }
     backgroundBox.checked = params.get('background') === '1';
+    if (params.has('theme')) setTheme(params.get('theme'));
     apply(params.get('state') || 'idle', params.get('task'));
   </script>
 </body>
