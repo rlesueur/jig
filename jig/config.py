@@ -63,6 +63,30 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class VisionConfig:
+    # When true, Jig sends a real test image at start-up and refuses to start if the answer is wrong.
+    # Needs a vision-capable model (for llama.cpp, a model plus its --mmproj projector).
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
+class SandboxConfig:
+    # "directory": file tools are confined to a folder (no code execution, no browser).
+    # "container": code, shell and the headless browser run in a hardened per-agent Docker container.
+    backend: str = "directory"
+    image: str = "jig-sandbox:0.1.0"
+    cpus: float = 2.0
+    memory: str = "2g"
+    pids_limit: int = 512
+    tmp_size: str = "512m"
+    shm_size: str = "256m"
+    # Host address the egress proxy listens on; the in-container relay reaches it via host.docker.internal.
+    egress_bind: str = "127.0.0.1"
+    egress_ports: list[int] = field(default_factory=lambda: [80, 443])
+    command_timeout_s: float = 120.0
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8766
@@ -78,6 +102,8 @@ class Config:
     data_dir: Path
     sandbox_dir: Path
     source: Path
+    vision: VisionConfig = field(default_factory=VisionConfig)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
     @property
     def db_path(self) -> Path:
@@ -102,7 +128,7 @@ def _build(cls: type, values: dict[str, Any], section: str) -> Any:
 
 
 def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) -> Config:
-    """Load configuration. ``overrides`` may set ``data_dir`` and ``sandbox_dir``."""
+    """Load configuration. ``overrides`` may set ``data_dir``, ``sandbox_dir`` and ``sandbox_backend``."""
     config_path = Path(path or os.environ.get("JIG_CONFIG") or DEFAULT_CONFIG_PATH)
     if not config_path.is_file():
         raise ConfigError(f"Config file not found: {config_path}")
@@ -155,4 +181,16 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         data_dir=data_dir.resolve(),
         sandbox_dir=sandbox_dir.resolve(),
         source=config_path.resolve(),
+        vision=_build(VisionConfig, _section(raw, "vision"), "vision"),
+        sandbox=_sandbox_config(_section(raw, "sandbox"), overrides.get("sandbox_backend")),
     )
+
+
+def _sandbox_config(values: dict[str, Any], backend_override: str | None) -> SandboxConfig:
+    values = dict(values)
+    if backend := backend_override or os.environ.get("JIG_SANDBOX_BACKEND"):
+        values["backend"] = backend
+    cfg = _build(SandboxConfig, values, "sandbox")
+    if cfg.backend not in ("directory", "container"):
+        raise ConfigError(f"[sandbox] backend must be 'directory' or 'container', not {cfg.backend!r}")
+    return cfg

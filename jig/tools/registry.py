@@ -33,6 +33,10 @@ class ToolContext:
     mode: Mode
     run_id: str
     task_id: str | None
+    # Image understanding (jig.vision.VisionService); raises VisionUnavailable when vision is off.
+    vision: Any = None
+    # The container sandbox (jig.sandbox_container.ContainerSandbox) when that backend is selected.
+    container: Any = None
 
 
 ToolFn = Callable[..., Awaitable[Any]]

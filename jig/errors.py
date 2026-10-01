@@ -60,6 +60,14 @@ class SandboxViolation(JigError):
     pass
 
 
+class SandboxUnavailable(JigError):
+    """The configured sandbox backend (for example Docker) cannot be used. Jig does not fall back."""
+
+
+class VisionUnavailable(JigError):
+    """A tool needs image input but vision is disabled or the model failed the vision check."""
+
+
 class VaultUnavailable(JigError):
     pass
 

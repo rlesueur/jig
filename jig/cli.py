@@ -13,6 +13,7 @@ import httpx
 from .config import load_config
 from .errors import JigError
 from .model import ModelClient
+from .vision import probe_vision
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -46,6 +47,8 @@ async def _health(args: argparse.Namespace) -> int:
                 report[label] |= await client.probe_structured_output()
                 if label == "agent":
                     report[label] |= await client.probe_tool_calling()
+                    if config.vision.enabled:
+                        report[label] |= await probe_vision(client)
         finally:
             await client.aclose()
     print(json.dumps(report, indent=2))

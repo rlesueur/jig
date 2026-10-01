@@ -30,6 +30,18 @@ min_p = 0.05
 #   name = "your-small-reviewer-model"
 [sentinel]
 
+# Image input. Needs a vision-capable model: for llama.cpp start llama-server with
+# --mmproj <projector.gguf>; in Ollama or LM Studio pick a vision model. When enabled,
+# Jig sends a real test image at start-up and refuses to start if the model cannot see it.
+[vision]
+enabled = true
+
+# "directory": file tools confined to a folder; no code execution or browser.
+# "container": code, shell and the headless browser run in a hardened Docker container
+# (build the image first with `jig sandbox build`). Jig refuses to start if Docker is unavailable.
+[sandbox]
+backend = "directory"
+
 [paths]
 data_dir = "data"
 sandbox_dir = "sandbox"

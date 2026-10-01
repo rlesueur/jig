@@ -197,7 +197,10 @@ class ModelClient:
         response_schema: dict[str, Any] | None = None,
         on_delta: DeltaCallback | None = None,
     ) -> ChatResult:
-        """One chat completion. Streams internally when ``on_delta`` is given."""
+        """One chat completion. Streams internally when ``on_delta`` is given.
+
+        Message content may be a list of OpenAI content parts, including ``image_url`` parts
+        (see ``jig.vision.image_message``) for vision-capable models."""
         body = self._body(messages, tools=tools, stream=on_delta is not None, model=model,
                           max_tokens=max_tokens, response_schema=response_schema)
         started = time.perf_counter()

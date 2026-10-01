@@ -18,6 +18,10 @@ top_p = 0.9
 # name = "qwen3:4b"
 [sentinel]
 
+# Set to true only with a vision-capable model (for example gemma3 or qwen2.5vl); Jig checks it with a real image.
+[vision]
+enabled = false
+
 [paths]
 data_dir = "../data"
 sandbox_dir = "../sandbox"

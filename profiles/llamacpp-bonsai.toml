@@ -16,6 +16,10 @@ min_p = 0.05
 
 [sentinel]
 
+# Needs the vision projector: llama-server ... --mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf
+[vision]
+enabled = true
+
 [paths]
 data_dir = "../data"
 sandbox_dir = "../sandbox"

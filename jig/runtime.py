@@ -28,6 +28,7 @@ from .store import Store
 from .tools.builtin import build_registry, http_client
 from .tools.registry import ToolContext
 from .vault import Vault
+from .vision import VisionService
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class Jig:
         self.sentinel_model = ModelClient(config.sentinel, label="Sentinel model")
         self.http = http_client()
         self.registry = build_registry()
+        self.vision = VisionService(self.model, config.vision)
         self.rules = RuleStore(self.db)
         self.sentinel = Sentinel(self.sentinel_model)
         self.approvals = ApprovalQueue(self.db, self.bus, self.audit)
@@ -67,7 +69,8 @@ class Jig:
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
-                           http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id)
+                           http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id,
+                           vision=self.vision)
 
     # Lifecycle -------------------------------------------------------------
     async def start(self, *, run_scheduler: bool = True, check_capabilities: bool = True) -> None:
@@ -97,6 +100,8 @@ class Jig:
         same = (self.config.sentinel.base_url.rstrip("/") == self.config.model.base_url.rstrip("/")
                 and self.sentinel_model.model_name == self.model.model_name)
         caps["sentinel"] = {"same_as_agent": True} if same else await self.sentinel_model.probe_structured_output()
+        if self.vision.enabled:
+            caps["agent"] |= await self.vision.probe()
         return caps
 
     async def stop(self) -> None:
