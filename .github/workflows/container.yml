@@ -1,0 +1,151 @@
+name: Container images
+
+# On a version tag (v*): build the Jig and sandbox images for linux/amd64 and linux/arm64, push them to
+# ghcr.io/rlesueur with provenance and SBOM attestations. On pull requests: build both, push nothing.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "compose.yaml"
+      - "deploy/**"
+      - "jig/**"
+      - "avatar/jig-avatar.js"
+      - "pyproject.toml"
+      - ".github/workflows/container.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io/rlesueur
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        name: Tag, pyproject.toml, jig/__init__.py and compose.yaml must agree
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          grep -qx "__version__ = \"$version\"" jig/__init__.py || { echo "::error::jig/__init__.py is not $version"; exit 1; }
+          for image in jig jig-sandbox; do
+            grep -q "ghcr.io/rlesueur/$image:$version}" compose.yaml \
+              || { echo "::error::compose.yaml's default $image tag is not $version"; exit 1; }
+          done
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Smoke-test the Jig image
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: jig:smoke
+          cache-from: type=gha,scope=jig
+      - name: Runs as non-root and refuses to start without a vault key
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm --entrypoint id jig:smoke -u)" = 10001
+          docker compose config --quiet
+          set +e
+          out=$(docker run --rm jig:smoke 2>&1); code=$?
+          set -e
+          echo "$out" | tail -n 5
+          test "$code" -ne 0
+          echo "$out" | grep -q "VaultUnavailable: the vault key file /run/secrets/jig_vault_key does not exist"
+
+  images:
+    name: Build ${{ matrix.image }}
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: jig
+            context: .
+            title: Jig
+            description: Open-source, always-on personal AI agent that runs on your own local model
+          - image: jig-sandbox
+            context: jig/sandbox_container/image
+            title: Jig sandbox
+            description: Hardened sandbox for Jig's code execution and headless browser (Playwright and Chromium)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=https://github.com/rlesueur/jig
+            org.opencontainers.image.url=https://github.com/rlesueur/jig
+            org.opencontainers.image.documentation=https://github.com/rlesueur/jig/blob/main/docs/container.md
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.vendor=Robyn Le Sueur
+          annotations: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=https://github.com/rlesueur/jig
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            VERSION=${{ needs.version.outputs.version }}
+            REVISION=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
