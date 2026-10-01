@@ -42,5 +42,27 @@
   "verified": true,
   "licence": "Apache-2.0",
   "verified_at": "2026-10-01T23:03:28+00:00"
+ },
+ "granite-guardian41-8b": {
+  "repo": "ibm-granite/granite-guardian-4.1-8b-GGUF",
+  "file": "granite-guardian-4.1-8b-Q4_K_M.gguf",
+  "path": "C:\Users\you\\models\\jig-research\\granite-guardian-4.1-8b-Q4_K_M.gguf",
+  "size_bytes": 5116703808,
+  "sha256": "979114c9e6a589a1e37c2d597677555d3eb78c2856e920ed4ec97f7bded787a4",
+  "sha256_expected": "979114c9e6a589a1e37c2d597677555d3eb78c2856e920ed4ec97f7bded787a4",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T23:13:33+00:00"
+ },
+ "qwen38-27b-q4km": {
+  "repo": "ggml-org/Qwen3.8-27B-GGUF",
+  "file": "Qwen3.8-27B-Q4_K_M.gguf",
+  "path": "C:\Users\you\\models\\jig-research\\Qwen3.8-27B-Q4_K_M.gguf",
+  "size_bytes": 18973870528,
+  "sha256": "c600de0300ae8a0eb3a6c0b8b5561b8b96f16bd2c863c2a66c42de29d391a747",
+  "sha256_expected": "c600de0300ae8a0eb3a6c0b8b5561b8b96f16bd2c863c2a66c42de29d391a747",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-01T23:51:10+00:00"
  }
 }
