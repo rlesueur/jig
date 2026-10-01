@@ -49,8 +49,11 @@ function Ok([string]$Text) { Write-Host "    OK  $Text" -ForegroundColor Green }
 function Fail([string]$Text) { throw "ABORTED: $Text" }
 
 # Runs a native command and throws if it exits non-zero. Returns its standard output as text lines.
+# Run and Try-Run deliberately have no param block: as simple functions they pass every argument,
+# including short flags such as -I or -p, to the native command instead of binding them to common parameters.
 function Run {
-    param([Parameter(Mandatory)][string]$Exe, [Parameter(ValueFromRemainingArguments)][string[]]$Rest)
+    $Exe = $args[0]
+    $Rest = @($args | Select-Object -Skip 1)
     $out = & $Exe @Rest
     if ($LASTEXITCODE -ne 0) { Fail "'$Exe $($Rest -join ' ')' exited with code $LASTEXITCODE" }
     return $out
@@ -58,7 +61,8 @@ function Run {
 
 # Runs a native command whose failure is an expected answer (for example 'repository not found').
 function Try-Run {
-    param([Parameter(Mandatory)][string]$Exe, [Parameter(ValueFromRemainingArguments)][string[]]$Rest)
+    $Exe = $args[0]
+    $Rest = @($args | Select-Object -Skip 1)
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { $out = & $Exe @Rest 2>&1 | ForEach-Object { "$_" } } finally { $ErrorActionPreference = $previous }
