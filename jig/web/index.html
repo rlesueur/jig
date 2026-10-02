@@ -82,6 +82,8 @@
             <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">What Jig remembers about you</a></li>
             <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
             <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
+            <li><a href="#settings/devices" data-section="devices" data-testid="settings-nav-devices">Use Jig from your other devices</a></li>
+            <li><a href="#settings/power" data-section="power" data-testid="settings-nav-power">Turn Jig off</a></li>
             <li><a href="#settings/appearance" data-section="appearance" data-testid="settings-nav-appearance">Appearance</a></li>
             <li><a href="#settings/chat" data-section="chat" data-testid="settings-nav-chat">In the conversation</a></li>
           </ul>
@@ -202,6 +204,77 @@
             </dl>
           </section>
 
+          <!-- Other devices -->
+          <section class="set-section" id="set-devices" data-section="devices" aria-labelledby="devices-heading" data-testid="settings-devices" hidden>
+            <div class="section-head">
+              <h3 id="devices-heading">Use Jig from your other devices</h3>
+              <button type="button" class="btn btn-small" id="remote-refresh" data-testid="remote-refresh">Refresh</button>
+            </div>
+            <p class="hint">Use Jig from your phone, tablet or laptop, at home or away, through Tailscale. Only devices on your own tailnet that you've paired here can get in. Jig is never put on the public internet.</p>
+            <div id="remote-state" class="remote-state" data-testid="remote-state"><p class="hint-quiet">Checking Tailscale…</p></div>
+
+            <h4 id="paired-heading">Paired devices</h4>
+            <div id="device-list" class="list" aria-labelledby="paired-heading" data-testid="device-list"></div>
+
+            <div class="card-soft pairing" id="pairing" data-testid="pairing">
+              <h4>Add a device</h4>
+              <p class="hint" id="pairing-hint">Shows a one-time code and a QR code. On the new device, scan it or open the link, then give the device a name. The code works once, for 5 minutes.</p>
+              <div class="row wrap" id="pairing-controls">
+                <label>Stays paired
+                  <select id="pairing-expiry" data-testid="pairing-expiry">
+                    <option value="">Until I remove it</option>
+                    <option value="30">For 30 days</option>
+                    <option value="90">For 90 days</option>
+                    <option value="365">For a year</option>
+                  </select>
+                </label>
+                <button type="button" class="btn btn-primary" id="pairing-new" data-testid="pairing-new">Add a device</button>
+              </div>
+              <div class="pairing-code" id="pairing-code" data-testid="pairing-code" hidden>
+                <img class="qr" id="pairing-qr" alt="QR code of the pairing link" width="240" height="240" data-testid="pairing-qr">
+                <div class="pairing-text">
+                  <p class="hint-quiet">Pairing code</p>
+                  <p class="code-big" id="pairing-display" data-testid="pairing-display"></p>
+                  <p class="hint-quiet">Or open this link on the new device:</p>
+                  <p class="pair-link" id="pairing-url" data-testid="pairing-url"></p>
+                  <p class="hint" id="pairing-left" aria-live="polite" data-testid="pairing-left"></p>
+                  <p class="hint warn-text" id="pairing-local" data-testid="pairing-local" hidden>Remote access is off, so this link only works on this computer. Turn remote access on first to pair a phone or tablet.</p>
+                  <button type="button" class="btn btn-small btn-quiet" id="pairing-cancel" data-testid="pairing-cancel">Done</button>
+                </div>
+              </div>
+              <p class="saved" id="pairing-saved" aria-live="polite" data-testid="pairing-saved"></p>
+            </div>
+          </section>
+
+          <!-- Turn Jig off -->
+          <section class="set-section" id="set-power" data-section="power" aria-labelledby="power-heading" data-testid="settings-power" hidden>
+            <div class="section-head">
+              <h3 id="power-heading">Turn Jig off</h3>
+              <button type="button" class="btn btn-small" id="power-refresh" data-testid="power-refresh">Refresh</button>
+            </div>
+            <p class="hint">Jig finishes what it's in the middle of, saves where it got to and carries on next time it starts.</p>
+            <dl class="kv" id="power-state" data-testid="power-state">
+              <dt>Model server</dt><dd id="pw-model">—</dd>
+              <dt>GPU memory</dt><dd id="pw-gpu">—</dd>
+              <dt>Starting again</dt><dd id="pw-again">—</dd>
+            </dl>
+            <p class="hint" id="power-na" data-testid="power-na" hidden></p>
+            <div class="row wrap" id="power-actions">
+              <button type="button" class="btn" id="power-off" data-testid="power-off" disabled>Turn Jig off…</button>
+              <button type="button" class="btn btn-danger" id="power-off-model" data-testid="power-off-model" disabled>Turn Jig and the model off…</button>
+            </div>
+            <p class="hint-quiet" id="power-model-note" data-testid="power-model-note"></p>
+            <details class="advanced" id="model-advanced" data-testid="model-advanced">
+              <summary>Just the model server</summary>
+              <p class="hint">Stop or start only the model server that Jig launched, and keep Jig running. Jig can't answer while it's stopped.</p>
+              <div class="row wrap">
+                <button type="button" class="btn" id="model-stop" data-testid="model-stop">Stop the model server…</button>
+                <button type="button" class="btn" id="model-start" data-testid="model-start">Start the model server</button>
+              </div>
+              <p class="saved" id="model-saved" aria-live="polite" data-testid="model-saved"></p>
+            </details>
+          </section>
+
           <!-- Appearance -->
           <section class="set-section" id="set-appearance" data-section="appearance" aria-labelledby="appearance-heading" data-testid="settings-appearance" hidden>
             <h3 id="appearance-heading">Appearance</h3>
@@ -285,6 +358,25 @@
     </details>
   </dialog>
 
+  <section class="off-state" id="off-state" aria-labelledby="off-title" data-testid="off-state" hidden>
+    <img class="off-face" src="/web/jig-face.svg" alt="" width="96" height="96">
+    <h2 id="off-title" tabindex="-1" data-testid="off-title">Turning Jig off…</h2>
+    <p id="off-text" data-testid="off-text">Finishing up and saving where it got to.</p>
+    <p class="hint" id="off-again" data-testid="off-again"></p>
+    <p class="hint-quiet" id="off-watch" aria-live="polite" data-testid="off-watch"></p>
+  </section>
+
+  <dialog id="confirm" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-body" data-testid="confirm-dialog">
+    <form method="dialog" class="confirm-form">
+      <h2 id="confirm-title" data-testid="confirm-title"></h2>
+      <div id="confirm-body" class="confirm-body" data-testid="confirm-body"></div>
+      <div class="confirm-actions">
+        <button value="cancel" class="btn" id="confirm-cancel" autofocus data-testid="confirm-cancel">Cancel</button>
+        <button value="ok" class="btn btn-primary" id="confirm-ok" data-testid="confirm-ok"></button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="login" aria-labelledby="login-heading">
     <form id="login-form" method="dialog">
       <img class="login-face" src="/web/jig-face.svg" alt="" width="64" height="64">
@@ -294,6 +386,18 @@
       <input id="login-token" type="password" autocomplete="off" required data-testid="login-token">
       <p id="login-error" class="error-text" role="alert"></p>
       <button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
+    </form>
+    <form id="pair-form" data-testid="pair-form" hidden>
+      <img class="login-face" src="/web/jig-face.svg" alt="" width="64" height="64">
+      <h2 id="pair-heading">Pair this device</h2>
+      <p>On the computer Jig runs on, open Settings, <strong>Use Jig from your other devices</strong>, and choose <strong>Add a device</strong>. Scan the QR code, or type the code it shows.</p>
+      <label for="pair-code">Pairing code</label>
+      <input id="pair-code" type="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" required placeholder="XXXX-XXXX" data-testid="pair-code">
+      <label for="pair-name">Name this device</label>
+      <input id="pair-name" type="text" maxlength="60" required placeholder="Robyn's phone" data-testid="pair-name">
+      <p id="pair-error" class="error-text" role="alert" data-testid="pair-error"></p>
+      <button type="submit" class="btn btn-primary" data-testid="pair-submit">Pair this device</button>
+      <button type="button" class="btn-link" id="pair-use-token" data-testid="pair-use-token" hidden>Sign in with the token instead</button>
     </form>
   </dialog>
 </body>

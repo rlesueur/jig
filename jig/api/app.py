@@ -169,7 +169,7 @@ def _require_confirm(body: ConfirmIn, what: str) -> None:
 def _qr_data_uri(text: str) -> str:
     import segno  # pure Python, generated locally: the pairing URL is never sent to a QR service
 
-    return segno.make(text, error="m").svg_data_uri(scale=6, border=2)
+    return segno.make(text, error="m").svg_data_uri(scale=6, border=4, light="#fff")
 
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"

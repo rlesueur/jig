@@ -180,19 +180,23 @@ if (window.jigAppearance.problem) showError(window.jigAppearance.problem);
 /* ---------- sign-in ---------- */
 
 let started = false;
+// What GET /auth/session said: source is "local" (this computer) or "tailnet" (another device, via Tailscale).
+let session = { authenticated: false, source: 'local', device: null };
+let pendingPairCode = ''; // from a #pair= link, until it is used
 
 async function boot() {
   let loginError = '';
   const m = location.hash.match(/^#code=([A-Za-z0-9_-]+)$/);
+  const p = location.hash.match(/^#pair=([A-Za-z0-9-]+)$/);
+  if (m || p) history.replaceState(null, '', location.pathname + location.search); // drop the one-time code at once
+  if (p) pendingPairCode = p[1];
   if (m) {
-    history.replaceState(null, '', location.pathname + location.search); // drop the one-time code at once
     try {
       await api('/auth/session', { method: 'POST', body: { code: m[1] } });
     } catch (err) {
       loginError = `That sign-in link did not work: ${err.message.replace(/^POST \/auth\/session: /, '')}`;
     }
   }
-  let session;
   try {
     session = await api('/auth/session');
   } catch (err) {
@@ -200,23 +204,96 @@ async function boot() {
     setConn('Unreachable', 'bad');
     return;
   }
-  if (session.authenticated) start();
-  else signedOut(loginError);
+  if (session.authenticated) {
+    if (pendingPairCode) {
+      pendingPairCode = '';
+      showError('This browser is already signed in to Jig, so the pairing code was not used. It expires by itself within 5 minutes.');
+    }
+    start();
+  } else {
+    signedOut(loginError || session.reason || '');
+  }
 }
 
 function signedOut(message = '') {
   started = false;
+  session = { ...session, authenticated: false, device: null };
   stopEvents();
+  stopPairing();
   $('app').hidden = true;
   $('logout').hidden = true;
   $('agent-toggle').disabled = true;
   health.model = null;
   setConn('Signed out', 'bad');
-  $('login-error').textContent = message;
+  const pairing = session.source === 'tailnet' || Boolean(pendingPairCode);
+  $('login-form').hidden = pairing;
+  $('pair-form').hidden = !pairing;
+  $('pair-use-token').hidden = session.source === 'tailnet';
+  $('login').setAttribute('aria-labelledby', pairing ? 'pair-heading' : 'login-heading');
   const dialog = $('login');
   if (!dialog.open) dialog.showModal();
-  $('login-token').focus();
+  if (pairing) {
+    $('pair-error').textContent = message;
+    if (pendingPairCode) $('pair-code').value = displayPairCode(pendingPairCode);
+    if (!$('pair-name').value) $('pair-name').value = guessDeviceName();
+    ($('pair-code').value ? $('pair-name') : $('pair-code')).focus();
+  } else {
+    $('login-error').textContent = message;
+    $('login-token').focus();
+  }
 }
+
+const displayPairCode = (c) => {
+  const s = c.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4)}` : s;
+};
+
+/** A starting suggestion for the device's name; the person pairing it can change it. */
+function guessDeviceName() {
+  const ua = navigator.userAgent;
+  const kinds = [[/iPhone/, 'iPhone'], [/iPad/, 'iPad'], [/Android.*Mobile/, 'Android phone'], [/Android/, 'Android tablet'],
+    [/CrOS/, 'Chromebook'], [/Macintosh/, 'Mac'], [/Windows/, 'Windows PC'], [/Linux/, 'Linux computer']];
+  const hit = kinds.find(([re]) => re.test(ua));
+  return hit ? hit[1] : '';
+}
+
+$('pair-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const button = e.submitter;
+  button.disabled = true;
+  $('pair-error').textContent = '';
+  try {
+    // Not api(): a wrong code is a 401 here, which must not look like "your session has ended".
+    let r;
+    try {
+      r = await fetch('/auth/pair', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: $('pair-code').value.trim(), name: $('pair-name').value.trim() }),
+      });
+    } catch (err) {
+      throw new Error(`Cannot reach Jig: ${err.message}`);
+    }
+    const data = await r.json().catch(() => null);
+    if (!r.ok) throw new Error(errorText(data, r.status));
+    pendingPairCode = '';
+    $('pair-code').value = '';
+    session = await api('/auth/session');
+    if (!session.authenticated) {
+      throw new Error('Jig paired this device, but this browser did not keep the sign-in cookie. Check that cookies are allowed for this site, then pair again with a new code.');
+    }
+    $('login').close();
+    start();
+  } catch (err) {
+    $('pair-error').textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('pair-use-token').addEventListener('click', () => {
+  pendingPairCode = '';
+  signedOut('');
+});
 
 $('login').addEventListener('cancel', (e) => e.preventDefault());
 $('login-form').addEventListener('submit', async (e) => {
@@ -237,10 +314,36 @@ $('login-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('logout').addEventListener('click', () => act($('logout'), async () => {
-  await api('/auth/logout', { method: 'POST' });
-  signedOut('Signed out.');
-}));
+$('logout').addEventListener('click', async () => {
+  if (session.device && !(await askConfirm({
+    title: 'Sign out and unpair this device?',
+    body: [`Signing out removes ${q(session.device.name)} from Jig\u2019s paired devices.`,
+      'To use Jig here again, pair it again from Settings on the computer Jig runs on.'],
+    ok: 'Sign out',
+  }))) return;
+  await act($('logout'), async () => {
+    await api('/auth/logout', { method: 'POST' });
+    signedOut('Signed out.');
+  });
+});
+
+/* ---------- a friendly confirmation, for anything that turns something on or off ---------- */
+
+function askConfirm({ title, body, ok, danger = false }) {
+  const dialog = $('confirm');
+  $('confirm-title').textContent = title;
+  $('confirm-body').replaceChildren(...body.map((b) => (b instanceof Node ? b : el('p', { text: b }))));
+  $('confirm-ok').textContent = ok;
+  $('confirm-ok').className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+  dialog.returnValue = '';
+  dialog.showModal();
+  $('confirm-cancel').focus();
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true });
+  });
+}
+
+const bullets = (lines) => el('ul', { class: 'confirm-list' }, lines.filter(Boolean).map((t) => el('li', { text: t })));
 
 function start() {
   if (started) return;
@@ -263,7 +366,7 @@ function refreshAll() {
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'memory', 'history', 'startup', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'memory', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?$/);
@@ -280,6 +383,7 @@ function route(moveFocus = true) {
   }
   $('settings').hidden = !section;
   $('main').hidden = Boolean(section);
+  if (section !== 'devices') stopPairing();
   if (section) {
     for (const s of document.querySelectorAll('.set-section')) s.hidden = s.dataset.section !== section;
     for (const a of document.querySelectorAll('.settings-nav a')) {
@@ -291,6 +395,8 @@ function route(moveFocus = true) {
       }
     }
     if (section === 'history') loadAudit(true);
+    if (section === 'devices') loadRemote();
+    if (section === 'power') loadPower();
     if (moveFocus) {
       const heading = document.querySelector(`.set-section[data-section="${section}"] h3`);
       heading.tabIndex = -1;
@@ -305,6 +411,8 @@ window.addEventListener('hashchange', () => route(true));
 /* ---------- health: one quiet dot, and a banner that explains any problem ---------- */
 
 const health = { conn: { text: 'Not connected', tone: 'muted' }, model: null };
+let offState = null; // set once Jig is turning off: the page shows "Jig is off" instead of connection problems
+let ownStop = false; // this page asked Jig to turn off (rather than another device or the command line)
 
 function setConn(text, tone) {
   health.conn = { text, tone };
@@ -322,6 +430,13 @@ function connProblem() {
 }
 
 function renderHealth() {
+  if (offState) {
+    $('health-banner').hidden = true;
+    $('conn').dataset.tone = 'muted';
+    $('conn').title = 'Jig is off';
+    $('conn-text').textContent = 'Jig is off';
+    return;
+  }
   const problem = health.model || connProblem();
   const dot = $('conn');
   dot.dataset.tone = problem ? 'bad' : health.conn.tone;
@@ -376,7 +491,7 @@ function connectEvents() {
     if (e.code === 1013) showError(`Event stream: ${e.reason || 'the connection fell behind and was closed'}`);
     // A refused handshake reaches the browser as 1006, so ask the server whether the session is still valid.
     try {
-      const session = await api('/auth/session');
+      session = await api('/auth/session');
       if (!session.authenticated) {
         signedOut('Your session has ended. Please sign in again.');
         return;
@@ -461,6 +576,10 @@ function handleEvent(event) {
   if (t === 'agent.status') {
     setAgentPaused(d.paused);
     refreshSoon('status');
+  }
+  if (t === 'power.stopping') {
+    showOff({ scope: d.scope, fromElsewhere: !ownStop });
+    return;
   }
   if (currentSection() === 'history' && !auditPaged) refreshSoon('audit', 1000);
 }
@@ -1388,5 +1507,384 @@ $('audit-form').addEventListener('submit', (e) => {
   act(e.submitter, () => loadAudit(true));
 });
 $('audit-more').addEventListener('click', () => act($('audit-more'), () => loadAudit(false)));
+
+/* ---------- use Jig from your other devices (Tailscale) ---------- */
+
+const onHost = () => session.source !== 'tailnet';
+let devicesCache = [];
+const pairing = { timer: 0, watch: 0 };
+
+async function loadRemote() {
+  const box = $('remote-state');
+  let r;
+  try {
+    r = await api('/remote');
+  } catch (err) {
+    if (err.status !== 401) box.replaceChildren(el('p', { class: 'error-text', text: err.message }));
+    return;
+  }
+  loadDevices();
+  setPairingAvailability();
+  if (r.applicable === false) {
+    box.replaceChildren(
+      el('dl', { class: 'kv' }, el('dt', { text: 'Remote access' }),
+        el('dd', { 'data-testid': 'remote-status', text: r.hostname ? `On at https://${r.hostname}, through tailscale serve on the host` : 'Off' })),
+      el('p', { class: 'hint', text: r.reason }));
+    return;
+  }
+  const ts = r.tailscale;
+  const tsText = !ts.installed ? 'Not installed'
+    : !ts.signed_in ? `Installed${ts.version ? ` (${ts.version})` : ''}, not signed in`
+      : `Signed in as ${ts.login}${ts.tailnet ? ` on ${ts.tailnet}` : ''}`;
+  const parts = [el('dl', { class: 'kv' },
+    el('dt', { text: 'Tailscale' }), el('dd', { 'data-testid': 'remote-tailscale', text: tsText }),
+    el('dt', { text: 'Remote access' }),
+    el('dd', { 'data-testid': 'remote-status' }, r.enabled ? ['On at ', el('a', { href: r.url, text: r.url, target: '_blank', rel: 'noopener' })] : 'Off'),
+    r.enabled ? [el('dt', { text: 'Who can get in' }),
+      el('dd', { text: `${r.allowed_logins.join(', ') || 'nobody'}, from a paired device` })] : null)];
+  if (r.problems.length) {
+    parts.push(el('div', { class: 'problems', role: 'alert', 'data-testid': 'remote-problems' },
+      el('p', { class: 'error-text', text: 'Something needs your attention:' }),
+      el('ul', {}, r.problems.map((p) => el('li', { text: p })))));
+  }
+  if (!r.enabled && r.steps.length) {
+    parts.push(el('div', { class: 'card-soft', 'data-testid': 'remote-steps' },
+      el('p', { class: 'hint', text: `${ts.error ? `${ts.error}. ` : ''}To get it ready:` }),
+      el('ol', { class: 'steps' }, r.steps.map((s) => el('li', { text: s }))),
+      el('p', { class: 'hint-quiet', text: 'Jig never installs Tailscale or signs in for you. Choose Refresh when you\u2019ve done these.' })));
+  }
+  if (r.enabled) {
+    parts.push(el('div', { class: 'row wrap' }, el('button', {
+      type: 'button', class: 'btn', 'data-testid': 'remote-disable', text: 'Turn remote access off\u2026',
+      onclick: (e) => disableRemote(e.currentTarget),
+    })));
+  } else {
+    parts.push(el('div', { class: 'row wrap' }, el('button', {
+      type: 'button', class: 'btn btn-primary', 'data-testid': 'remote-enable', text: 'Turn remote access on\u2026',
+      disabled: !ts.ready || !onHost(), onclick: (e) => enableRemote(e.currentTarget, r),
+    })));
+    if (!onHost()) parts.push(el('p', { class: 'hint-quiet', text: 'Turning remote access on only works on the computer Jig runs on.' }));
+  }
+  box.replaceChildren(...parts);
+}
+
+async function enableRemote(button, r) {
+  const who = r.allowed_logins.length ? r.allowed_logins.join(', ') : `you (${r.tailscale.login})`;
+  const ok = await askConfirm({
+    title: 'Turn on remote access?',
+    body: [bullets([
+      `Jig asks Tailscale to serve it at https://${r.tailscale.dns_name}, for devices on your own tailnet only.`,
+      'It is never put on the public internet: Jig refuses Tailscale Funnel.',
+      `Who gets in: ${who}, and only from a device you pair here with a one-time code.`,
+      'Jig itself keeps listening on this computer only, and nothing else in your Tailscale settings changes.',
+      'You can turn it off again here at any time.',
+    ]), el('p', { class: 'hint-quiet', text: `Runs: tailscale serve --bg --https=443 http://127.0.0.1:${r.port}` })],
+    ok: 'Turn on',
+  });
+  if (!ok) return;
+  await act(button, () => api('/remote/enable', { method: 'POST', body: { confirm: true } }));
+  await loadRemote();
+}
+
+async function disableRemote(button) {
+  const ok = await askConfirm({
+    title: 'Turn off remote access?',
+    body: [bullets([
+      'Your other devices can\u2019t reach Jig until you turn it on again. They stay paired; remove any you no longer use below.',
+      'Jig removes only its own tailscale serve entry.',
+      onHost() ? null : 'This device loses its connection straight away.',
+    ])],
+    ok: 'Turn off',
+  });
+  if (!ok) return;
+  const out = await act(button, () => api('/remote/disable', { method: 'POST', body: { confirm: true } }));
+  if (out && out.notes.length) showError(out.notes.join(' '));
+  if (out && onHost()) await loadRemote();
+}
+
+async function loadDevices() {
+  try {
+    devicesCache = await api('/devices');
+  } catch (err) {
+    if (err.status !== 401) $('device-list').replaceChildren(el('p', { class: 'error-text', text: err.message }));
+    return;
+  }
+  renderDevices();
+}
+
+function renderDevices() {
+  $('device-list').replaceChildren(...(devicesCache.length ? devicesCache.map(deviceItem)
+    : [empty('No devices paired yet.', 'Add one below, then use Jig from it through Tailscale.')]));
+}
+
+function deviceItem(d) {
+  const facts = [
+    `Paired ${when(d.created_at)}`,
+    d.last_used_at ? `last used ${when(d.last_used_at)}` : 'not used yet',
+    d.expires_at ? `${d.expired ? 'expired' : 'until'} ${when(d.expires_at)}` : null,
+    d.tailscale_login ? `Tailscale user ${d.tailscale_login}` : null,
+  ].filter(Boolean).join(' \u00b7 ');
+  return el('div', { class: 'item', 'data-testid': 'device-item', dataset: { id: d.id } },
+    el('div', { class: 'item-head' },
+      el('span', { class: 'title', text: d.name }),
+      d.current ? el('span', { class: 'status', dataset: { s: 'active' }, text: 'this device' }) : null,
+      d.expired ? el('span', { class: 'status', dataset: { s: 'failed' }, text: 'expired' }) : null,
+      el('div', { class: 'item-actions' }, el('button', {
+        type: 'button', class: 'btn btn-small btn-danger', 'data-testid': 'device-remove', text: 'Remove\u2026',
+        onclick: (e) => removeDevice(e.currentTarget, d),
+      }))),
+    el('p', { class: 'hint-quiet body', text: facts }));
+}
+
+async function removeDevice(button, d) {
+  const ok = await askConfirm({
+    title: `Remove ${q(d.name)}?`,
+    body: [bullets([
+      'It\u2019s signed out straight away and can\u2019t get back in without pairing again.',
+      d.current ? 'This is the device you\u2019re using now, so you\u2019ll be signed out.' : null,
+    ])],
+    ok: 'Remove', danger: true,
+  });
+  if (!ok) return;
+  const out = await act(button, () => api(`/devices/${encodeURIComponent(d.id)}`, { method: 'DELETE' }));
+  if (!out) return;
+  if (d.current) signedOut(`${q(d.name)} was removed, so this device is signed out.`);
+  else await loadDevices();
+}
+
+function setPairingAvailability() {
+  const host = onHost();
+  $('pairing-new').disabled = !host;
+  $('pairing-expiry').disabled = !host;
+  $('pairing-hint').textContent = host
+    ? 'Shows a one-time code and a QR code. On the new device, scan it or open the link, then give the device a name. The code works once, for 5 minutes.'
+    : 'Adding a device only works on the computer Jig runs on: open Settings there and choose Add a device.';
+}
+
+function stopPairing() {
+  clearInterval(pairing.timer);
+  clearInterval(pairing.watch);
+  pairing.timer = 0;
+  pairing.watch = 0;
+  $('pairing-code').hidden = true;
+  $('pairing-controls').hidden = false;
+  $('pairing-qr').removeAttribute('src');
+}
+
+function showPairing(p) {
+  stopPairing();
+  $('pairing-saved').textContent = '';
+  $('pairing-qr').src = p.qr_svg_data_uri;
+  $('pairing-display').textContent = p.display_code;
+  $('pairing-url').textContent = p.url;
+  $('pairing-local').hidden = p.remote_enabled;
+  $('pairing-controls').hidden = true;
+  $('pairing-code').hidden = false;
+  const ends = Date.now() + p.expires_in * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.round((ends - Date.now()) / 1000));
+    if (!left) {
+      stopPairing();
+      $('pairing-saved').textContent = '';
+      $('pairing-hint').textContent = 'That code has expired. Choose Add a device for a new one.';
+      return;
+    }
+    $('pairing-left').textContent = `Works once, for another ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}.`;
+  };
+  tick();
+  pairing.timer = setInterval(tick, 1000);
+  const known = new Set(devicesCache.map((d) => d.id));
+  pairing.watch = setInterval(async () => {
+    let list;
+    try {
+      list = await api('/devices');
+    } catch (err) {
+      clearInterval(pairing.watch);
+      if (err.status !== 401) showError(`Jig couldn\u2019t check for the new device: ${err.message}`);
+      return;
+    }
+    const fresh = list.find((d) => !known.has(d.id));
+    if (!fresh) return;
+    stopPairing();
+    devicesCache = list;
+    renderDevices();
+    setPairingAvailability();
+    $('pairing-saved').textContent = `${q(fresh.name)} is paired.`;
+  }, 3000);
+}
+
+$('pairing-new').addEventListener('click', () => act($('pairing-new'), async () => {
+  const days = $('pairing-expiry').value;
+  await loadDevices();
+  showPairing(await api('/devices/pairing', { method: 'POST', body: days ? { expires_in_days: Number(days) } : {} }));
+}));
+$('pairing-cancel').addEventListener('click', () => {
+  stopPairing();
+  setPairingAvailability();
+  loadDevices();
+});
+$('remote-refresh').addEventListener('click', () => act($('remote-refresh'), loadRemote));
+
+/* ---------- turning Jig off ---------- */
+
+let powerCache = null;
+
+function gpuText(m) {
+  if (m.stopped_by_user) return 'None: the model server Jig started is stopped.';
+  if (!m.managed) return 'Not affected: Jig didn\u2019t start the model server, so it never stops it.';
+  const g = m.gpu;
+  if (!g.available) return g.reason;
+  if (!g.on_gpu) return g.note;
+  const cards = g.gpus.map((c) => `${c.name}: ${c.memory_used_mib.toLocaleString('en-GB')} of ${c.memory_total_mib.toLocaleString('en-GB')} MiB in use`).join('; ');
+  return g.vram_mib !== null
+    ? `The model server holds ${g.vram_mib.toLocaleString('en-GB')} MiB. ${cards}.`
+    : `${g.note} ${cards}.`;
+}
+
+async function loadPower() {
+  let p;
+  try {
+    p = await api('/power');
+  } catch (err) {
+    if (err.status !== 401) $('pw-model').textContent = `Jig couldn\u2019t check: ${err.message}`;
+    return;
+  }
+  powerCache = p;
+  const na = p.applicable === false;
+  for (const id of ['power-state', 'power-actions', 'power-model-note', 'model-advanced']) $(id).hidden = na;
+  $('power-na').hidden = !na;
+  if (na) {
+    $('power-na').textContent = p.reason;
+    return;
+  }
+  const m = p.model_server;
+  $('pw-model').textContent = m.managed
+    ? `Started by Jig (process ${m.pid})${m.adopted ? ', and picked up again after Jig restarted' : ''}.`
+    : m.refusal;
+  $('pw-gpu').textContent = gpuText(m);
+  $('pw-again').textContent = p.start_again;
+  $('power-off').disabled = false;
+  $('power-off-model').disabled = !p.can_stop_model;
+  $('power-model-note').textContent = p.can_stop_model ? ''
+    : 'Turning the model off too is only possible for a model server that Jig started itself.';
+  $('model-stop').hidden = !m.managed;
+  $('model-start').hidden = m.managed || !m.configured;
+}
+
+async function turnOff(button, scope) {
+  const p = powerCache;
+  const m = p.model_server;
+  const withModel = scope === 'jig_and_model';
+  const ok = await askConfirm({
+    title: withModel ? 'Turn Jig and the model off?' : 'Turn Jig off?',
+    body: [bullets([
+      'Jig finishes the step it\u2019s on, saves where it got to, and picks up unfinished work next time it starts.',
+      withModel ? 'The model server Jig started is stopped too, which frees its GPU memory.'
+        : m.managed ? 'The model server keeps running, and keeps its GPU memory. Next time Jig starts, it picks it up again.'
+          : 'Your model server isn\u2019t Jig\u2019s, so it\u2019s left as it is.',
+      p.start_again,
+      onHost() ? null : 'You can\u2019t start Jig again from this device: that has to be done on the computer it runs on.',
+    ])],
+    ok: 'Turn off', danger: withModel,
+  });
+  if (!ok) return;
+  ownStop = true;
+  const r = await act(button, () => api('/power/stop', { method: 'POST', body: { scope, confirm: true } }));
+  if (!r) {
+    ownStop = false;
+    return;
+  }
+  showOff({ scope, startAgain: r.start_again, modelWasManaged: m.managed });
+}
+
+$('power-off').addEventListener('click', () => turnOff($('power-off'), 'jig'));
+$('power-off-model').addEventListener('click', () => turnOff($('power-off-model'), 'jig_and_model'));
+$('power-refresh').addEventListener('click', () => act($('power-refresh'), loadPower));
+
+$('model-stop').addEventListener('click', async () => {
+  const ok = await askConfirm({
+    title: 'Stop the model server?',
+    body: [bullets([
+      'Jig keeps running, but it can\u2019t answer or work on anything until the model server is back.',
+      'This frees whatever GPU memory the model server holds.',
+      'Start it again here, or with jig model start.',
+    ])],
+    ok: 'Stop it', danger: true,
+  });
+  if (!ok) return;
+  const r = await act($('model-stop'), () => api('/model/stop', { method: 'POST', body: { confirm: true } }));
+  if (!r) return;
+  $('model-saved').textContent = `The model server is stopped (process ${r.pid}).`;
+  await loadPower();
+  loadStatus();
+});
+
+$('model-start').addEventListener('click', () => act($('model-start'), async () => {
+  $('model-saved').textContent = 'Starting the model server. Loading a model can take a minute\u2026';
+  let r;
+  try {
+    r = await api('/model/start', { method: 'POST' });
+  } catch (err) {
+    $('model-saved').textContent = '';
+    throw err;
+  }
+  $('model-saved').textContent = r.started ? `The model server is running again (process ${r.pid}).` : 'The model server was already running.';
+  await loadPower();
+  loadStatus();
+}));
+
+/* ---------- "Jig is off" ---------- */
+
+const OFF_GENERIC = 'To start it again, run jig serve on the computer Jig runs on. If \u2018Start with Windows\u2019 is on, it also starts by itself when you next sign in.';
+
+function showOff({ scope, startAgain, fromElsewhere = false, modelWasManaged = false }) {
+  if (startAgain) $('off-again').textContent = startAgain;
+  if (offState) return;
+  offState = { scope, modelWasManaged, since: Date.now(), phase: 'stopping' };
+  stopEvents();
+  stopPairing();
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  $('app').hidden = true;
+  $('open-settings').hidden = true;
+  renderHealth();
+  $('off-state').hidden = false;
+  $('off-title').textContent = 'Turning Jig off\u2026';
+  $('off-text').textContent = fromElsewhere ? 'Jig is being turned off from another device or window.' : 'Finishing up and saving where it got to.';
+  if (!startAgain) $('off-again').textContent = OFF_GENERIC;
+  $('off-watch').textContent = '';
+  $('off-title').focus();
+  watchOff();
+}
+
+async function jigAnswers() {
+  try {
+    const r = await fetch('/health', { cache: 'no-store', credentials: 'same-origin' });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function watchOff() {
+  const up = await jigAnswers();
+  if (offState.phase === 'stopping') {
+    if (!up) {
+      offState.phase = 'off';
+      $('off-title').textContent = 'Jig is off';
+      $('off-text').textContent = offState.scope === 'jig_and_model' ? 'Jig and the model server it started are off.'
+        : offState.modelWasManaged ? 'Jig is off. The model server it started is still running.' : 'Jig is off.';
+      $('off-watch').textContent = 'This page reconnects by itself when Jig is running again.';
+      $('off-watch').classList.remove('error-text');
+    } else if (Date.now() - offState.since > 120000) {
+      $('off-watch').textContent = 'Jig said it was turning off, but it is still answering after 2 minutes. Check its window or log on the computer it runs on.';
+      $('off-watch').classList.add('error-text');
+    }
+  } else if (up) {
+    $('off-watch').textContent = 'Jig is back. Reconnecting\u2026';
+    location.reload();
+    return;
+  }
+  setTimeout(watchOff, offState.phase === 'stopping' ? 1000 : 5000);
+}
 
 boot();
