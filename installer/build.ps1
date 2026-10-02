@@ -62,6 +62,9 @@ Set-Content -Path "$Stage\app\installed.json" -Encoding utf8 -Value "{`"installe
 # A quick check that the bundled Python can load Jig before packaging it.
 & "$Stage\python\python.exe" -c "import jig.cli, jig.tray, fastapi, uvicorn, cryptography; from jig.api.app import AVATAR_JS, WEB_DIR; assert AVATAR_JS.is_file() and (WEB_DIR / 'index.html').is_file(), 'web UI files missing'; print('Jig loads')"
 if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig" }
+# Jig's window: pywebview, and through pythonnet the .NET Framework that Windows includes.
+& "$Stage\python\python.exe" -c "import jig.desktop, tzlocal, webview, clr; from System.Windows.Forms import Form; import webview.platforms.winforms as w; print('The window loads (engine on this computer: ' + w.renderer + ')')"
+if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig's window (pywebview and pythonnet)" }
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
 $Iscc = Join-Path $InnoSetup "ISCC.exe"

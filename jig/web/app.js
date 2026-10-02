@@ -189,6 +189,36 @@ let started = false;
 let session = { authenticated: false, source: 'local', device: null };
 let pendingPairCode = ''; // from a #pair= link, until it is used
 
+// Jig's own window (jig.desktop) loads the page with ?app=desktop. It signs the page in by itself, so the page
+// never asks for the token there, and it can open Jig in the browser instead.
+const IN_WINDOW = new URLSearchParams(location.search).get('app') === 'desktop';
+
+function windowApi() {
+  return new Promise((resolve) => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.login_code) {
+      resolve(window.pywebview.api);
+      return;
+    }
+    window.addEventListener('pywebviewready', () => resolve(window.pywebview.api), { once: true });
+  });
+}
+
+if (IN_WINDOW) {
+  $('open-browser').hidden = false;
+  $('open-browser').addEventListener('click', () => windowApi().then((w) => w.open_in_browser()));
+}
+
+async function windowSignIn() {
+  const code = await (await windowApi()).login_code(); // none if it was asked for moments ago
+  if (!code) return;
+  try {
+    await api('/auth/session', { method: 'POST', body: { code } });
+  } catch {
+    return; // the sign-in form stays, with its message
+  }
+  location.reload();
+}
+
 async function boot() {
   let loginError = '';
   const m = location.hash.match(/^#code=([A-Za-z0-9_-]+)$/);
@@ -246,6 +276,9 @@ function signedOut(message = '') {
     $('login-error').textContent = message;
     $('login-token').focus();
   }
+  // In Jig's window a session that ended is renewed by the window (not after a sign-in link failed, so a
+  // refused code can't go round in a loop).
+  if (IN_WINDOW && !pairing && !message.startsWith('That sign-in link')) windowSignIn();
 }
 
 const displayPairCode = (c) => {
@@ -354,7 +387,7 @@ window.jigConfirm = askConfirm;
 async function start() {
   if (started) return;
   started = true;
-  $('logout').hidden = false;
+  $('logout').hidden = IN_WINDOW; // the window signs itself in, so signing out there would only sign it back in
   // Set-up mode: the agent is off until a model passes its checks, so show the set-up page instead.
   if (await showSetupIfNeeded()) {
     setConn('Setting up', 'warn');

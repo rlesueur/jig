@@ -75,38 +75,47 @@ def _serve(args: argparse.Namespace) -> int:
         print(f"Jig can't start on port {port}: another program is already using it. Close that program, or "
               f"start Jig on another port: jig serve --port {port + 1}", file=sys.stderr)
         return 1
-    open_browser = args.start_reason == "manual" and (args.browser or (sys.stdout.isatty() and not args.no_browser))
+    opening = args.start_reason == "manual" and (args.browser or args.window
+                                                 or (sys.stdout.isatty() and not args.no_browser))
+    # On Windows Jig opens in its own window (jig.desktop); --browser, or another system, uses the browser.
+    where = "browser" if args.browser or sys.platform != "win32" else "window"
+    open_ui = (where if opening else None, args.config, port)
     app = create_app(config, start_reason=args.start_reason)
     ui_cmd = f'jig --config "{args.config}" ui' if args.config else "jig ui"
-    app.state.on_started = lambda controller: _started(app, controller, url, config, open_browser, interactive, ui_cmd)
+    app.state.on_started = lambda controller: _started(app, controller, url, config, open_ui, interactive, ui_cmd)
     return run_server(app, host=host, port=port, data_dir=config.data_dir, log_to_file=args.log_file,
                       access_log=not interactive)
 
 
-def _started(app, controller, url: str, config, open_browser: bool, interactive: bool, ui_cmd: str = "jig ui") -> None:
-    """Called once the agent (or set-up mode) has started, before the port opens."""
+def _started(app, controller, url: str, config, open_ui: tuple, interactive: bool, ui_cmd: str = "jig ui") -> None:
+    """Called once the agent (or set-up mode) has started, before the port opens. ``open_ui`` is (where,
+    config path, port): where is "window", "browser" or None."""
     import threading
 
+    where = open_ui[0]
+    place = "in its window" if where == "window" else "in your browser"
     if controller.setup is not None:
         problem = controller.setup.problem
         print(f"Jig is running at {url}, in set-up mode: {problem.title} {problem.text}", flush=True)
-        print("The agent stays off until a model passes its checks. Finish setting up in your browser"
-              + ("." if open_browser else f": {ui_cmd}"), flush=True)
+        print("The agent stays off until a model passes its checks. Finish setting up "
+              + (f"{place}." if where else f"in Jig: {ui_cmd}"), flush=True)
     else:
         jig = controller.jig
-        where = jig.config.model.location
+        location = jig.config.model.location
         print(f"Jig is running at {url}, using {jig.model.model_name} "
-              f"({'in the cloud at ' + where.host if where.is_cloud else 'on ' + jig.config.model.base_url}).",
+              f"({'in the cloud at ' + location.host if location.is_cloud else 'on ' + jig.config.model.base_url}).",
               flush=True)
-        print("Open it in your browser" + (" (opening now)." if open_browser else f" with: {ui_cmd}"), flush=True)
+        print(f"Opening it {place} now." if where else f"Open it with: {ui_cmd}", flush=True)
     if interactive:
         print(f"Stop Jig with Ctrl+C or jig stop. Log: {config.data_dir / 'logs' / 'jig.log'}", flush=True)
-    if open_browser:
-        threading.Thread(target=_open_signed_in, args=(app, url), daemon=True, name="jig-open-browser").start()
+    if where:
+        threading.Thread(target=_open_signed_in, args=(app, url, config, open_ui), daemon=True,
+                         name="jig-open-ui").start()
 
 
-def _open_signed_in(app, url: str) -> None:
-    """Wait until the server answers, then open the web UI with a one-time sign-in code (as 'jig ui' does)."""
+def _open_signed_in(app, url: str, config, open_ui: tuple) -> None:
+    """Wait until the server answers, then open Jig's window (which signs itself in), or the web UI in the
+    browser with a one-time sign-in code (as 'jig ui' does)."""
     import time
     import webbrowser
 
@@ -118,6 +127,12 @@ def _open_signed_in(app, url: str) -> None:
         except httpx.HTTPError:
             time.sleep(0.3)
     else:
+        return
+    where, config_path, port = open_ui
+    if where == "window":
+        from .desktop import open_window
+
+        open_window(config_path, config.data_dir, port)
         return
     code, _ttl = app.state.auth.new_login_code()
     link = f"{url}/#code={code}"
@@ -546,11 +561,26 @@ def _remote(args: argparse.Namespace) -> int:
 
 
 async def _ui(args: argparse.Namespace) -> int:
-    """Sign the browser in with a one-time code in the URL fragment, which is never sent to the server
-    or written to its logs; the page swaps it for a session cookie and removes it from the address bar."""
+    """Open Jig's own window on Windows (for this config's Jig), or sign the browser in with a one-time code
+    in the URL fragment, which is never sent to the server or written to its logs; the page swaps it for a
+    session cookie and removes it from the address bar."""
     import webbrowser
 
     base = _target_url(args)
+    if sys.platform == "win32" and not (args.browser or args.print_url or args.url):
+        try:
+            answering = httpx.get(f"{base}/health", timeout=5).status_code == 200
+        except httpx.HTTPError:
+            answering = False
+        if not answering:
+            print(_not_running(base), file=sys.stderr)
+            return 1
+        from urllib.parse import urlsplit
+
+        from .desktop import open_window
+
+        open_window(args.config, load_config(args.config).data_dir, urlsplit(base).port)
+        return 0
     async with httpx.AsyncClient(timeout=10.0, headers=_auth_headers(args)) as client:
         try:
             r = await client.post(f"{base}/auth/login-code")
@@ -667,8 +697,8 @@ async def _ask_approval(client: httpx.AsyncClient, base: str, data: dict) -> Non
 
 MENU = """Jig, your always-on personal AI agent.
 
-  jig serve       Start Jig. It opens in your browser, and walks you through set-up the first time.
-  jig ui          Open Jig in your browser, already signed in.
+  jig serve       Start Jig. It opens (in its own window on Windows), and walks you through set-up the first time.
+  jig ui          Open Jig, already signed in. Add --browser to use your browser instead.
   jig stop        Turn Jig off.
   jig health      Check your model works with Jig.
   jig chat        Chat with Jig here in the terminal.
@@ -681,7 +711,8 @@ def main(argv: list[str] | None = None) -> int:
                                                              "models.")
     parser.add_argument("--config", help="path to jig.toml")
     sub = parser.add_subparsers(dest="command")
-    s = sub.add_parser("serve", help="start Jig (opens it in your browser when you run it yourself)")
+    s = sub.add_parser("serve", help="start Jig (opens it when you run it yourself: its own window on Windows, "
+                                     "else your browser)")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
     s.add_argument("--data-dir", help="data folder (default: from the config)")
@@ -689,8 +720,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="recorded in the audit log and /status (autostart entries pass 'autostart')")
     s.add_argument("--log-file", action="store_true",
                    help="log to <data_dir>/logs/jig.log (rotating) instead of the console")
-    s.add_argument("--browser", action="store_true", help="open the web UI, signed in, once Jig has started")
-    s.add_argument("--no-browser", action="store_true", help="don't open the web UI")
+    s.add_argument("--browser", action="store_true",
+                   help="open Jig in your browser (instead of its own window on Windows) once it has started")
+    s.add_argument("--window", action="store_true",
+                   help="open Jig's own window once it has started, even when run from a script (Windows)")
+    s.add_argument("--no-browser", action="store_true", help="don't open Jig")
     s.add_argument("--verbose", action="store_true", help="show the full log on the console")
     autostart_cli.add_parsers(sub)
     c = sub.add_parser("chat", help="chat with Jig in the terminal")
@@ -702,8 +736,10 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--json", action="store_true", help="machine-readable output")
     t = sub.add_parser("token", help="show or rotate the API access token")
     t.add_argument("action", choices=["show", "rotate"])
-    u = sub.add_parser("ui", help="open the web UI in your browser, already signed in")
-    u.add_argument("--url", help="Jig's address (default: the running Jig for this config, else [server] port)")
+    u = sub.add_parser("ui", help="open Jig, already signed in (its own window on Windows, else your browser)")
+    u.add_argument("--url", help="Jig's address (default: the running Jig for this config, else [server] port); "
+                                 "opens in the browser")
+    u.add_argument("--browser", action="store_true", help="open Jig in your browser instead of its own window")
     u.add_argument("--print-url", action="store_true", help="print the one-time sign-in link instead of opening it")
     sb = sub.add_parser("sandbox", help="manage the container sandbox")
     sb.add_argument("action", choices=["build", "status"],

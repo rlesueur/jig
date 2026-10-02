@@ -192,6 +192,7 @@ h4 { font-size: 15px; font-weight: 800; }
   display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%;
   color: var(--muted); border: 1px solid transparent; text-decoration: none;
 }
+button.icon-btn { background: transparent; padding: 0; cursor: pointer; font: inherit; }
 .icon-btn:hover { color: var(--text); background: var(--surface); border-color: var(--line); }
 .icon-btn[aria-current="page"] { color: var(--text); background: var(--surface); border-color: var(--line-strong); }
 

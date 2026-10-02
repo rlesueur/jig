@@ -36,7 +36,7 @@ CloseApplications=no
 
 [Messages]
 WelcomeLabel1=Welcome to Jig
-WelcomeLabel2=Jig is a friendly AI helper that runs on your own computer.%n%nThis puts Jig on your computer for you alone: it doesn't need administrator rights, and it doesn't need Python, Git or a terminal.%n%nWhen it's done, Jig opens in your browser and helps you choose a model to think with.
+WelcomeLabel2=Jig is a friendly AI helper that runs on your own computer.%n%nThis puts Jig on your computer for you alone: it doesn't need administrator rights, and it doesn't need Python, Git or a terminal.%n%nWhen it's done, Jig opens in its own window and helps you choose a model to think with.
 WizardSelectTasks=Start with Windows
 SelectTasksDesc=Should Jig be ready whenever you are?
 SelectTasksLabel2=Jig can start by itself when you sign in to Windows, so it's always there when you need it. Tick the box if you'd like that.
@@ -64,7 +64,7 @@ Source: "{#Stage}\jig.toml.template"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Icon}"; DestDir: "{app}"; DestName: "jig.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Jig"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; IconFilename: "{app}\jig.ico"; Comment: "Open Jig"
+Name: "{autoprograms}\Jig"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; IconFilename: "{app}\jig.ico"; Comment: "Open Jig"; AppUserModelID: "Jig.App"
 
 [Registry]
 ; jig://start, used by the "Turn Jig on" button on Jig's "Jig is off" page.
@@ -77,7 +77,7 @@ Root: HKCU; Subkey: "Software\Jig"; Flags: uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Jig\Install"; ValueType: string; ValueName: "JigHome"; ValueData: "{code:JigHome}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; Description: "Open Jig now"; Flags: postinstall nowait
+Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; Description: "Open Jig now"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -128,6 +128,29 @@ begin
     RaiseException('Jig couldn''t write its settings to ' + ConfigPath());
 end;
 
+function WebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  { Where Microsoft documents finding the WebView2 Runtime, for all users or this user. }
+  Result := (RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) or
+             RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version)) and
+            (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Output: String;
+begin
+  Result := '';
+  { An update replaces Jig's program files, so close Jig's window and its tray icon (which turns Jig off) first. }
+  if FileExists(ExpandConstant('{app}\python\python.exe')) and FileExists(ConfigPath()) then
+  begin
+    RunJig('-m jig.desktop --config "' + ConfigPath() + '" --close', Output);
+    RunJig('-m jig.tray --config "' + ConfigPath() + '" --quit', Output);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Output: String;
@@ -135,6 +158,10 @@ begin
   if CurStep = ssPostInstall then
   begin
     WriteConfig();
+    if not WebView2Installed() then
+      SuppressibleMsgBox('Jig opens in its own window, which uses Microsoft Edge WebView2. It isn''t on this computer yet. ' +
+                         'When Jig opens, it will offer to get it for you (it''s free from Microsoft), or to use your browser instead.',
+                         mbInformation, MB_OK, IDOK);
     if WizardIsTaskSelected('autostart') then
     begin
       WizardForm.StatusLabel.Caption := 'Setting up Start with Windows...';
@@ -170,7 +197,8 @@ begin
   Config := UninstallHome + '\jig.toml';
   if CurUninstallStep = usUninstall then
   begin
-    { Turn Jig off (the tray does it the same way the web page does), then remove Start with Windows. }
+    { Close Jig's window, turn Jig off (the tray does it the same way the web page does), then remove Start with Windows. }
+    RunJig('-m jig.desktop --config "' + Config + '" --close', Output);
     RunJig('-m jig.tray --config "' + Config + '" --quit', Output);
     RunJig('-m jig.cli --config "' + Config + '" stop', Output);
     if RunJig('-m jig.cli --config "' + Config + '" autostart disable', Output) <> 0 then

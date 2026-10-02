@@ -1,9 +1,13 @@
 """Jig's Windows tray icon: ``pythonw -m jig.tray --config ... --data-dir ... --port ...``.
 
 The desktop install runs Jig through this instead of a console window. It starts ``jig serve`` (with no
-console) for its data folder, shows whether Jig is running, and has Open Jig, Turn Jig off or on, and
-Quit. One tray runs per data folder: starting another one (from the Start menu, the ``jig://start``
-link on the "Jig is off" page, or autostart) asks the running tray to start Jig, or open it, instead.
+console) for its data folder, shows whether Jig is running, and has Open Jig (Jig's own window, see
+``jig.desktop``), Open in browser, Turn Jig off or on, and Quit. One tray runs per data folder: starting
+another one (from the Start menu, the ``jig://start`` link on the "Jig is off" page, or autostart) asks the
+running tray to start Jig, or open it, instead.
+
+While Jig runs, a Windows notification says when a job is waiting for the person's OK. It says only that
+(not what the job wants to do), so nothing private shows on the lock screen; clicking it opens Jig.
 
 It only ever starts and stops the Jig for its own data folder, and turns it off the same way the web UI
 does (``POST /power/stop``), so Jig finishes and saves what it was doing.
@@ -48,6 +52,8 @@ WM_TRAY = WM_APP + 1  # mouse events on the icon
 WM_STATUS = WM_APP + 2  # the status thread has news
 WM_START = WM_APP + 3  # another tray instance asks: start Jig
 WM_OPEN = WM_APP + 4  # another tray instance asks: start Jig and open it
+NIN_BALLOONUSERCLICK = 0x0405  # the person clicked a notification
+ASFW_ANY = -1
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x1, 0x2, 0x4, 0x10
@@ -58,7 +64,7 @@ IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x10, 0x40
 ERROR_ALREADY_EXISTS = 183
 CREATE_NO_WINDOW = 0x08000000
 
-CMD_OPEN, CMD_ON, CMD_OFF, CMD_QUIT = 1, 2, 3, 4
+CMD_OPEN, CMD_ON, CMD_OFF, CMD_QUIT, CMD_BROWSER = 1, 2, 3, 4, 5
 
 LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
@@ -112,6 +118,7 @@ def _win32() -> tuple[Any, Any, Any]:
     user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
     user32.RegisterWindowMessageW.restype = wintypes.UINT
     user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+    user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
     shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
     shell32.Shell_NotifyIconW.restype = wintypes.BOOL
     kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
@@ -138,6 +145,7 @@ class Tray:
         self.stopping = False  # we asked Jig to turn off
         self.quitting = False
         self.open_when_up = False
+        self.waiting_approvals: set[str] = set()  # pending approvals already notified
         self.state = "starting"  # starting | running | setup | stopping | off | problem
         self.problem = ""
         self.lock = threading.Lock()
@@ -198,12 +206,21 @@ class Tray:
         return True
 
     def open_jig(self) -> None:
-        """Open the web UI signed in, as 'jig ui' does. Waits for Jig if it's still starting."""
+        """Open Jig's window (it signs itself in), or bring it to the front. Waits for Jig if it's starting."""
         status = self._answering()
         if status is None:
             self.open_when_up = True
             if self.state in ("off", "problem"):
                 self.start_jig()
+            return
+        from .desktop import open_window
+
+        open_window(self.config_path, self.data_dir, self.port)
+
+    def open_in_browser(self) -> None:
+        """Open the web UI in the default browser, signed in, as 'jig ui --browser' does."""
+        if self._answering() is None:
+            self._notify("Jig isn't running", "Turn Jig on first, then open it in your browser.", warning=True)
             return
         try:
             r = httpx.post(f"{self.base}/auth/login-code", headers=self._headers(), timeout=10)
@@ -212,6 +229,22 @@ class Tray:
             self._notify("Jig couldn't open", f"Jig didn't make a sign-in link: {exc}", warning=True)
             return
         webbrowser.open(f"{self.base}/#code={r.json()['code']}")
+
+    def _check_approvals(self) -> None:
+        """Notify once for each job that starts waiting for the person's OK."""
+        try:
+            r = httpx.get(f"{self.base}/approvals", params={"status": "pending"}, headers=self._headers(), timeout=5)
+        except (httpx.HTTPError, OSError):
+            return
+        if r.status_code != 200:
+            return
+        pending = {a["id"] for a in r.json()}
+        new = pending - self.waiting_approvals
+        self.waiting_approvals = pending
+        if new:
+            many = len(pending) > 1
+            self._notify("Jig needs your OK", (f"{len(pending)} jobs are" if many else "A job is") +
+                         " waiting for your OK before carrying on. Click here to open Jig.")
 
     # ----- status -----
 
@@ -248,6 +281,8 @@ class Tray:
             if new in ("running", "setup") and self.open_when_up:
                 self.open_when_up = False
                 self.open_jig()
+            if new == "running":
+                self._check_approvals()
             if new == "off" and self.quitting:
                 break
             time.sleep(POLL_S)
@@ -309,6 +344,7 @@ class Tray:
         u.AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, self.status_text())
         u.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         u.AppendMenuW(menu, MF_STRING, CMD_OPEN, "Open Jig")
+        u.AppendMenuW(menu, MF_STRING | (0 if running else MF_GRAYED), CMD_BROWSER, "Open in browser")
         if running:
             u.AppendMenuW(menu, MF_STRING, CMD_OFF, "Turn Jig off")
         else:
@@ -329,6 +365,8 @@ class Tray:
     def _command(self, cmd: int) -> None:
         if cmd == CMD_OPEN:
             threading.Thread(target=self.open_jig, daemon=True).start()
+        elif cmd == CMD_BROWSER:
+            threading.Thread(target=self.open_in_browser, daemon=True).start()
         elif cmd == CMD_ON:
             self.start_jig()
         elif cmd == CMD_OFF:
@@ -350,7 +388,7 @@ class Tray:
             event = lparam & 0xFFFF
             if event in (WM_RBUTTONUP, WM_CONTEXTMENU):
                 self._menu()
-            elif event == WM_LBUTTONDBLCLK:
+            elif event in (WM_LBUTTONDBLCLK, NIN_BALLOONUSERCLICK):
                 threading.Thread(target=self.open_jig, daemon=True).start()
             return 0
         if msg == WM_STATUS:
@@ -416,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", help="Jig's config file (default: as 'jig' finds it)")
     p.add_argument("--data-dir", help="data folder (default: from the config)")
     p.add_argument("--port", type=int, help="port (default: from the config)")
-    p.add_argument("--open", action="store_true", help="open Jig in the browser once it's running")
+    p.add_argument("--open", action="store_true", help="open Jig's window once it's running")
     p.add_argument("--no-start", action="store_true", help="show the icon without starting Jig")
     p.add_argument("--start-reason", choices=["manual", "autostart"], default="manual")
     p.add_argument("--quit", action="store_true",
@@ -451,11 +489,15 @@ def main(argv: list[str] | None = None) -> int:
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
         hwnd = user32.FindWindowW(name, None)
         if hwnd:
+            user32.AllowSetForegroundWindow(ASFW_ANY)  # so Jig's window may come to the front for the person
             user32.PostMessageW(hwnd, WM_OPEN if args.open else WM_START, 0, 0)
             log.info("a tray already runs for %s; asked it to %s", data_dir, "open Jig" if args.open else "start Jig")
             return 0
         log.error("a tray already runs for %s but its window wasn't found", data_dir)
         return 1
+    from .desktop import APP_ID
+
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)  # notifications come from "Jig"
     tray = Tray(args.config, data_dir, args.port or config.server.port, config.server.host)
     try:
         return tray.run(name, start=not args.no_start, open_ui=args.open, start_reason=args.start_reason)

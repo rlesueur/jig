@@ -19,6 +19,7 @@ dependencies = [
     "keyring>=25; sys_platform != 'win32'",
     "cryptography>=43",
     "segno>=1.6",
+    "pywebview>=6.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
