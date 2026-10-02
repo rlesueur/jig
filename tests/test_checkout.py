@@ -62,6 +62,15 @@ def test_amounts_find_the_total_and_skip_fees():
     assert total == "$11.99" and items == ["Widget $9.99"]
 
 
+def test_an_item_keeps_its_name_when_a_long_description_sits_before_its_price():
+    # The layout of the order summary on www.saucedemo.com (the payment-checkpoint capability test).
+    text = ("QTY\nDescription\n1\nSauce Labs Backpack\ncarry.allTheThings() with the sleek, streamlined Sly Pack that "
+            "melds uncompromising style with unequaled laptop and tablet protection.\n$29.99\nPayment Information:\n"
+            "SauceCard #31337\nItem total: $29.99\nTax: $2.40\nTotal: $32.39\nFinish")
+    total, items = amounts(text)
+    assert total == "$32.39" and items == ["Sauce Labs Backpack $29.99"]
+
+
 def test_the_checkpoint_is_a_core_rule_that_asks():
     rule = next(r for r in CORE_RULES if r.id == "payment-checkpoint")
     assert rule.decision.value == "ask"

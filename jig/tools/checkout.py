@@ -37,16 +37,23 @@ MAX_ITEMS = 8
 
 
 def _lines(text: str) -> list[str]:
-    """Non-empty lines, with a line that is only a price joined to the label before it ("Total" / "$30")."""
+    """Non-empty lines, with a line that is only a price joined to the label before it ("Total" / "$30"), or to
+    the name above a long description ("Backpack" / "A sleek pack for ..." / "$29.99")."""
     out: list[str] = []
     for raw in (text or "").splitlines():
         line = " ".join(raw.split())
         if not line:
             continue
-        if out and _AMOUNT.fullmatch(line) and not _AMOUNT.search(out[-1]) and len(out[-1]) <= 120:
-            out[-1] = f"{out[-1]} {line}"
-        else:
+        label = None
+        if out and _AMOUNT.fullmatch(line) and not _AMOUNT.search(out[-1]):
+            if len(out[-1]) <= 120:
+                label = -1
+            elif len(out) > 1 and len(out[-2]) <= 120 and not _AMOUNT.search(out[-2]):
+                label = -2
+        if label is None:
             out.append(line)
+        else:
+            out[label] = f"{out[label]} {line}"
     return out
 
 
