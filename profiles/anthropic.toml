@@ -12,8 +12,9 @@
 #   https://api.anthropic.com/v1/. Anthropic calls this layer "primarily intended to test and compare model
 #   capabilities". Its documented differences, and what Jig does about each:
 #   * response_format is "Ignored", so Jig's structured output (the Sentinel's verdicts, the planner) is asked
-#     for as a tool call instead (structured_output = "tool_call", the provider default) and checked; anything
-#     else is an error, and a Sentinel error means the action does not go ahead.
+#     for as a tool call instead (structured_output = "tool_call", the provider default) and checked against its
+#     schema. An invalid answer is sent back once saying what was wrong; a second one is an error, and a
+#     Sentinel error means the action does not go ahead.
 #   * Forced tool use is not used: Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 "reject forced tool use on every
 #     request with a 400 error" (https://platform.claude.com/docs/en/build-with-claude/thinking).
 #   * Tool "strict" is ignored, so tool arguments are not schema-guaranteed; Jig validates every tool call.

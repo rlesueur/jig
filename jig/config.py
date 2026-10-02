@@ -49,7 +49,8 @@ class EndpointConfig:
     # Required (with a one-time confirmation, 'jig model cloud confirm') before Jig sends anything to a
     # cloud endpoint. Never inherited: the Sentinel needs its own.
     allow_cloud: bool = False
-    # "json_schema" (response_format) or "tool_call" (a forced tool call). Empty: the provider's default.
+    # "json_schema" (response_format) or "tool_call" (the answer is a tool call's arguments). Empty: the
+    # provider's default.
     structured_output: str = ""
     # A PEM file of certificate authorities to trust for this endpoint (a server with its own certificate).
     ca_file: str = ""

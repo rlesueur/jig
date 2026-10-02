@@ -118,7 +118,7 @@ Jig's log is in its data folder, in `logs\jig.log`.
 Jig is model-agnostic. Nothing in the code assumes a particular model, prompt format or sampling scheme: the endpoint, model name and sampling parameters all come from config. Jig needs:
 
 - **Native tool calling** through the OpenAI `tools` / `tool_calls` API, including well-formed JSON arguments. Parallel tool calls are used when the model offers them.
-- **JSON-schema structured output** (`response_format: {type: "json_schema"}`) for the planner and the Sentinel.
+- **JSON-schema structured output** (`response_format: {type: "json_schema"}`) for the planner and the Sentinel. For a server that ignores `response_format`, set `structured_output = "tool_call"`: the answer is then the arguments of one forced `respond` tool call (`tool_choice: "required"`; Anthropic refuses forced tool use, so there it is unforced). Either way Jig checks each answer against its schema. An invalid answer, one that was cut off, or one the server could not read as the tool call is sent back once saying exactly what was wrong, which is logged (without the answer) and recorded with the plan or the Sentinel's verdict. If the second answer is not valid either, the planner fails the goal with both reasons, and the Sentinel fails closed: the action does not go ahead.
 - **A context of 32K tokens or more** (advisable). Jig logs a warning at start-up if the server reports less.
 - **Decent instruction following**, so it can plan, use tools sensibly and give honest answers when a tool is refused.
 

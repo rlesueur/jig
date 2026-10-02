@@ -208,7 +208,7 @@ class ToolExecutor:
             self.audit.record("sentinel.verdict", f"{spec.name}: {verdict.verdict.value} ({verdict.risk})",
                               actor="sentinel", task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name,
                               call_id=call.id, verdict=verdict.verdict.value, risk=verdict.risk,
-                              reason_chars=len(verdict.reason))
+                              reason_chars=len(verdict.reason), retries=list(verdict.retries))
             self.bus.publish(EventType.SENTINEL_VERDICT, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                              **verdict.as_dict())
             if verdict.verdict == Verdict.DENY:

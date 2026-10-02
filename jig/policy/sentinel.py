@@ -54,10 +54,12 @@ class SentinelVerdict:
     risk: str
     reason: str
     elapsed_s: float
+    # Why earlier answers were sent back before this verdict (jig.model.ChatResult.structured_retries).
+    retries: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {"verdict": self.verdict.value, "risk": self.risk, "reason": self.reason,
-                "elapsed_s": round(self.elapsed_s, 2)}
+                "elapsed_s": round(self.elapsed_s, 2), "retries": list(self.retries)}
 
 
 def _clip(value: Any, limit: int = 2000) -> Any:
@@ -107,6 +109,7 @@ class Sentinel:
         try:
             result = await self.model.chat(messages, response_schema=VERDICT_SCHEMA)
         except JigError as exc:
+            # Failing closed: the gate refuses the action when the Sentinel cannot give a verdict.
             raise SentinelError(f"Sentinel model call failed: {exc}") from exc
         try:
             data = json.loads(result.content)
@@ -117,4 +120,5 @@ class Sentinel:
             raise SentinelError(f"Sentinel returned an invalid verdict: {result.content[:300]!r}") from exc
         if not reason:
             raise SentinelError("Sentinel verdict has an empty reason")
-        return SentinelVerdict(verdict=verdict, risk=risk, reason=reason, elapsed_s=result.elapsed_s)
+        return SentinelVerdict(verdict=verdict, risk=risk, reason=reason, elapsed_s=result.elapsed_s,
+                               retries=tuple(result.structured_retries))

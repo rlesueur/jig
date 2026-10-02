@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from . import schema as json_schema
 from .config import EndpointConfig
 from .errors import ConfigError, ModelCapabilityError, ModelError, ModelServerUnavailable
 
@@ -33,6 +34,22 @@ _TOOL_CALL_KEYS = {"index", "id", "type", "function"}
 RESPOND_TOOL = "respond"
 _RESPOND_INSTRUCTION = (f"Give your answer only by calling the {RESPOND_TOOL} tool: its arguments are your whole "
                         "answer. Do not reply with text.")
+# A structured answer that is not valid is sent back once, saying what was wrong. A second invalid answer fails.
+STRUCTURED_RETRIES = 1
+# llama.cpp's server answers HTTP 500 with one of these when its chat parser cannot read the model's output as
+# the tool call it was asked for ("Failed to parse input at pos" up to about b8700; the PEG parser after that).
+_UNPARSED = re.compile(r"The model produced output that does not match the expected|Failed to parse input at pos")
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    """Why a structured answer was not accepted. ``kind`` is content-free and may be logged and recorded;
+    ``detail`` is told to the model and put in the final error, and may name properties from the answer."""
+
+    kind: str  # "cut_off", "unparsed", "no_call", "wrong_calls", "invalid_json" or "schema"
+    detail: str
+    # For the user, if the last attempt fails this way too (how to stop answers being cut off).
+    explanation: str = ""
 
 
 def _reasoning(obj: dict[str, Any]) -> str:
@@ -88,6 +105,8 @@ class ChatResult:
     reasoning_details: list[dict[str, Any]] = field(default_factory=list)
     # Gemini's vendor extension on the message (extra_content.google...), passed back unmodified.
     extra_content: dict[str, Any] = field(default_factory=dict)
+    # For a structured answer: why each earlier answer was sent back (_Refusal.kind), oldest first.
+    structured_retries: list[str] = field(default_factory=list)
 
     def assistant_message(self) -> dict[str, Any]:
         """The message to append to history, in the standard OpenAI shape.
@@ -109,6 +128,7 @@ class ChatResult:
             "tool_calls": [tc.name for tc in self.tool_calls],
             "usage": self.usage,
             "elapsed_s": round(self.elapsed_s, 3),
+            **({"structured_retries": self.structured_retries} if self.structured_retries else {}),
         }
 
 
@@ -236,15 +256,17 @@ class ModelClient:
         if tools:
             body["tools"] = tools
         if response_schema is not None:
+            json_schema.check_schema(response_schema)
             if self.config.structured_output_mode == "tool_call":
                 if tools:
                     raise ModelError(f"{self.label}: structured output as a tool call cannot be combined with tools")
-                # Not forced with tool_choice: current Claude models reject forced tool use (HTTP 400). The reply
-                # must be exactly this call, which _structured() checks.
                 body["messages"] = _with_instruction(messages, _RESPOND_INSTRUCTION)
                 body["tools"] = [{"type": "function", "function": {
                     "name": RESPOND_TOOL, "description": "Give your answer. The arguments are the whole answer.",
                     "parameters": response_schema}}]
+                if not provider or provider.force_tool_call:
+                    body["tool_choice"] = "required"
+                    body["parallel_tool_calls"] = False
             else:
                 body["response_format"] = {
                     "type": "json_schema",
@@ -252,16 +274,48 @@ class ModelClient:
                 }
         return body
 
-    def _structured(self, result: ChatResult) -> ChatResult:
-        """In tool_call mode, the answer is the arguments of the one ``respond`` call; anything else is an error."""
-        calls = result.tool_calls
-        if len(calls) != 1 or calls[0].name != RESPOND_TOOL:
-            raise ModelError(
-                f"{self.label} did not answer with the single {RESPOND_TOOL!r} tool call that structured output "
-                f"needs (structured_output = \"tool_call\"); it sent {[c.name for c in calls]} and text "
-                f"{result.content[:200]!r}", body=result.content)
-        result.content, result.tool_calls = calls[0].arguments_raw, []
-        return result
+    def _refusal(self, body: dict[str, Any], result: ChatResult, schema: dict[str, Any]) -> _Refusal | None:
+        """Why a structured answer cannot be accepted, or None. In tool_call mode the answer is the arguments of
+        exactly one ``respond`` call."""
+        if result.finish_reason == "length":
+            used = _token_counts(result).removeprefix(", ")
+            return _Refusal("cut_off", "the answer was cut off before it was complete" + (f" ({used})" if used else ""),
+                            explanation=self._cut_off_message(body, result))
+        if self.config.structured_output_mode == "tool_call":
+            calls = result.tool_calls
+            if not calls:
+                return _Refusal("no_call", f"the answer was text ({len(result.content)} characters), not a call to the "
+                                           f"{RESPOND_TOOL} tool")
+            if len(calls) != 1 or calls[0].name != RESPOND_TOOL:
+                return _Refusal("wrong_calls", f"there were {len(calls)} tool calls "
+                                               f"({', '.join(c.name or '?' for c in calls)}), not exactly one call to "
+                                               f"{RESPOND_TOOL}")
+            text = calls[0].arguments_raw
+        else:
+            text = result.content
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return _Refusal("invalid_json", f"the answer is not valid JSON ({exc.msg} at character {exc.pos})")
+        if found := json_schema.problems(value, schema):
+            return _Refusal("schema", "the answer does not match the schema: " + "; ".join(found))
+        return None
+
+    def _correction(self, result: ChatResult | None, refusal: _Refusal) -> list[dict[str, Any]]:
+        """The messages that send a refused answer back: the answer as given, then exactly what was wrong.
+        An answer that was cut off (it can fill the context window) or that the server could not read is not
+        repeated: the model is told what happened to it."""
+        tool_call = self.config.structured_output_mode == "tool_call"
+        again = (f" Call the {RESPOND_TOOL} tool once, with arguments that match its schema." if tool_call
+                 else " Answer again with only the JSON object, matching the schema.")
+        if result is None or refusal.kind == "cut_off":
+            return [{"role": "user", "content": f"Your previous answer to this was not accepted: {refusal.detail}. "
+                                                f"Keep your thinking short.{again}"}]
+        say = f"Not accepted: {refusal.detail}.{again}"
+        if tool_call and result.tool_calls:
+            return [result.assistant_message(),
+                    *({"role": "tool", "tool_call_id": c.id, "content": say} for c in result.tool_calls)]
+        return [result.assistant_message(), {"role": "user", "content": say}]
 
     async def chat(
         self,
@@ -276,9 +330,64 @@ class ModelClient:
         """One chat completion. Streams internally when ``on_delta`` is given.
 
         Message content may be a list of OpenAI content parts, including ``image_url`` parts
-        (see ``jig.vision.image_message``) for vision-capable models."""
+        (see ``jig.vision.image_message``) for vision-capable models.
+
+        With ``response_schema``, the answer (``content``) is JSON checked against the schema. An answer that is
+        not, that was cut off, or that the server could not read is sent back once saying what was wrong
+        (``STRUCTURED_RETRIES``) and recorded in ``structured_retries``; if the next answer is not valid either,
+        ``ModelError`` is raised."""
         body = self._body(messages, tools=tools, stream=on_delta is not None, model=model,
                           max_tokens=max_tokens, response_schema=response_schema)
+        if response_schema is None:
+            result = await self._send(body, on_delta)
+            if result.finish_reason == "length":
+                raise ModelError(self._cut_off_message(body, result))
+            return result
+        return await self._settle(body, response_schema, await self._attempt(body, on_delta), on_delta)
+
+    async def _attempt(self, body: dict[str, Any], on_delta: DeltaCallback | None) -> ChatResult | _Refusal:
+        """One structured request. A server that could not read the output as the tool call it was asked for
+        (llama.cpp's HTTP 500) has received an invalid answer, like any other."""
+        try:
+            return await self._send(body, on_delta)
+        except ModelError as exc:
+            if (self.config.structured_output_mode == "tool_call" and exc.status == 500
+                    and _UNPARSED.search(exc.body or "")):
+                return _Refusal("unparsed", f"the server could not read the answer as a call to the {RESPOND_TOOL} "
+                                            f"tool (HTTP 500: {_error_message(exc.body or '')})")
+            raise
+
+    async def _settle(self, body: dict[str, Any], schema: dict[str, Any], result: ChatResult | _Refusal,
+                      on_delta: DeltaCallback | None = None) -> ChatResult:
+        """Accept a structured answer, or send it back once (``STRUCTURED_RETRIES``) and accept the next one."""
+        refusals: list[_Refusal] = []
+        elapsed = 0.0
+        while True:
+            answer = result if isinstance(result, ChatResult) else None
+            if answer is None:
+                refusal = result
+            else:
+                elapsed += answer.elapsed_s
+                if (refusal := self._refusal(body, answer, schema)) is None:
+                    if self.config.structured_output_mode == "tool_call":
+                        answer.content, answer.tool_calls = answer.tool_calls[0].arguments_raw, []
+                    answer.elapsed_s = elapsed
+                    answer.structured_retries = [r.kind for r in refusals]
+                    return answer
+            refusals.append(refusal)
+            if len(refusals) > STRUCTURED_RETRIES:
+                raise ModelError(
+                    f"{self.label} gave no valid structured answer in {len(refusals)} attempts; Jig sent each one "
+                    "before the last back, saying what was wrong. "
+                    + " ".join(f"Attempt {i}: {r.detail}." for i, r in enumerate(refusals, 1))
+                    + (f" {refusal.explanation}" if refusal.explanation else ""),
+                    body=self.redact(answer.content) if answer is not None else None)
+            log.warning("%s: structured answer not accepted (%s); sending it back, retry %d of %d", self.label,
+                        refusal.kind, len(refusals), STRUCTURED_RETRIES)
+            body = {**body, "messages": [*body["messages"], *self._correction(answer, refusal)]}
+            result = await self._attempt(body, on_delta)
+
+    async def _send(self, body: dict[str, Any], on_delta: DeltaCallback | None) -> ChatResult:
         started = time.perf_counter()
         try:
             if on_delta is None:
@@ -291,10 +400,6 @@ class ModelClient:
             raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}"),
                                          reason="unreachable") from exc
         result.elapsed_s = time.perf_counter() - started
-        if result.finish_reason == "length":
-            raise ModelError(self._cut_off_message(body, result))
-        if response_schema is not None and self.config.structured_output_mode == "tool_call":
-            result = self._structured(result)
         return result
 
     def _cut_off_message(self, body: dict[str, Any], result: ChatResult) -> str:
@@ -480,7 +585,8 @@ class ModelClient:
             raise ModelCapabilityError(f"{problem}: output is not JSON: {result.content[:200]!r}") from exc
         if not isinstance(data, dict) or data.get("answer") != 5:
             raise ModelCapabilityError(f"{problem}: unexpected output {result.content[:200]!r}")
-        return {"structured_output": True, "elapsed_s": round(result.elapsed_s, 2)}
+        return {"structured_output": True, "elapsed_s": round(result.elapsed_s, 2),
+                "structured_retries": result.structured_retries}
 
 
 def _with_instruction(messages: list[dict[str, Any]], instruction: str) -> list[dict[str, Any]]:
@@ -513,6 +619,16 @@ def _token_counts(result: ChatResult) -> str:
     output = result.usage.get("completion_tokens") or result.timings.get("predicted_n")
     parts = [f"prompt {prompt} tokens" if prompt else "", f"output {output} tokens" if output else ""]
     return "".join(f", {p}" for p in parts if p)
+
+
+def _error_message(text: str) -> str:
+    """The message of an OpenAI-shaped error body ({"error": {"message": ...}}), or the start of the body."""
+    try:
+        error = json.loads(text).get("error")
+    except (ValueError, AttributeError):
+        return text[:200]
+    message = error.get("message") if isinstance(error, dict) else error
+    return str(message)[:200] if message else text[:200]
 
 
 def _context_overflow(text: str) -> tuple[int, int] | None:

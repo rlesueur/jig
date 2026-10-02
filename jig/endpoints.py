@@ -105,6 +105,9 @@ class Provider:
     # "json_schema": response_format with a JSON schema. "tool_call": a single forced tool call whose
     # arguments are the answer, for APIs that ignore response_format.
     structured_output: str = "json_schema"
+    # In "tool_call" mode, whether the call is forced (tool_choice "required", one call only). Without it a
+    # model can answer in text instead, and then Jig has to ask again.
+    force_tool_call: bool = True
     # Request keys (from [model.sampling]) the provider documents as supported. None: any key, because the
     # provider rejects unknown keys with an error rather than ignoring them.
     sampling_keys: frozenset[str] | None = None
@@ -143,8 +146,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk: response_format is
     # "Ignored", tool "strict" is ignored, temperature above 1 "capped at 1", and "most unsupported fields are
-    # silently ignored". So structured output uses a forced tool call (tool_choice is "Fully supported"), and
-    # only the documented sampling keys are accepted. GET /v1/models pages 20 at a time by default (limit up
+    # silently ignored". So structured output uses a tool call, and only the documented sampling keys are
+    # accepted. The call is not forced: current Claude models "reject forced tool use on every request with a 400
+    # error" (https://platform.claude.com/docs/en/build-with-claude/thinking). GET /v1/models pages 20 at a time by default (limit up
     # to 1000; https://platform.claude.com/docs/en/api/models/list). max_tokens is a required body parameter of
     # the Messages API behind this layer (https://platform.claude.com/docs/en/api/messages/create), and each
     # model has its own documented maximum (https://platform.claude.com/docs/en/models/overview).
@@ -153,6 +157,7 @@ PROVIDERS: dict[str, Provider] = {
         docs="https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk",
         max_tokens_required=True,
         structured_output="tool_call",
+        force_tool_call=False,
         sampling_keys=frozenset({"temperature", "top_p", "stop", "parallel_tool_calls", "thinking"}),
         temperature_max=1.0,
         headers={"anthropic-version": "2023-06-01"},

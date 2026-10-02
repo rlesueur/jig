@@ -59,7 +59,8 @@ class Planner:
         plan["task_ids"] = task_ids
         self.store.update_goal(goal_id, status=GoalStatus.ACTIVE, plan=plan)
         self.store.finish_run(run_id, status=RunStatus.DONE, final=json.dumps(plan))
-        self.audit.record("goal.planned", f"goal planned into {len(task_ids)} tasks", **ids, task_ids=task_ids)
+        self.audit.record("goal.planned", f"goal planned into {len(task_ids)} tasks", **ids, task_ids=task_ids,
+                          retries=result.structured_retries)
         self.bus.publish(EventType.GOAL_STATUS, goal_id=goal_id, status=GoalStatus.ACTIVE.value, plan=plan)
         self.bus.publish(EventType.RUN_END, status="done", **ids)
         return plan
