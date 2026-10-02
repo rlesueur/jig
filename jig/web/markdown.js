@@ -83,6 +83,8 @@ export function parseMarkdown(text) {
 }
 
 const SAFE_URL = /^https?:\/\/[^\s<>"']+$/i;
+/* a place in Jig's own Settings, e.g. #settings/connections/gmail; opens in the same tab */
+const APP_LINK = /^#settings(?:\/[a-z-]+){0,2}$/;
 /* trailing punctuation that ends a sentence rather than an address */
 const trimUrl = (u) => {
   let url = u;
@@ -115,8 +117,11 @@ export function parseInline(text) {
     if ((m = rest.match(/^(\*|_)(?=\S)([^*_\n]*?\S)\1(?![*_])/)) && !(m[1] === '_' && /\w/.test(s[i - 1] || ''))) {
       flush(); push({ t: 'em', children: parseInline(m[2]) }); i += m[0].length; continue;
     }
-    if ((m = rest.match(/^\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?\s*\)/)) && SAFE_URL.test(m[2])) {
+    if ((m = rest.match(/^\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?\s*\)/)) && (SAFE_URL.test(m[2]) || APP_LINK.test(m[2]))) {
       flush(); push({ t: 'link', text: m[1], url: m[2] }); i += m[0].length; continue;
+    }
+    if ((m = rest.match(/^#settings(?:\/[a-z-]+){1,2}/)) && !/[\w/]/.test(s[i - 1] || '')) {
+      flush(); push({ t: 'link', text: m[0], url: m[0] }); i += m[0].length; continue;
     }
     if ((m = rest.match(/^https?:\/\/[^\s<>"'`]+/i)) && !/[\w/]/.test(s[i - 1] || '')) {
       const url = trimUrl(m[0]);
@@ -145,6 +150,11 @@ function inlineNodes(doc, runs) {
     } else if (r.t === 'link') {
       const a = doc.createElement('a');
       a.href = r.url;
+      if (APP_LINK.test(r.url)) {
+        a.textContent = r.text;
+        nodes.push(a);
+        continue;
+      }
       a.textContent = r.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';

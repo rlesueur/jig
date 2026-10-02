@@ -10,6 +10,7 @@
 import { STATES } from '/avatar/jig-avatar.js';
 import { renderMarkdown } from './markdown.js';
 import { linkify, showSetupIfNeeded } from './setup.js';
+import { initWalkthrough, render as renderWalkthrough } from './walkthrough.js';
 
 const $ = (id) => document.getElementById(id);
 const TERMINAL_TASK = new Set(['done', 'failed', 'cancelled', 'blocked']);
@@ -383,9 +384,12 @@ function refreshAll() {
 const SECTIONS = ['model', 'rules', 'connections', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
-  const m = location.hash.match(/^#settings(?:\/([a-z]+))?$/);
+  const m = location.hash.match(/^#settings(?:\/([a-z]+))?(?:\/[a-z-]+)?$/);
   return m ? (m[1] || 'model') : null;
 }
+
+/** #settings/connections/<provider>: that account's guided set-up. */
+const walkthroughProvider = () => (location.hash.match(/^#settings\/connections\/([a-z-]+)$/) || [])[1] || null;
 
 function route(moveFocus = true) {
   const section = currentSection();
@@ -2584,6 +2588,22 @@ async function loadConnections() {
     return item;
   });
   $('connection-list').replaceChildren(...items);
+  const walk = walkthroughProvider();
+  const row = walk && rows.find((r) => r.provider === walk);
+  if (walk && !row) showError(`There\u2019s no account called ${q(walk)} to set up.`);
+  let box = $('connection-walkthrough');
+  if (!box) {
+    box = el('div', { id: 'connection-walkthrough', 'data-testid': 'connection-walkthrough' });
+    $('connection-list').before(box);
+  }
+  box.hidden = !row;
+  $('connection-list').hidden = Boolean(row);
+  if (row) {
+    const node = renderWalkthrough(row);
+    if (box.firstChild !== node) box.replaceChildren(node);
+  } else {
+    box.replaceChildren();
+  }
   const waiting = rows.some((r) => r.attempt && r.attempt.status === 'waiting');
   clearTimeout(connectionPoll);
   if (waiting && currentSection() === 'connections') connectionPoll = setTimeout(loadConnections, 2000);
@@ -2659,6 +2679,12 @@ function connectionItem(c) {
   }
 
   const actions = [];
+  if (host && c.walkthrough && c.walkthrough.length) {
+    actions.push(el('a', {
+      class: `btn btn-small${c.connected ? '' : ' btn-primary'}`, href: `#settings/connections/${c.provider}`,
+      'data-testid': `connection-walkthrough-${c.provider}`, text: c.connected ? 'Guided set-up' : 'Set up step by step',
+    }));
+  }
   if (c.connected || c.status === 'needs_reconnect') {
     actions.push(el('button', {
       type: 'button', class: 'btn btn-small btn-danger', 'data-testid': `connection-disconnect-${c.provider}`,
@@ -2830,5 +2856,6 @@ async function disconnectAccount(button, c) {
 }
 
 $('connections-refresh').addEventListener('click', loadConnections);
+initWalkthrough({ el, api, act, showError, reload: loadConnections });
 
 boot();

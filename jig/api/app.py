@@ -33,6 +33,7 @@ from ..connectors import google as google_connector
 from ..connectors import microsoft as microsoft_connector
 from ..connectors import provider as connector_provider
 from ..connectors.guide import guide as connector_guide
+from ..connectors import walkthrough as connector_walkthrough
 from ..constants import EventType, Mode
 from ..db import now_iso
 from ..devices import DeviceStore, PairingError
@@ -166,6 +167,11 @@ class ConnectIn(ConfirmIn):
     method: str | None = None  # one of the provider's methods: "oauth", "device" or "token"
     # What a token sign-in asks for. Typed Any and checked by hand, so a malformed value is never echoed
     # back in a validation error.
+    values: Any = None
+
+
+class WalkthroughCheckIn(ConfirmIn):
+    # The non-secret value a step checks (an application ID, a homeserver, a channel). Checked by hand.
     values: Any = None
 
 
@@ -941,7 +947,20 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
                 attempt = {k: v for k, v in attempt.items() if k not in ("user_code", "verification_uri")}
             r["attempt"] = attempt
             r["guide"] = connector_guide(r["provider"], install_url=r["install_url"])
+            r["walkthrough"] = connector_walkthrough.walkthrough(r["provider"], install_url=r["install_url"])
         return rows
+
+    @app.post("/connections/{name}/walkthrough/{check}")
+    async def connection_walkthrough_check(request: Request, name: str, check: str,
+                                           body: WalkthroughCheckIn) -> dict[str, Any]:
+        """Check one guided set-up step for real (read-only). Only non-secret values are sent here."""
+        _require_local(request, "Checking a connection step")
+        _require_confirm(body, "Checking a connection step")
+        _connector(name)
+        try:
+            return await connector_walkthrough.run_check(J(request), name, check, body.values)
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     def _connector(name: str):
         try:

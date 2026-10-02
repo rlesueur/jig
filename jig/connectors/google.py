@@ -8,6 +8,7 @@ which Google says installed apps cannot keep confidential; Jig still keeps it in
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,9 @@ def client_from_text(text: str, *, source: str = "that file") -> dict[str, str]:
                              "client of type 'Desktop app' (docs/connectors-setup.md).")
     client = {"client_id": str(section.get("client_id", "")), "client_secret": str(section.get("client_secret", ""))}
     check_client(client)
+    # Not secret: lets the guided set-up open Google Cloud console pages in the right project.
+    if isinstance(section.get("project_id"), str) and re.fullmatch(r"[a-z][a-z0-9-]{4,62}", section["project_id"]):
+        client["project_id"] = section["project_id"]
     return client
 
 

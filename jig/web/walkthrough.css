@@ -1,0 +1,33 @@
+/* Guided set-up for connecting an account (walkthrough.js). */
+.walk { display: flex; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.walk-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.walk-top a { color: var(--link); font-weight: 700; }
+.walk-count { color: var(--muted); font-weight: 700; }
+.walk-progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.walk-progress > span { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width 0.3s ease; }
+.walk-stage { display: flex; align-items: flex-start; gap: 16px; }
+.walk-stage jig-avatar { width: 96px; height: 96px; flex: none; display: block; }
+.walk-words { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.walk-says { margin: 0; font-size: 20px; font-weight: 900; color: var(--text); }
+.walk-say { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text); }
+.walk-skip { margin: 0; color: var(--muted); }
+.walk-see, .walk-do { padding: 10px 14px; border-radius: 10px; background: var(--sunk); }
+.walk-see p { margin: 4px 0 0; line-height: 1.5; }
+.walk-do ol { margin: 6px 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; line-height: 1.5; }
+.walk-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.walk-action { display: flex; flex-direction: column; gap: 10px; }
+.walk-result { margin: 0; padding: 8px 12px; border-radius: 10px; font-weight: 700; }
+.walk-result.ok { background: var(--ok-soft); color: var(--text); }
+.walk-result.not-yet { background: var(--warn-soft); color: var(--text); }
+.walk-code { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.walk-code p { margin: 0; }
+.walk-code-big { font: 900 44px/1.1 var(--font-mono); letter-spacing: 0.08em; user-select: all; }
+.walk-command { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.walk-command code { padding: 6px 10px; border-radius: 8px; background: var(--sunk); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.walk-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.walk-note { margin: 0; }
+.walk-nav { display: flex; justify-content: space-between; gap: 12px; }
+@media (max-width: 560px) {
+  .walk-stage { flex-direction: column; align-items: center; text-align: center; }
+  .walk-code-big { font-size: 34px; }
+}

@@ -10,6 +10,7 @@ import httpx
 
 from ..errors import ConnectorError
 from . import discord, github, gmail, google_calendar, google_drive, matrix, microsoft, signal, slack  # noqa: F401  (each registers its provider)
+from . import walkthrough
 from .base import PROVIDERS, ConnectionStore, Connectors, SECRET_PREFIX, ShowCodeFn, provider
 
 __all__ = ["PROVIDERS", "ConnectionStore", "Connectors", "SECRET_PREFIX", "connect", "provider", "register_tools"]
@@ -25,6 +26,7 @@ def register_tools(registry: Any, connectors: Connectors) -> None:
     discord.register_discord_tools(registry, connectors)
     matrix.register_matrix_tools(registry, connectors)
     signal.register_signal_tools(registry, connectors)
+    walkthrough.register_help_tool(registry, connectors)
 
 
 async def connect(name: str, *, access: str | None, store: ConnectionStore, http: httpx.AsyncClient,
