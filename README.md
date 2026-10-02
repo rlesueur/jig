@@ -25,7 +25,7 @@ Jig is an open-source, always-on personal AI agent, **built for local models**. 
 
 Jig is an open alternative to hosted agents such as Meta's Muse and OpenAI's Dots. It takes their best safety ideas (an isolated reviewer, a credential vault, read-only background research, per-action rules and approvals) and adds the things that running locally makes possible: memory you can see and edit, and an audit trail you own.
 
-> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, and vision are in place. Voice and messaging channels are on the roadmap.
+> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision and a Gmail connector are in place. Voice and the other connectors (calendars, files, GitHub, chat apps) are on the roadmap; see [Connectors](#connectors) for exactly what is built.
 
 ## Model requirements
 
@@ -438,13 +438,40 @@ Inside the browser, a click or the Enter key cannot submit a form. Every non-GET
 - File tools (`read_file`, `write_file`, ...) still use the directory jail on the host, on the same folder that is mounted at `/workspace`.
 - On Linux Docker Engine (not Desktop), `host.docker.internal` resolves to the bridge gateway, so set `egress_bind` to an address on that bridge (for example `172.17.0.1`). Start-up runs an end-to-end check of the relay path and refuses to start if it fails.
 
+## Connectors
+
+Connectors let Jig work with your own accounts. Each uses your own app registration or token, talks straight from your computer to the provider, and keeps its tokens only in the vault. Setup for each provider, with the scopes and why, is in [docs/connectors-setup.md](docs/connectors-setup.md).
+
+| Connector | Status | Tools |
+| --- | --- | --- |
+| Gmail | built; tested against Google's real endpoints without an account; the live end-to-end test (`tests/test_connector_gmail_live.py`) needs your Google setup and is skipped until then | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
+| Google Calendar, Outlook calendar, Google Drive, OneDrive, GitHub, Slack, Discord, Matrix, Signal | not built | none |
+
+```powershell
+.\.venv\Scripts\jig connect gmail --client-json <downloaded Desktop app client JSON>   # opens Google's consent page
+.\.venv\Scripts\jig connections                                                       # status, account, scopes
+.\.venv\Scripts\jig disconnect gmail                                                  # revokes at Google, deletes the tokens
+```
+
+Settings > Connections in the web UI shows the same and has Connect and Disconnect buttons. The API is `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only; returns the sign-in link) and `POST /connections/{provider}/disconnect` `{confirm: true}`.
+
+**How connectors are kept safe.**
+
+- **Sign-in:** OAuth 2.0 with PKCE and a one-shot loopback listener on `127.0.0.1` that checks the `state` value. Gmail asks only for the scopes of the access level you choose (`read`, `send` or `manage`).
+- **Tokens:** access and refresh tokens and the app client are in the vault as `connector.<provider>.*`. The model never sees them; a core rule stops any tool from naming them with `{{secret:...}}`; the generic `/vault` API refuses to write or delete them; and every token value used is redacted from tool results, errors and the audit log. A connector sends its token only to its provider's own API hosts.
+- **Reads and actions:** reading mail is a `read` tool, so it works in read-only mode and is not reviewed. Every draft, send, reply, label change and archive is an outbound side effect: the Sentinel reviews it, and it needs your approval. Sending and replying are human-only, so no rule can make them automatic. Drafts and label changes ask by default. Read-only mode refuses all of them. There is no delete tool, and adding `TRASH` or `SPAM` is refused.
+- **What it refers to:** for a reply or a label change, Jig first looks up the thread and shows its subject and sender on the approval card and to the Sentinel, marked as text written by other people.
+- **Untrusted content:** the agent is told that content from connected accounts is information, never instructions, and connector results say so too.
+- **Limits for testing:** `[connectors.gmail] allowed_recipients` and `required_prefix` (for example `"[Jig test]"`) are checked by the gate before the Sentinel or an approval, and again just before sending.
+- **Errors:** an expired or revoked grant marks the connection "needs reconnecting" and says how to fix it. When a provider says "slow down", Jig waits as asked (at most 3 times and 30 seconds in all) and then fails with the reason. A failed send is never retried.
+
 ## Safety model
 
 Jig enforces safety at the tool level, in code. The prompt describes the rules but cannot loosen them. Every tool call passes through one gate, in this order:
 
 1. **Schema.** The tool must exist and the arguments must match its JSON schema.
 2. **Mode.** Every tool is tagged `read`, `private_write` or `side_effect`. In **research mode** (proactive background work, as in Dots), only `read` and `private_write` tools are offered to the model, and the gate refuses anything else even if the model tries it. So research mode can read permitted sources and write private notes or memories, but it cannot change files, send anything or take actions. **Action mode** has every tool, subject to the steps below.
-3. **Core rules.** These are hard-coded and cannot be overridden (`GET /rules/core`). No credential or password changes. A secret may be used only by the tools on its allow-list. Sending a secret outbound always needs a human. Outbound tools may never reach localhost, the model server, Jig's own API or the local network, which also stops the agent from approving its own requests. Human-only tools (purchases, sending messages) always need approval. Core rules can only make a decision stricter.
+3. **Core rules.** These are hard-coded and cannot be overridden (`GET /rules/core`). No credential or password changes. A secret may be used only by the tools on its allow-list, and model API keys and connected accounts' tokens by none. Sending a secret outbound always needs a human. Outbound tools may never reach localhost, the model server, Jig's own API or the local network, which also stops the agent from approving its own requests. Human-only tools (purchases, sending messages) always need approval. Core rules can only make a decision stricter.
 4. **Custom rules.** Editable `allow`, `ask` or `block` rules per tool, with glob matching on tool names and, optionally, on an argument such as `url` matching `https://shop.*`. They are stored in SQLite and managed through `/rules`.
 5. **The Sentinel.** Every outbound or side-effecting action is reviewed by an isolated model call with its own system prompt and no tools. It sees only the trusted intent, the proposed action and the policy findings, never the agent's conversation, so injected web content cannot address it. It returns a structured verdict of `allow`, `ask_user` or `deny`, with a risk level and a reason. A `deny` cannot be overridden. If the Sentinel fails or returns an invalid verdict, the action does not run and the error is reported.
 6. **Approvals.** If a core rule, custom rule or the Sentinel asks for a human, an approval is queued (`/approvals`), the task's status becomes `waiting_approval`, and the run pauses. It resumes as soon as you approve or deny. Runs are checkpointed after every step, so a paused or interrupted task picks up where it left off after a restart.
@@ -462,7 +489,7 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 
 `idle`, `monitoring` (active research schedules, nothing running), `thinking`, `working` with a variant (`browsing`, `writing`, `coding`, `shopping`, `scheduling`), `talking`, `approval`, `paused` (the agent or a task is paused), `success` and `error`. The last two are shown for 3 seconds.
 
-Each tool category maps to a variant: web to `browsing`, files to `writing`, time to `scheduling`, and so on. Proactive read-only research is reported as `working` / `browsing` with `background: true`, which the avatar draws dimmed, half-lidded and slower (`setState('working', {task: 'browsing', background: true})`). When several things happen at once, the precedence is approval, then success/error, then foreground talking, working, thinking, then paused, then background working, then monitoring, then idle.
+Each tool category maps to a variant: web to `browsing`, files and email to `writing`, time to `scheduling`, and so on. Proactive read-only research is reported as `working` / `browsing` with `background: true`, which the avatar draws dimmed, half-lidded and slower (`setState('working', {task: 'browsing', background: true})`). When several things happen at once, the precedence is approval, then success/error, then foreground talking, working, thinking, then paused, then background working, then monitoring, then idle.
 
 ### Pause and resume
 
@@ -484,7 +511,8 @@ Each tool category maps to a variant: web to `browsing`, files to `writing`, tim
 | Rules | `GET/POST /rules`, `GET/PATCH/DELETE /rules/{id}`, `GET /rules/core` |
 | Memory | `GET/POST /memory`, `GET/PATCH/DELETE /memory/{id}`, `GET /notes` |
 | Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&before_id=&newest_first=&limit=` |
-| Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` |
+| Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` (not for `connector.*` secrets) |
+| Connections | `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only), `POST /connections/{provider}/disconnect` `{confirm: true}` |
 | Autostart | `GET /autostart`, `POST /autostart/enable` `{confirm: true, start_now}`, `POST /autostart/disable` |
 | Power | `GET /power`, `POST /power/stop` `{scope: "jig" \| "jig_and_model", confirm: true}` (202, then a graceful shutdown) |
 | Model server | `GET /model`, `POST /model/stop` `{confirm: true}`, `POST /model/start` (only a server Jig launched) |
@@ -507,7 +535,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - **A VM sandbox** (for example Firecracker or Hyper-V) as a stronger alternative to the container backend, and per-task egress leases.
 - **A mobile app** that connects to Jig running on your own computer, over the same paired-device, Tailscale-only connection the web UI uses, so you can take Jig with you while the model stays at home.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
-- **Messaging channels** such as email, Signal and Matrix, as human-only actions.
+- **More connectors**: Google Calendar and Outlook calendar, Google Drive and OneDrive, GitHub, Slack, Discord, Signal and Matrix, on the same framework as Gmail, with every send or change as an approved action.
 - **Smaller-GPU support**: measured setups for 8 GB cards, with one model as both agent and safety checker (a different safety checker model stays optional via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
