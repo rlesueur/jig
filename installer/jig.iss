@@ -138,6 +138,15 @@ begin
             (Version <> '') and (Version <> '0.0.0.0');
 end;
 
+function AutostartIsThisInstalls(): Boolean;
+var
+  Output: String;
+begin
+  { An update remembers the ticked Start with Windows box, and this copy's entry is already there: keep it. }
+  Result := (RunJig('-m jig.cli --config "' + ConfigPath() + '" autostart status --json', Output) = 0) and
+            (Pos('"registered": true', Output) > 0) and (Pos('"owned": true', Output) > 0);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Output: String;
@@ -162,7 +171,7 @@ begin
       SuppressibleMsgBox('Jig opens in its own window, which uses Microsoft Edge WebView2. It isn''t on this computer yet. ' +
                          'When Jig opens, it will offer to get it for you (it''s free from Microsoft), or to use your browser instead.',
                          mbInformation, MB_OK, IDOK);
-    if WizardIsTaskSelected('autostart') then
+    if WizardIsTaskSelected('autostart') and not AutostartIsThisInstalls() then
     begin
       WizardForm.StatusLabel.Caption := 'Setting up Start with Windows...';
       if RunJig('-m jig.cli --config "' + ConfigPath() + '" autostart enable --yes', Output) <> 0 then
