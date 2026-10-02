@@ -8,6 +8,104 @@ with tests; each entry says which.
 `demos/run.ps1` always tests a clean `git archive` of a commit, not the working tree. Commit and model are
 given per run. The model was always the one served on `127.0.0.1:8080`: `bonsai-2-27b` (4 slots, 64k context).
 
+## Connector capability tests, 2 October 2026
+
+Real jobs with the user's own connected accounts, run through Jig's API (or typed into its web UI for the video
+takes) by `demos/connectors/captest.py`. Approval cards are answered as the user would: yes only for actions inside
+the test limits (mail only to the user's own address with a `[Jig test]` subject, `[Jig test]` calendars, `Jig test`
+files, the one test repository, never a payment). Every outcome is checked directly with the provider's API, never
+by trusting Jig's reply, and what a run creates is removed afterwards. Results: `demos/.work/connectors/results.jsonl`.
+
+Accounts: Gmail, Google Calendar, Google Drive, Microsoft (Outlook calendar and OneDrive), GitHub (the
+`jig-by-rlesueur` app on `rlesueur/jig-connector-test` only). Slack, Discord, Matrix and Signal were not connected,
+so they were not tested. Model: the one on `127.0.0.1:8080`. Test Jig on 8792 (the connected accounts); the
+checkout scenario on 8770, with its own data folder, against the public practice shop saucedemo.com.
+
+### Pass rates
+
+On the final code (Jig code of `7cbf3d7` to `2473312`; the later commits in between change only the tray, the
+installer and tests), three runs per scenario:
+
+| Scenario | What Jig is asked to do | Passed |
+| --- | --- | --- |
+| triage | Find which of three unread emails needs a reply, draft it, send it when told | 3/3 (14 checks each) |
+| summarise | Summarise three unread emails | 3/3 |
+| meeting | Put the meeting an email asks for in both the Google and the Outlook `[Jig test]` calendars | 3/3 |
+| freeslot | Find an hour free in both calendars on a day with busy events in each | 3/3 |
+| report | Read the VAT rate and threshold on GOV.UK, save a note to Google Drive and OneDrive | 3/3 |
+| github | Open an issue in the test repository | 3/3 |
+| schedule | Create a daily 8am email check in research mode; the scheduler then runs it on a real email | 3/3 |
+| checkout | Buy a backpack on the practice shop: the payment checkpoint must stop it at Finish, and the user says no | 3/3, plus 1/1 filmed through the UI |
+
+Before the fixes below, on `70b42ef`: meeting 2/3, triage 1/3, freeslot 2/3, summarise 3/3, report 1/3, github 3/3,
+schedule 2/3, checkout 0/3 (9/10 each: item names missing on the card). Each failure is explained below.
+
+### Jig bugs found and fixed (each with tests)
+
+- **C1. Outlook events went to the default calendar** (meeting). The model copied a long Graph calendar id wrongly.
+  Fixed in `715d95c`: the Outlook tools take a calendar by name, and an unknown id lists the calendars that exist.
+- **C2. Two replies instead of one** (triage). Asked to send a draft, Jig composed a new message instead (refused by
+  the subject limit) and then a reply. Fixed in `c028ed9`: `gmail_send_draft` sends the saved draft exactly as it is.
+- **C3. Login loop and guessed sign-in details** (checkout). Each guessed selector produced an approval card that
+  then failed (approvals are never reused, by design), and guessed vault names failed after the yes. Fixed in
+  `70b42ef` (the page snapshot gives each field a selector that matches only it) and `08636bc` (a sign-in whose
+  fields don't exist fails before asking, the card names the site it signs in to, and a wrong secret name is
+  answered with the names that tool may use).
+- **C4. The checkout card dropped item names** when a long description sat between the name and the price. Fixed in
+  `a5d727a`.
+- **C5. A busy time offered as free** (freeslot). The Outlook tools gave the model bare UTC times, which it read as
+  local. Fixed in `47e30f4`: event times come in the user's timezone with their UTC offset, all-day events as dates.
+- **C6. Mail dates in the sender's zone** (schedule). A scheduled summary called an email that arrived at 18:31 in
+  London "5:31pm": the Gmail tools passed the sender's `Date` header (GMT) through as written. Fixed in `7cbf3d7`:
+  dates are Gmail's received time (which the sender can't set) in the user's timezone with its offset. The harness
+  now also checks any time a scheduled summary gives against when the email arrived.
+- **C7. Google's per-minute quota was not treated as a slow-down.** Google sends it as HTTP 403
+  (`rateLimitExceeded`, "Queries per minute"), which Jig reported as a refusal at once. Fixed in `42f5ea2`: that 403
+  is retried like a 429, honouring `Retry-After` (or 4, 8, 16 s), within the existing limits of 3 retries and 30 s
+  in all, then reported as rate limiting. A daily limit or a real refusal is still reported at once.
+- **C8. A chat turn that failed was lost.** When a turn ended in an error (for example at the step limit) the
+  conversation was not saved, so it could not be read or continued. Fixed in `f9e0ae8`: the turn is kept, without
+  tool calls that never got a result, and "please carry on" continues it.
+
+The payment checkpoint itself held in every checkout run: it stopped Jig at Finish with the merchant, the total
+($32.39) and the item on the card, the user's no was final, and the order was never placed.
+
+### Harness faults found (not Jig bugs), all fixed in `demos/connectors/`
+
+- **Gmail quota.** The checks fetched whole messages one by one and exhausted Gmail's per-minute quota, failing two
+  triage runs. They now fetch only the headers they need, list drafts with a query, and wait out the quota.
+- **Gmail's search index lags inserted mail.** One schedule run's task found no unread test email because Gmail's
+  search did not yet return a message inserted three minutes earlier (the same query found it later). The harness
+  now waits until Gmail's own search finds every seeded email before asking Jig anything.
+- **"Nothing sent before being asked"** flagged the seeded emails, which come from the account's own address and so
+  carry Gmail's SENT label. The check now excludes them.
+- **Report "read GOV.UK" check.** Logs are content-free since `d9e4d62` (tool arguments appear only as sizes), so the
+  check now reads the run's real tool calls from the conversation, which C8 keeps even for a failed turn.
+- **Loose clean-up match.** Clean-up matched Drive files whose name merely contained the run's four-character tag,
+  and tried to delete one of the user's own files. Google refused (Jig's Drive access covers only files it created),
+  so nothing was harmed. Clean-ups and checks now touch only names with the `[Jig test]` prefix and the tag in
+  brackets.
+- **Freeslot checker.** It read times in sentences that said a slot was busy as offers. It now ignores those
+  sentences, the 9am to 5pm window itself and the seeded events.
+
+### Observations
+
+- One report run stopped at the step limit of 12 model calls after reading many GOV.UK pages (capability, not a bug;
+  0 of the 3 final runs hit it).
+- Drive, OneDrive and GitHub tools still give timestamps in UTC (with a `Z`), which is explicit but which a model
+  could misread as local time. Lower risk than C5 and C6, since these are modification times; not changed.
+- The web UI prints approval times with the date ("Answered 02/10/2026, 18:56:47") on every card, so dates appear
+  on screen in the videos.
+
+### Video takes
+
+Each take is a full capability run (seeding, approvals by the test limits, independent checks, clean-up) typed and
+clicked through the real web UI by `demos/scenarios/connector-take.mjs`; a take can only be rendered if every check
+passed. The Jigs on 8792 and 8770 run the demo venv's clean snapshot of HEAD, verified file for file, so uncommitted
+work by others never reaches the camera. Promo cuts in 16:9 and 4:5, an instructional cut at a calmer pace in 16:9.
+Unpolished: all videos will be re-recorded on the new UI. Copied to the assets folder and
+`promo/making-of/10-demos/`, with `takes.json` saying which capture, commit and capability result each came from.
+
 ## Launch demos, 2 October 2026
 
 Final takes: commit `3adbfa7`, model `bonsai-2-27b` (max_tokens 8192, temperature 1.0, top_p 0.95, as in the

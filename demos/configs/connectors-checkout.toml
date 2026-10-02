@@ -1,0 +1,47 @@
+# Jig config for the connectors payment-checkpoint test: demo-sandbox.toml with room for a whole checkout
+# (open, sign in, add to basket, fill in the delivery form, review), so a container browser is available.
+
+[model]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+api_key_env = ""
+connect_timeout_s = 5.0
+read_timeout_s = 600.0
+max_tokens = 8192
+
+[model.sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.05
+
+[sentinel]
+
+[vision]
+enabled = true
+
+[sandbox]
+backend = "container"
+image = "jig-sandbox:0.1.0"
+
+[paths]
+data_dir = "../.work/unused-data"
+sandbox_dir = "../.work/unused-sandbox"
+
+[runtime]
+agent_id = "demo"
+timezone = "Europe/London"
+max_steps = 30
+max_concurrent_tasks = 2
+heartbeat_s = 2.0
+min_context_tokens = 32768
+
+[tools.web_fetch]
+timeout_s = 20.0
+max_bytes = 2_000_000
+max_chars = 12_000
+max_redirects = 5
+
+[server]
+host = "127.0.0.1"
+port = 8770
