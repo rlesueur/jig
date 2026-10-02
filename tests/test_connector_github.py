@@ -7,6 +7,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -214,6 +219,35 @@ async def test_the_built_in_app_gets_a_real_device_code(store):  # noqa: F811
     assert shown, "GitHub gave no code"
     assert shown[0]["verification_uri"] == "https://github.com/login/device"
     assert re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", shown[0]["user_code"])
+
+
+@pytest.mark.skipif(not gh.apps.GITHUB_APP_CLIENT_ID, reason="Jig's GitHub App isn't registered yet: set "
+                    "GITHUB_APP_CLIENT_ID and GITHUB_APP_SLUG in jig/connectors/apps.py (docs/connectors-setup.md)")
+def test_the_device_code_appears_at_once_when_output_is_piped(tmp_path):
+    """Captured output (another program, a log) must show the code while 'jig connect' is still waiting."""
+    config = tmp_path / "jig.toml"
+    # 'jig connect' never talks to the model; the config just has to be complete.
+    config.write_text('[model]\nbase_url = "http://127.0.0.1:8080/v1"\n\n[paths]\ndata_dir = "data"\n'
+                      'sandbox_dir = "sandbox"\n', encoding="utf-8")
+    proc = subprocess.Popen([sys.executable, "-m", "jig.cli", "--config", str(config), "connect", "github",
+                             "--no-browser"], cwd=Path(__file__).resolve().parents[1], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.extend(iter(proc.stdout.readline, b"")) or None, daemon=True)
+    try:
+        reader.start()
+        deadline = time.monotonic() + 30
+        code = None
+        while code is None and time.monotonic() < deadline and proc.poll() is None:
+            text = b"".join(lines).decode("utf-8", "replace")
+            code = re.search(r"^\s+([A-Z0-9]{4}-[A-Z0-9]{4})\s*$", text, re.M)
+            time.sleep(0.2)
+        assert code, f"no device code while 'jig connect github' was waiting; it printed: {b''.join(lines)!r}"
+        assert proc.poll() is None, "the code only appeared once the command had exited"
+        assert "https://github.com/login/device" in b"".join(lines).decode("utf-8", "replace")
+    finally:
+        proc.kill()
+        proc.wait(10)
 
 
 @pytest.mark.parametrize("header, expected", [

@@ -101,7 +101,7 @@ async def test_onedrive_end_to_end_on_a_test_file_only(capabilities):
             assert listed.ok and item_id in [i["item_id"] for i in listed.result["items"]]
             again = await call(live, "onedrive_upload_file", {"folder": FOLDER, "name": name, "content": "x"},
                                intent=intent)
-            assert again.error_type == "ToolError" and "already has" in again.error
+            assert again.error_type == "ConnectorError" and "already has" in again.error, again.error
             replaced = await call(live, "onedrive_upload_file", {"folder": FOLDER, "name": name,
                                                                  "content": f"second {tag}", "replace": True},
                                   intent=intent)

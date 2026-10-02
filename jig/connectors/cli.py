@@ -249,6 +249,11 @@ async def _disconnect(args: argparse.Namespace, store: ConnectionStore) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
+    # Piped or captured output is block-buffered, which would hold back a sign-in link or GitHub's device
+    # code until the command exits; each line must appear as soon as it is printed.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure") and not stream.isatty():
+            stream.reconfigure(line_buffering=True)
     config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
     db, store = _open(config)
     try:

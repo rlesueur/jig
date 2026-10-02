@@ -615,8 +615,8 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
     )
     async def onedrive_read_file(ctx: ToolContext, item_id: str, max_chars: int = 20000) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_READ_FILES, "read files")
-        meta = await _get(ctx, f"/me/drive/items/{_seg(_graph_id(item_id, 'item_id'))}",
-                          **{"$select": ITEM_FIELDS + ",@microsoft.graph.downloadUrl"})
+        item = f"/me/drive/items/{_seg(_graph_id(item_id, 'item_id'))}"
+        meta = await _get(ctx, item, **{"$select": ITEM_FIELDS})
         out = {"source": "onedrive", "untrusted": UNTRUSTED_FILES, **_item(meta)}
         mime = (meta.get("file") or {}).get("mimeType") or ""
         if meta.get("folder"):
@@ -625,17 +625,21 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
             return {**out, "text": None, "note": f"Jig can't read {mime or 'these'} files as text; open the link instead"}
         if (meta.get("size") or 0) > MAX_READ_BYTES:
             return {**out, "text": None, "note": f"too large to read ({meta['size']} bytes)"}
-        url = meta.get("@microsoft.graph.downloadUrl") or ""
-        host = httpx.URL(url).host if url else ""
-        if not url.startswith("https://") or not any(host == h or host.endswith("." + h) for h in DOWNLOAD_HOSTS):
-            raise ConnectorError(f"OneDrive gave a download link to an unexpected place ({host or 'none'}); not "
-                                 "reading it")
-        try:
-            r = await ctx.connectors.http.get(url, timeout=60, follow_redirects=False)
-        except httpx.HTTPError as exc:
-            raise ConnectorError(f"OneDrive: could not download the file: {type(exc).__name__}") from None
+        # Graph answers /content with a redirect to a short-lived, pre-authenticated download link (personal
+        # OneDrive leaves @microsoft.graph.downloadUrl out of a $select). The token is never sent there.
+        r = await ctx.connectors.request(NAME, "GET", f"{API}{item}/content", timeout=60)
+        if r.status_code in (301, 302, 303, 307, 308):
+            url = r.headers.get("location") or ""
+            host = httpx.URL(url).host if url else ""
+            if not url.startswith("https://") or not any(host == h or host.endswith("." + h) for h in DOWNLOAD_HOSTS):
+                raise ConnectorError(f"OneDrive gave a download link to an unexpected place ({host or 'none'}); not "
+                                     "reading it")
+            try:
+                r = await ctx.connectors.http.get(url, timeout=60, follow_redirects=False)
+            except httpx.HTTPError as exc:
+                raise ConnectorError(f"OneDrive: could not download the file: {type(exc).__name__}") from None
         if r.status_code != 200:
-            raise ConnectorError(f"OneDrive's download link returned HTTP {r.status_code}", status=r.status_code)
+            raise ConnectorError(f"OneDrive's download returned HTTP {r.status_code}", status=r.status_code)
         text = r.content[:MAX_READ_BYTES].decode("utf-8-sig", errors="replace")
         limit = max(200, min(max_chars, 100_000))
         return {**out, "text": text[:limit], "truncated": len(text) > limit}
