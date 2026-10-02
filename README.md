@@ -551,7 +551,7 @@ Every connector is built and tested against the provider's real service without 
 
 | Connector (`jig connect` name) | Sign-in | Tools |
 | --- | --- | --- |
-| Gmail (`gmail`) | Google OAuth, your own Google app | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
+| Gmail (`gmail`) | Google OAuth, your own Google app | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_send_draft`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
 | Google Calendar (`google-calendar`) | Google OAuth | `gcal_list_calendars`, `gcal_list_events`, `gcal_get_event` (read); `gcal_create_event`, `gcal_update_event`, `gcal_cancel_event` (human-only) |
 | Google Drive (`google-drive`) | Google OAuth | `gdrive_search`, `gdrive_read_file` (read); `gdrive_create_file`, `gdrive_update_file` (actions; only files Jig created) |
 | Outlook calendar and OneDrive (`microsoft`) | Microsoft OAuth with Jig's app (personal, work or school), one sign-in | `outlook_list_calendars`, `outlook_list_events`, `outlook_get_event`, `onedrive_search`, `onedrive_list_folder`, `onedrive_read_file` (read); `outlook_create_event`, `outlook_update_event`, `outlook_cancel_event` (human-only), `onedrive_upload_file` (action) |

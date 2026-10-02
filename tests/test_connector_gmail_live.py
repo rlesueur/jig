@@ -123,3 +123,40 @@ async def test_gmail_end_to_end_on_test_messages_only(live):
     denied = await _call(live, "gmail_send", {"to": [ADDRESS], "subject": f"{subject} denied", "body": "x"},
                          intent=intent, approve=False)
     assert denied.error_type == "ApprovalDenied"
+
+
+async def test_a_draft_reply_is_sent_as_it_is_in_its_thread_and_within_the_limits(live):
+    tag = uuid.uuid4().hex[:10]
+    subject = f"{PREFIX} draft {tag}"
+    intent = f"Test sending Gmail drafts on test messages to {ADDRESS} with subjects starting '{PREFIX}'"
+    sent = await _call(live, "gmail_send", {"to": [ADDRESS], "subject": subject, "body": f"Question {tag}"},
+                       intent=intent)
+    assert sent.ok, sent.error
+    thread_id = sent.result["thread_id"]
+    draft = await _call(live, "gmail_create_draft", {"to": [ADDRESS], "subject": f"Re: {subject}",
+                                                     "body": f"Answer {tag}", "thread_id": thread_id}, intent=intent)
+    assert draft.ok, draft.error
+    draft_id = draft.result["draft_id"]
+
+    out = await _call(live, "gmail_send_draft", {"draft_id": draft_id}, intent=intent)
+    assert out.ok, out.error
+    assert out.policy["approval"]["status"] == "approved"
+    assert out.policy["resolved"]["draft_to"] == [ADDRESS] and out.policy["resolved"]["draft_subject"] == f"Re: {subject}"
+    assert f"Answer {tag}" in out.policy["resolved"]["draft_text"]
+    assert out.result["thread_id"] == thread_id and out.result["subject"] == f"Re: {subject}"
+    thread = await _call(live, "gmail_read_thread", {"thread_id": thread_id}, intent=intent)
+    assert [m["text"].strip() for m in thread.result["messages"]] == [f"Question {tag}", f"Answer {tag}"]
+    gone = await _call(live, "gmail_send_draft", {"draft_id": draft_id}, intent=intent)
+    assert not gone.ok, "a sent draft is no longer in Drafts"
+
+    # A draft the user wrote themselves, outside the limits, is refused before anyone is asked.
+    raw = gmail._raw(to=[ADDRESS], cc=[], subject=f"Not a test {tag}", body="x")
+    made = (await live.connectors.request("gmail", "POST", f"{gmail.API}/drafts",
+                                          json_body={"message": {"raw": raw}})).json()
+    try:
+        refused = await _call(live, "gmail_send_draft", {"draft_id": made["id"]}, intent=intent)
+        assert refused.error_type == "PolicyBlocked" and "required_prefix" in refused.error
+        assert not (refused.policy or {}).get("approval")
+    finally:
+        await live.connectors.request("gmail", "DELETE", f"{gmail.API}/drafts/{made['id']}")
+        await live.connectors.request("gmail", "POST", f"{gmail.API}/threads/{thread_id}/trash")

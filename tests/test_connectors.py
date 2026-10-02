@@ -33,7 +33,7 @@ from jig.tools.builtin import http_client
 from .conftest import audit_kinds, wait_for
 
 GMAIL_TOOLS = {"gmail_search", "gmail_read_thread", "gmail_list_labels", "gmail_create_draft", "gmail_send",
-               "gmail_reply", "gmail_modify_labels", "gmail_archive"}
+               "gmail_send_draft", "gmail_reply", "gmail_modify_labels", "gmail_archive"}
 FAKE_CLIENT = {"client_id": "000000000000-jigtestnotreal.apps.googleusercontent.com",
                "client_secret": "GOCSPX-jig-test-not-a-real-secret"}
 
@@ -238,10 +238,12 @@ def test_gmail_tools_are_declared_with_the_right_effects(jig):
     assert set(specs) == GMAIL_TOOLS
     for name in ("gmail_search", "gmail_read_thread", "gmail_list_labels"):
         assert specs[name].effect.value == "read" and not specs[name].outbound
-    for name in ("gmail_create_draft", "gmail_send", "gmail_reply", "gmail_modify_labels", "gmail_archive"):
+    for name in ("gmail_create_draft", "gmail_send", "gmail_send_draft", "gmail_reply", "gmail_modify_labels",
+                 "gmail_archive"):
         assert specs[name].effect.value == "side_effect" and specs[name].outbound
         assert specs[name].human_only or specs[name].default_decision.value == "ask", name
-    assert specs["gmail_send"].human_only and specs["gmail_reply"].human_only
+    assert specs["gmail_send"].human_only and specs["gmail_reply"].human_only and specs["gmail_send_draft"].human_only
+    assert specs["gmail_send_draft"].resolve and specs["gmail_send_draft"].precheck
     assert "delete" not in " ".join(specs), "there is no delete tool"
 
 

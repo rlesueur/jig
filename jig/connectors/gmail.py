@@ -17,6 +17,7 @@ import asyncio
 import base64
 import re
 from email.message import EmailMessage
+from email.utils import getaddresses
 from typing import Any
 
 import httpx
@@ -214,6 +215,25 @@ async def resolve_thread(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
             "note": "Looked up from the mailbox; the subject and sender were written by other people."}
 
 
+async def resolve_draft(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """The draft exactly as it would be sent, for the limits, the Sentinel and the approval card."""
+    draft = await _get(ctx, f"/drafts/{_check_id(args.get('draft_id', ''), 'draft_id')}", format="full")
+    message = draft.get("message", {})
+    h = _headers(message.get("payload", {}))
+    text, attachments = _body(message.get("payload", {}))
+    return {"draft_to": [a for _, a in getaddresses([h.get("to", "")]) if a],
+            "draft_cc": [a for _, a in getaddresses([h.get("cc", "")]) if a],
+            "draft_subject": h.get("subject", ""), "draft_text": text[:MAX_BODY_CHARS],
+            "draft_attachments": [a["filename"] for a in attachments], "thread_id": message.get("threadId"),
+            "note": "Looked up from the user's Gmail drafts."}
+
+
+def draft_limits(config: Any, args: dict[str, Any], resolved: dict[str, Any] | None) -> str | None:
+    r = resolved or {}
+    return limits_problem(config, {"to": r.get("draft_to"), "cc": r.get("draft_cc"),
+                                   "subject": r.get("draft_subject")}, None)
+
+
 def _raw(*, to: list[str], cc: list[str], subject: str, body: str, in_reply_to: str = "",
          references: str = "") -> str:
     msg = EmailMessage()
@@ -325,7 +345,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
 
     @tool(
         description="Save a draft in the user's Gmail (not sent). Give every recipient explicitly. With thread_id "
-        "it is a draft reply in that thread. Reviewed by the Sentinel and needs the user's approval by default.",
+        "it is a draft reply in that thread. To send it later, use gmail_send_draft with its draft_id. Reviewed by "
+        "the Sentinel and needs the user's approval by default.",
         effect=Effect.SIDE_EFFECT, outbound=True, category=ToolCategory.MESSAGES, default_decision=Decision.ASK,
         available=can_send, resolve=resolve_thread, precheck=limits_problem,
         args={"to": "Recipient email addresses.", "subject": "Subject line.", "body": "Plain-text message.",
@@ -365,6 +386,25 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
                                                               subject=subject, body=body)})
         return {"sent": True, "message_id": sent["id"], "thread_id": sent.get("threadId"),
                 "to": to, "cc": cc or [], "subject": subject}
+
+    @tool(
+        description="Send a draft from the user's Gmail exactly as it is saved (in its thread, if it is a draft "
+        "reply), which takes it out of Drafts. Use this to send a draft the user has seen, rather than writing the "
+        "email again. Always needs the user's approval.",
+        effect=Effect.SIDE_EFFECT, outbound=True, human_only=True, category=ToolCategory.MESSAGES,
+        available=can_send, resolve=resolve_draft, precheck=draft_limits,
+        args={"draft_id": "Draft id from gmail_create_draft."},
+    )
+    async def gmail_send_draft(ctx: ToolContext, draft_id: str) -> dict[str, Any]:
+        ctx.connectors.require_scope(NAME, COMPOSE, "send mail")
+        draft = await resolve_draft(ctx, {"draft_id": draft_id})
+        if problem := draft_limits(ctx.config, {}, draft):
+            raise ConnectorError(problem)
+        if not draft["draft_to"] and not draft["draft_cc"]:
+            raise ToolArgumentError("the draft has no recipients")
+        sent = await _post(ctx, "/drafts/send", {"id": draft_id})
+        return {"sent": True, "message_id": sent["id"], "thread_id": sent.get("threadId"), "to": draft["draft_to"],
+                "cc": draft["draft_cc"], "subject": draft["draft_subject"]}
 
     @tool(
         description="Reply in a Gmail thread, from the user's account. Give every recipient explicitly (usually "
