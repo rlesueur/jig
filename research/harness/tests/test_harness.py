@@ -134,7 +134,7 @@ def test_resume_schema_and_c1_tables(tmp_path):
     table = report.summarise("c1", rows)
     retr = next(r for r in table if r["strategy"] == "retrieval")
     assert retr["Accuracy"]["k"] == 2 and retr["Accuracy"]["n"] == 4
-    tex = report.latex("c1", "unit-pilot", table, pilot=True)
+    tex = report.latex("c1", "unit-pilot", table, tag="PILOT. ")
     assert "PILOT" in tex and r"\toprule" in tex and "2/4" in tex
 
 
