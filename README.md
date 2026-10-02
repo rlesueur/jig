@@ -78,7 +78,7 @@ python -m venv .venv
 .\.venv\Scripts\jig serve
 ```
 
-On Mac and Linux, use `.venv/bin/` instead of `.\.venv\Scripts\`. `jig serve` opens Jig in your browser, already signed in, on its set-up page. **Leave that terminal window open**: closing it stops Jig. To stop Jig, press Ctrl+C there, or run `jig stop` in another window. To open Jig again while it's running, run `jig ui`.
+On Mac and Linux, use `.venv/bin/` instead of `.\.venv\Scripts\`. `jig serve` opens Jig in your browser, already signed in. If its model passes Jig's checks, the agent starts straight away: in a fresh checkout `jig.toml` points at llama.cpp on `http://127.0.0.1:8080/v1`, so a running `llama-server` there is enough. Otherwise Jig opens on its set-up page, where you choose a model. **Leave that terminal window open**: closing it stops Jig. To stop Jig, press Ctrl+C there, or run `jig stop` in another window. To open Jig again while it's running, run `jig ui`.
 
 ### Once Jig is running
 
