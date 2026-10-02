@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jig — 3D avatar prototype</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg: #07061a; --fg: #e9e2ff; --chip: rgba(255,255,255,0.07); --chip-on: rgba(154,84,255,0.45); }
+  html[data-theme="light"] { --bg: #faf2e6; --fg: #3e1e56; --chip: rgba(62,30,86,0.07); --chip-on: rgba(120,60,200,0.25); }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.3 system-ui, "Segoe UI", sans-serif; transition: background 0.8s, color 0.8s; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  #stage { width: 1280px; height: 720px; max-width: 100vw; }
+  body.small #stage { width: 240px; height: 240px; }
+  jig-avatar-3d { width: 100%; height: 100%; display: block; }
+  #strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; max-width: 1280px; }
+  #strip button { background: var(--chip); color: inherit; border: 1px solid transparent; border-radius: 999px; padding: 5px 11px; font: inherit; cursor: pointer; }
+  #strip button[aria-pressed="true"] { background: var(--chip-on); border-color: currentColor; }
+  #fps { font-variant-numeric: tabular-nums; min-width: 15ch; opacity: 0.8; }
+  body.clean #strip { display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><jig-avatar-3d id="jig"></jig-avatar-3d></div>
+<div id="strip" role="toolbar" aria-label="Prototype controls">
+  <button data-state="idle">Idle</button>
+  <button data-state="listening">Listening</button>
+  <button data-state="thinking">Thinking</button>
+  <button data-state="working" data-task="browsing">Working: researching</button>
+  <button data-state="working" data-task="writing">Working: writing</button>
+  <button data-state="working" data-task="coding">Working: coding</button>
+  <button data-state="approval">Needs approval</button>
+  <button data-state="success">Success</button>
+  <button data-state="monitoring">Monitoring</button>
+  <button id="theme">Theme: dark</button>
+  <button id="reduced">Reduced motion: auto</button>
+  <span id="fps">— fps</span>
+</div>
+<script type="module">
+  import './jig3d.js';
+  const params = new URLSearchParams(location.search);
+  const jig = document.getElementById('jig');
+  const html = document.documentElement;
+  if (params.get('size') === 'small') document.body.classList.add('small');
+  if (params.get('controls') === '0') document.body.classList.add('clean');
+
+  const setTheme = (t) => {
+    jig.theme = t;
+    html.dataset.theme = t;
+    document.getElementById('theme').textContent = `Theme: ${t}`;
+  };
+  setTheme(params.get('theme') === 'light' ? 'light' : 'dark');
+  if (params.has('reduced')) jig.setAttribute('reduced-motion', params.get('reduced') === '1' ? 'true' : 'false');
+
+  const buttons = [...document.querySelectorAll('[data-state]')];
+  const mark = () => buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.state === jig.state && (b.dataset.task || null) === jig.task)));
+  const apply = (state, task) => {
+    jig.setState(state, task ? { task } : {});
+    mark();
+  };
+  buttons.forEach((b) => b.addEventListener('click', () => apply(b.dataset.state, b.dataset.task)));
+  apply(params.get('state') || 'idle', params.get('task'));
+
+  document.getElementById('theme').addEventListener('click', () => setTheme(jig.theme === 'dark' ? 'light' : 'dark'));
+  const reducedBtn = document.getElementById('reduced');
+  reducedBtn.addEventListener('click', () => {
+    const next = { null: 'true', true: 'false', false: null }[jig.getAttribute('reduced-motion')];
+    if (next === null) jig.removeAttribute('reduced-motion');
+    else jig.setAttribute('reduced-motion', next);
+    reducedBtn.textContent = `Reduced motion: ${next === null ? 'auto' : next === 'true' ? 'on' : 'off'}`;
+  });
+
+  const fps = document.getElementById('fps');
+  setInterval(() => { fps.textContent = `${jig.stats.fps.toFixed(0)} fps · ${jig.stats.frameMs.toFixed(2)} ms cpu`; }, 500);
+  window.jig = jig;
+</script>
+</body>
+</html>
