@@ -1,11 +1,14 @@
 <#
 .SYNOPSIS
-    Publishes Jig as a public GitHub repository under the personal account rlesueur, with GitHub Pages.
+    Publishes Jig as a public GitHub repository under the personal account rlesueur, with GitHub Pages
+    and a first release carrying the Windows installer.
 
 .DESCRIPTION
     Run this once, from the repository root, when all work is committed. It:
       a. checks that the GitHub CLI is signed in as rlesueur (never an organisation);
-      b. checks that the working tree is clean, the branch is main and nothing has been published yet;
+      b. checks that the working tree is clean, the branch is main and nothing has been published yet, that
+         Inno Setup is available, that pyproject.toml, jig/__init__.py and compose.yaml agree on the version,
+         and that its tag (v<version>) does not exist yet;
       c. sets the author and committer of every commit whose author or committer is 'Jig <jig@localhost>'
          or has the name 'rlesueur' to 'Robyn Le Sueur <2302916+rlesueur@users.noreply.github.com>' with
          git filter-repo, replaces local absolute paths (C:\Users\<name>\...) in the history with portable
@@ -14,15 +17,27 @@
          a bundle of the original history is saved first;
       d. verifies that no removed attack path and no distinctive marker from those files survives anywhere
          in the rewritten history, then scans it (gitleaks plus explicit checks) and stops on any finding;
-      e. creates github.com/rlesueur/<repo> as a public repository and pushes main;
-      f. sets the topics;
-      g. enables GitHub Pages with GitHub Actions as the source, and private vulnerability reporting;
-      h. waits for the Pages workflow and prints the live URL;
-      i. verifies that the repository's owner is the user account rlesueur.
+      e. builds the Windows installer, JigSetup-<version>.exe, with installer\build.ps1 from a clean export
+         (git archive) of the rewritten HEAD, so it holds exactly what is published, and writes its SHA-256
+         to JigSetup-<version>.exe.sha256; this happens before anything is pushed;
+      f. creates github.com/rlesueur/<repo> as a public repository and pushes main;
+      g. sets the topics;
+      h. enables GitHub Pages with GitHub Actions as the source, and private vulnerability reporting;
+      i. tags HEAD as v<version> (annotated), pushes the tag (which starts the container workflow), creates
+         the GitHub release with the installer and its .sha256 file, and checks the uploaded installer by
+         downloading it again and comparing its SHA-256;
+      j. waits for the Pages workflow and prints the live URL;
+      k. verifies that the repository's owner is the user account rlesueur.
 
-    With -DryRun it only runs the non-destructive checks: (a), (b), and (c) plus the attack-content
-    verification and (d) on a throwaway clone in the temporary folder. The real repository, its history
-    and GitHub are not touched.
+    With -DryRun it only runs the non-destructive steps: (a), (b), and (c), the attack-content
+    verification, (d) and (e) on a throwaway clone in the temporary folder, then prints the tag and release
+    it would publish. The installer and .sha256 file it built are left in the temporary folder for testing.
+    The real repository, its history and GitHub are not touched (the build reuses the git-ignored
+    build\installer-cache, which only holds python.org's embeddable Python, checked by its SHA-256).
+
+.PARAMETER InnoSetup
+    The Inno Setup 6 folder (the one with ISCC.exe). Without it the script looks on PATH, in the usual
+    install folders and in %USERPROFILE%\tools\innosetup-*.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\publish.ps1 -DryRun
@@ -32,6 +47,7 @@
 [CmdletBinding()]
 param(
     [string]$Repo = 'jig',
+    [string]$InnoSetup,
     [switch]$DryRun
 )
 
@@ -273,8 +289,123 @@ function Invoke-Scan([string]$RepoPath) {
     return $problems
 }
 
+# --- Installer and release ------------------------------------------------------------------
+function Find-InnoSetup([string]$Given) {
+    if ($Given) {
+        if (-not (Test-Path (Join-Path $Given 'ISCC.exe'))) { Fail "-InnoSetup '$Given' has no ISCC.exe." }
+        return (Resolve-Path $Given).Path
+    }
+    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+    if ($iscc) { return (Split-Path $iscc.Source) }
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6')
+        (Join-Path $env:ProgramFiles 'Inno Setup 6')
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6')
+    ) + @(Get-ChildItem (Join-Path $env:USERPROFILE 'tools') -Directory -Filter 'innosetup-*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | ForEach-Object { $_.FullName })
+    foreach ($dir in $candidates) {
+        if ($dir -and (Test-Path (Join-Path $dir 'ISCC.exe'))) { return $dir }
+    }
+    Fail 'Inno Setup 6 (ISCC.exe) was not found on PATH or in the usual folders. Install it (winget install JRSoftware.InnoSetup) or pass -InnoSetup <folder>.'
+}
+
+# The version in pyproject.toml, after checking that jig/__init__.py and compose.yaml's image tags agree
+# (the container workflow refuses a tag otherwise).
+function Get-Version([string]$Python, [string]$RepoPath) {
+    $pyproject = Join-Path $RepoPath 'pyproject.toml'
+    $version = (Run $Python -c "import tomllib, sys; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" $pyproject).Trim()
+    if ($version -notmatch '^\d+\.\d+\.\d+$') { Fail "pyproject.toml's version '$version' is not of the form X.Y.Z." }
+    $init = Get-Content -Raw (Join-Path $RepoPath 'jig\__init__.py')
+    if ($init -notmatch "(?m)^__version__ = `"$([regex]::Escape($version))`"\s*$") { Fail "jig/__init__.py's __version__ is not $version." }
+    $compose = Get-Content -Raw (Join-Path $RepoPath 'compose.yaml')
+    foreach ($image in 'jig', 'jig-sandbox') {
+        if (-not $compose.Contains("ghcr.io/$($script:Owner)/$($image):$version}")) { Fail "compose.yaml's default $image image tag is not $version." }
+    }
+    return $version
+}
+
+# Builds JigSetup-<version>.exe from a git archive of $RepoPath's HEAD (no untracked or ignored files), in a
+# separate PowerShell process so this script's strict mode does not apply to installer\build.ps1.
+function Build-Installer([string]$RepoPath, [string]$Version, [string]$Python, [string]$Inno) {
+    Step "(e) Building the Windows installer from a clean export of $RepoPath"
+    $work = Join-Path ([IO.Path]::GetTempPath()) "jig-installer-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $src = Join-Path $work 'src'
+    $out = Join-Path $work 'release'
+    New-Item -ItemType Directory -Path $src, $out | Out-Null
+    $commit = (Run git -C $RepoPath rev-parse HEAD).Trim()
+    Run git -C $RepoPath archive --format=zip --output (Join-Path $work 'src.zip') $commit | Out-Null
+    Expand-Archive (Join-Path $work 'src.zip') -DestinationPath $src
+    Ok "exported $commit to $src"
+
+    $shell = (Get-Process -Id $PID).Path
+    & $shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $src 'installer\build.ps1') `
+        -InnoSetup $Inno -Python $Python -Cache (Join-Path $script:RepoRoot 'build\installer-cache') | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail "installer\build.ps1 exited with code $LASTEXITCODE." }
+
+    $name = "JigSetup-$Version.exe"
+    $built = Join-Path $src "dist\$name"
+    if (-not (Test-Path $built)) { Fail "installer\build.ps1 finished but $built does not exist." }
+    $exe = Join-Path $out $name
+    Move-Item $built $exe
+    Remove-Item -Recurse -Force $src, (Join-Path $work 'src.zip')
+    $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sumFile = "$exe.sha256"
+    [IO.File]::WriteAllText($sumFile, "$hash  $name`n", (New-Object Text.UTF8Encoding $false))
+    $size = (Get-Item $exe).Length
+    Ok "built $name ($([math]::Round($size / 1MB, 1)) MB), SHA-256 $hash"
+    return [pscustomobject]@{ Exe = $exe; SumFile = $sumFile; Name = $name; Hash = $hash; Size = $size; Commit = $commit; Dir = $out }
+}
+
+function Get-ReleaseNotes([string]$Version, $Installer) {
+    $name = $Installer.Name
+    return @"
+Jig $Version for Windows (64-bit).
+
+Download **$name** and run it. It needs no administrator rights, and no Python, Git or terminal. At the end, Jig opens in your browser on its set-up page, where you choose a model.
+
+The installer isn't code-signed yet, so Windows will probably warn you. If your browser says the file isn't commonly downloaded, choose **Keep**. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. Only do this for the file from this page.
+
+SHA-256 of $($name):
+
+``````
+$($Installer.Hash)
+``````
+
+The same value is in $name.sha256. To check your download in PowerShell: ``Get-FileHash .\$name -Algorithm SHA256``
+
+There is no installer for macOS or Linux yet: install from the repository, as the README's quick start describes.
+"@
+}
+
+function Publish-Release([string]$Version, $Installer) {
+    $tag = "v$Version"
+    Step "(i) Tagging $tag and creating the release with the installer"
+    $head = (Run git rev-parse HEAD).Trim()
+    if ($head -ne $Installer.Commit) { Fail "HEAD is $head, but the installer was built from $($Installer.Commit)." }
+    Run git -c "user.name=$NewName" -c "user.email=$NewEmail" tag -a $tag -m "Jig $Version" $head | Out-Null
+    Run git push --quiet origin "refs/tags/$tag" | Out-Null
+    Ok "pushed tag $tag ($head); the container workflow builds the images from it"
+
+    $notes = Join-Path $Installer.Dir 'release-notes.md'
+    [IO.File]::WriteAllText($notes, (Get-ReleaseNotes $Version $Installer), (New-Object Text.UTF8Encoding $false))
+    Run $script:Gh release create $tag $Installer.Exe $Installer.SumFile --repo "$Owner/$Repo" --title "Jig $Version" `
+        --notes-file $notes --verify-tag --latest | Out-Null
+
+    $check = Join-Path $Installer.Dir 'downloaded'
+    New-Item -ItemType Directory -Path $check | Out-Null
+    Run $script:Gh release download $tag --repo "$Owner/$Repo" --pattern $Installer.Name --dir $check | Out-Null
+    $got = (Get-FileHash (Join-Path $check $Installer.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $Installer.Hash) { Fail "the installer downloaded from the release has SHA-256 $got, not $($Installer.Hash)." }
+    $assets = @(Run $script:Gh release view $tag --repo "$Owner/$Repo" --json assets --jq '.assets[].name')
+    foreach ($want in $Installer.Name, "$($Installer.Name).sha256") {
+        if ($assets -notcontains $want) { Fail "the release has no asset named $want (it has: $($assets -join ', '))." }
+    }
+    Ok "https://github.com/$Owner/$Repo/releases/tag/$tag has $($assets -join ' and '); the download matches"
+}
+
 # --- Main -----------------------------------------------------------------------------------
 $repoRoot = (Run git rev-parse --show-toplevel).Trim()
+$script:RepoRoot = $repoRoot
 Set-Location $repoRoot
 Write-Host "Repository: $repoRoot"
 Write-Host "Target:     github.com/$Owner/$Repo (public), Pages at $PagesUrl"
@@ -285,9 +416,15 @@ $script:Gitleaks = Find-Tool 'gitleaks' 'Gitleaks.Gitleaks' 'Install it with: wi
 
 Assert-Account
 Assert-Clean
+$inno = Find-InnoSetup $InnoSetup
+Ok "Inno Setup: $inno"
+$python = Get-FilterRepo
+$version = Get-Version $python $repoRoot
+$tag = "v$version"
+if (Run git tag --list $tag) { Fail "the tag $tag already exists in this repository." }
+Ok "version $version agrees in pyproject.toml, jig/__init__.py and compose.yaml; tag $tag is free"
 
 Step '(c) Rewriting commit authors and local paths'
-$python = Get-FilterRepo
 if ($DryRun) {
     $clone = Join-Path ([IO.Path]::GetTempPath()) "jig-publish-dryrun-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     Run git clone --quiet --no-local $repoRoot $clone | Out-Null
@@ -295,9 +432,23 @@ if ($DryRun) {
     Invoke-Rewrite $python $clone
     Assert-NoAttackContent $clone
     $problems = @(Invoke-Scan $clone)
+    if ($problems) {
+        Remove-Item -Recurse -Force $clone
+        $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }; Fail 'the rehearsal scan found problems (listed above).'
+    }
+    $installer = Build-Installer $clone $version $python $inno
     Remove-Item -Recurse -Force $clone
-    if ($problems) { $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }; Fail 'the rehearsal scan found problems (listed above).' }
-    Write-Host "`nDry run passed. Steps (e) to (i) were not run. Run without -DryRun to publish." -ForegroundColor Green
+
+    Step "Release that would be published (steps (f) to (k) not run)"
+    Write-Host "    Tag:      $tag (annotated, by $NewIdent), on the rewritten HEAD $($installer.Commit)"
+    Write-Host "    Release:  'Jig $version' on https://github.com/$Owner/$Repo/releases/tag/$tag, marked latest"
+    Write-Host "    Assets:   $($installer.Name) ($($installer.Size) bytes)"
+    Write-Host "              $($installer.Name).sha256"
+    Write-Host "    SHA-256:  $($installer.Hash)"
+    Write-Host "    Built files, kept for testing: $($installer.Dir)"
+    Write-Host '    Release notes:'
+    (Get-ReleaseNotes $version $installer) -split "`n" | ForEach-Object { Write-Host "      $_" }
+    Write-Host "`nDry run passed. Nothing was pushed or published. Run without -DryRun to publish." -ForegroundColor Green
     return
 }
 
@@ -308,18 +459,19 @@ Invoke-Rewrite $python $repoRoot
 Assert-NoAttackContent $repoRoot
 $problems = @(Invoke-Scan $repoRoot)
 if ($problems) { $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }; Fail "the scan found problems (listed above). Nothing was pushed. The original history is in $bundle." }
+$installer = Build-Installer $repoRoot $version $python $inno
 
-Step "(e) Creating github.com/$Owner/$Repo (public) and pushing main"
+Step "(f) Creating github.com/$Owner/$Repo (public) and pushing main"
 Run $script:Gh repo create "$Owner/$Repo" --public --source . --remote origin --push --description $Description --homepage $PagesUrl
 $ownerNow = (Run $script:Gh repo view "$Owner/$Repo" --json owner --jq '.owner.login').Trim()
 if ($ownerNow -ne $Owner) { Fail "the new repository is owned by '$ownerNow', not $Owner. Check it on GitHub now." }
 Ok "created https://github.com/$Owner/$Repo"
 
-Step '(f) Setting topics'
+Step '(g) Setting topics'
 Run $script:Gh repo edit "$Owner/$Repo" --add-topic ($Topics -join ',') | Out-Null
 Ok ($Topics -join ', ')
 
-Step '(g) Enabling GitHub Pages (GitHub Actions) and private vulnerability reporting'
+Step '(h) Enabling GitHub Pages (GitHub Actions) and private vulnerability reporting'
 Run $script:Gh api -X POST "repos/$Owner/$Repo/pages" -f build_type=workflow | Out-Null
 $buildType = (Run $script:Gh api "repos/$Owner/$Repo/pages" --jq '.build_type').Trim()
 if ($buildType -ne 'workflow') { Fail "Pages build type is '$buildType', not 'workflow'." }
@@ -327,7 +479,10 @@ Ok 'Pages source: GitHub Actions'
 Run $script:Gh api -X PUT "repos/$Owner/$Repo/private-vulnerability-reporting" | Out-Null
 Ok 'private vulnerability reporting enabled (used by SECURITY.md)'
 
-Step '(h) Waiting for the Pages workflow'
+# Before the Pages wait, so the site's "latest GitHub release" link works by the time the site is live.
+Publish-Release $version $installer
+
+Step '(j) Waiting for the Pages workflow'
 $head = (Run git rev-parse HEAD).Trim()
 $runId = $null
 for ($i = 0; $i -lt 30 -and -not $runId; $i++) {
@@ -352,7 +507,7 @@ for ($i = 0; $i -lt 24 -and $status -ne 200; $i++) {
 if ($status -ne 200) { Fail "$live did not return HTTP 200 within two minutes." }
 Ok "live: $live"
 
-Step '(i) Verifying the owner'
+Step '(k) Verifying the owner'
 $info = Run $script:Gh repo view "$Owner/$Repo" --json owner,visibility,url,homepageUrl | ConvertFrom-Json
 $ownerType = (Run $script:Gh api "repos/$Owner/$Repo" --jq '.owner.type').Trim()
 if ($info.owner.login -ne $Owner -or $ownerType -ne 'User') { Fail "owner is '$($info.owner.login)' ($ownerType), not the personal account $Owner." }
@@ -362,4 +517,5 @@ Ok "$($info.url) is public and owned by the personal account $Owner"
 Write-Host "`nPublished."
 Write-Host "  Repository: $($info.url)"
 Write-Host "  Pages:      $live"
+Write-Host "  Release:    https://github.com/$Owner/$Repo/releases/tag/$tag ($($installer.Name), SHA-256 $($installer.Hash))"
 Write-Host "  Backup of the pre-rewrite history: $bundle"
