@@ -192,12 +192,20 @@ def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: b
     exits the process with code 3; the 1 below covers any start-up failure that returns instead."""
     import uvicorn
 
-    # Open event streams (SSE, WebSockets) would otherwise hold a graceful shutdown open indefinitely.
+    class Server(uvicorn.Server):
+        async def shutdown(self, sockets: Any = None) -> None:
+            closing = getattr(app.state, "closing", None)
+            if closing is not None:
+                closing.set()
+            await super().shutdown(sockets)
+
+    # The event streams end as shutdown begins (app.state.closing, and the disconnect uvicorn gives each
+    # WebSocket); the timeout bounds anything else, such as a chat reply still streaming.
     # proxy_headers=False: X-Forwarded-For/-Proto must never replace the real TCP peer, because remote access
     # checks that the connection itself belongs to tailscaled (jig.remote).
     # Without access_log (a person at a terminal), uvicorn logs through Jig's handlers: warnings on screen,
     # everything in the log file.
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info", lifespan="on",
+    server = Server(uvicorn.Config(app, host=host, port=port, log_level="info", lifespan="on",
                                            timeout_graceful_shutdown=10, proxy_headers=False, access_log=access_log,
                                            log_config=None if log_to_file or not access_log
                                            else uvicorn.config.LOGGING_CONFIG))

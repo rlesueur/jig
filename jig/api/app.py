@@ -292,6 +292,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     app.state.devices = devices
     app.state.remote = remote
     app.state.stop_request = None
+    app.state.closing = asyncio.Event()  # set by run_server as shutdown begins; ends live event streams
     app.add_middleware(AuthMiddleware, auth=auth, remote=remote)
     if config.sandbox.backend == "compose":
         from ..sandbox_compose import SandboxPeerGuard
@@ -498,38 +499,55 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         return await asyncio.to_thread(code_execution_status, J(request).config, names)
 
     # Events ----------------------------------------------------------------
+    async def until_gone(ws: WebSocket) -> None:
+        """Return once the socket has closed: the page went, or Jig is turning off (uvicorn then sends the page
+        1012 and delivers a disconnect here). Without this an idle stream holds shutdown open until uvicorn's
+        graceful timeout. The page sends nothing on this socket."""
+        try:
+            while (await ws.receive())["type"] != "websocket.disconnect":
+                pass
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
     @app.websocket("/events")
     async def events_ws(ws: WebSocket) -> None:
         jig: Jig | None = ws.app.state.jig
         await ws.accept()
-        if jig is None:
-            # Set-up mode: nothing happens until the agent starts; then the page reconnects to its events.
-            await ws.send_json({"type": "setup", "snapshot": True, "data": {}})
-            try:
-                while ws.app.state.jig is None:
-                    await asyncio.sleep(1)
-                await ws.close(code=1012, reason="Jig started")
-            except WebSocketDisconnect:
-                pass
-            return
-        sub = jig.bus.subscribe()
+        gone = asyncio.create_task(until_gone(ws))
         try:
-            await ws.send_json({"type": EventType.AVATAR_STATE.value, "snapshot": True, "data": jig.tracker.current})
-            while True:
-                try:
-                    event = await asyncio.wait_for(sub.get(), timeout=2)
-                except TimeoutError:
-                    if ws.app.state.jig is not jig:  # the model was changed: this runtime has stopped
-                        await ws.close(code=1012, reason="Jig restarted")
+            if jig is None:
+                # Set-up mode: nothing happens until the agent starts; then the page reconnects to its events.
+                await ws.send_json({"type": "setup", "snapshot": True, "data": {}})
+                while ws.app.state.jig is None:
+                    if (await asyncio.wait({gone}, timeout=1))[0]:
                         return
-                    continue
-                await ws.send_json(event.as_dict())
-        except SubscriberOverflow as exc:
-            await ws.close(code=1013, reason=str(exc))
+                await ws.close(code=1012, reason="Jig started")
+                return
+            sub = jig.bus.subscribe()
+            try:
+                await ws.send_json({"type": EventType.AVATAR_STATE.value, "snapshot": True,
+                                    "data": jig.tracker.current})
+                while True:
+                    getter = asyncio.ensure_future(sub.get())
+                    await asyncio.wait({getter, gone}, timeout=2, return_when=asyncio.FIRST_COMPLETED)
+                    if gone.done():
+                        getter.cancel()
+                        return
+                    if not getter.done():
+                        getter.cancel()
+                        if ws.app.state.jig is not jig:  # the model was changed: this runtime has stopped
+                            await ws.close(code=1012, reason="Jig restarted")
+                            return
+                        continue
+                    await ws.send_json(getter.result().as_dict())
+            except SubscriberOverflow as exc:
+                await ws.close(code=1013, reason=str(exc))
+            finally:
+                sub.close()
         except WebSocketDisconnect:
             pass
         finally:
-            sub.close()
+            gone.cancel()
 
     @app.get("/events/sse")
     async def events_sse(request: Request) -> StreamingResponse:
@@ -540,13 +558,22 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             try:
                 snapshot = {"type": EventType.AVATAR_STATE.value, "snapshot": True, "data": jig.tracker.current}
                 yield f"data: {json.dumps(snapshot)}\n\n"
-                while not await request.is_disconnected():
-                    try:
-                        event = await asyncio.wait_for(sub.get(), timeout=15)
-                    except TimeoutError:
-                        yield ": keep-alive\n\n"
-                        continue
-                    yield f"event: {event.type}\ndata: {json.dumps(event.as_dict(), default=str)}\n\n"
+                closing = asyncio.ensure_future(request.app.state.closing.wait())
+                try:
+                    while not await request.is_disconnected():
+                        getter = asyncio.ensure_future(sub.get())
+                        await asyncio.wait({getter, closing}, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+                        if closing.done():  # Jig is turning off: end the stream rather than hold shutdown open
+                            getter.cancel()
+                            return
+                        if not getter.done():
+                            getter.cancel()
+                            yield ": keep-alive\n\n"
+                            continue
+                        event = getter.result()
+                        yield f"event: {event.type}\ndata: {json.dumps(event.as_dict(), default=str)}\n\n"
+                finally:
+                    closing.cancel()
             except SubscriberOverflow as exc:
                 yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
             finally:

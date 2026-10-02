@@ -141,6 +141,71 @@ def test_turn_off_through_the_api_refuses_an_external_model_server(tmp_path):
     assert httpx.get("http://127.0.0.1:8080/v1/models", timeout=10).status_code == 200  # untouched
 
 
+def test_turning_off_closes_live_event_streams_at_once(tmp_path):
+    """Jig's window holds the /events WebSocket open, and a program may hold /events/sse. Turning off ends both
+    as shutdown begins instead of waiting out uvicorn's 10-second graceful timeout, and still puts a running
+    task back on the queue with its checkpoint."""
+    import asyncio
+
+    import websockets
+
+    data_dir, port = tmp_path / "data", free_port()
+    proc, log = start_jig(data_dir, port)
+    try:
+        wait_health(port, proc=proc, log=log)
+        base, h = f"http://127.0.0.1:{port}", token(data_dir)
+        task = httpx.post(f"{base}/tasks", headers=h, json={"title": "long essay", "description": LONG_TASK,
+                                                            "mode": "research"}).json()
+        deadline = time.monotonic() + 120
+        while httpx.get(f"{base}/tasks/{task['id']}", headers=h).json()["status"] != "running":
+            assert time.monotonic() < deadline, "the task never started running"
+            time.sleep(0.2)
+
+        async def turn_off() -> tuple[float, int | None, float, float]:
+            ws = await websockets.connect(f"ws://127.0.0.1:{port}/events", additional_headers=h)
+            assert json.loads(await ws.recv())["snapshot"] is True
+            ended: dict[str, float] = {}
+
+            async def read_ws() -> None:
+                try:
+                    async for _ in ws:
+                        pass
+                except websockets.ConnectionClosed:
+                    pass
+                ended["ws"] = time.monotonic()
+
+            async def read_sse(opened: asyncio.Event) -> None:
+                async with httpx.AsyncClient(timeout=None) as client, \
+                        client.stream("GET", f"{base}/events/sse", headers=h) as r:
+                    async for line in r.aiter_lines():
+                        if line.startswith("data:"):
+                            opened.set()
+                ended["sse"] = time.monotonic()
+
+            opened = asyncio.Event()
+            readers = [asyncio.create_task(read_ws()), asyncio.create_task(read_sse(opened))]
+            await asyncio.wait_for(opened.wait(), 10)
+            async with httpx.AsyncClient() as client:
+                start = time.monotonic()
+                r = await client.post(f"{base}/power/stop", headers=h, json={"scope": "jig", "confirm": True})
+                assert r.status_code == 202, r.text
+            await asyncio.wait_for(asyncio.gather(*readers), 8)
+            return start, ws.close_code, ended["ws"] - start, ended["sse"] - start
+
+        start, code, ws_s, sse_s = asyncio.run(turn_off())
+        assert proc.wait(30) == 0, log.read_text(errors="replace")
+        took = time.monotonic() - start
+        print(f"turned off in {took:.2f}s; WebSocket closed ({code}) after {ws_s:.2f}s, SSE after {sse_s:.2f}s")
+        assert code == 1012
+        assert took < 5, f"turning off took {took:.1f}s with event streams open"
+    finally:
+        kill(proc)
+    wait_stopped(data_dir)
+    assert "timeout graceful shutdown exceeded" not in log.read_text(errors="replace")
+    assert db_rows(data_dir, f"SELECT status FROM tasks WHERE id = '{task['id']}'") == [("queued",)]
+    assert db_rows(data_dir, "SELECT count(*) FROM run_steps WHERE status = 'running'") == [(0,)]
+
+
 def test_jig_stop_cli_refuses_in_container_mode(tmp_path):
     proc = subprocess.run([sys.executable, "-m", "jig.cli", "--config", str(config_path()), "stop", "--data-dir",
                            str(tmp_path)], capture_output=True, text=True, timeout=60,
