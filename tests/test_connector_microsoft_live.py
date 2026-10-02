@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -62,6 +63,10 @@ async def test_outlook_calendar_end_to_end_on_test_events_only(capabilities):
                 "calendar_id": cal_id, "time_min": iso(start - timedelta(hours=1)),
                 "time_max": iso(start + timedelta(hours=2))}, intent=intent)
             assert listed.ok and event_id in [e["event_id"] for e in listed.result["events"]]
+            mine = next(e for e in listed.result["events"] if e["event_id"] == event_id)
+            local = datetime.fromisoformat(mine["start"]["dateTime"])
+            assert local == start and mine["start"]["timeZone"] == live.config.runtime.timezone, mine["start"]
+            assert local.utcoffset() == start.astimezone(ZoneInfo(live.config.runtime.timezone)).utcoffset()
             moved = await call(live, "outlook_update_event", {"calendar_id": cal_id, "event_id": event_id,
                                                               "location": "nowhere"}, intent=intent)
             assert moved.ok and moved.result["location"] == "nowhere", moved.error

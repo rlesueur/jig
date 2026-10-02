@@ -27,6 +27,7 @@ import time
 from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -367,12 +368,25 @@ def _drive_path(path: str) -> str:
 
 
 # Shapes ----------------------------------------------------------------------------------------------------
-def _event(e: dict[str, Any], calendar_id: str, *, notes_chars: int = 2000) -> dict[str, Any]:
+def _local(t: dict[str, Any] | None, tz: str, all_day: bool | None) -> dict[str, Any]:
+    """Graph's time (always asked for in UTC) in the user's timezone, with its offset, as Google Calendar gives
+    it: small models get UTC-to-local sums wrong. An all-day event is its date (shifting it would move the day)."""
+    value = (t or {}).get("dateTime")
+    if not value or (t or {}).get("timeZone", "UTC") != "UTC":
+        return t or {}
+    if all_day:
+        return {"date": value[:10]}
+    when = datetime.fromisoformat(value[:19]).replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz))
+    return {"dateTime": when.isoformat(timespec="seconds"), "timeZone": tz}
+
+
+def _event(e: dict[str, Any], calendar_id: str, tz: str, *, notes_chars: int = 2000) -> dict[str, Any]:
     body = e.get("body") or {}
     notes = (body.get("content") if body.get("contentType") == "text" else None) or e.get("bodyPreview") or ""
     return {
         "calendar_id": calendar_id, "event_id": e.get("id"), "subject": e.get("subject", ""),
-        "start": e.get("start", {}), "end": e.get("end", {}), "all_day": e.get("isAllDay"),
+        "start": _local(e.get("start"), tz, e.get("isAllDay")), "end": _local(e.get("end"), tz, e.get("isAllDay")),
+        "all_day": e.get("isAllDay"),
         "location": (e.get("location") or {}).get("displayName", ""), "cancelled": e.get("isCancelled"),
         "organiser": ((e.get("organizer") or {}).get("emailAddress") or {}).get("address"),
         "attendees": [{"email": (a.get("emailAddress") or {}).get("address"),
@@ -412,8 +426,9 @@ async def resolve_calendar(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
                            "calendar_can_edit": cal.get("canEdit")}
     if args.get("event_id"):
         e = await _get(ctx, f"{_cal_base(calendar_id)}/events/{_seg(_graph_id(args['event_id'], 'event_id'))}",
-                       **{"$select": "subject,start,attendees,isOrganizer"})
-        out.update({"event_summary": e.get("subject", ""), "event_start": (e.get("start") or {}).get("dateTime"),
+                       **{"$select": "subject,start,attendees,isOrganizer,isAllDay"})
+        start = _local(e.get("start"), ctx.config.runtime.timezone, e.get("isAllDay"))
+        out.update({"event_summary": e.get("subject", ""), "event_start": start.get("dateTime") or start.get("date"),
                     "event_guests": len(e.get("attendees", [])), "event_is_mine": e.get("isOrganizer"),
                     "note": "Looked up from the calendar; the title may have been written by other people."})
     return out
@@ -483,7 +498,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
 
     @tool(
         description="List events in one of the user's Outlook calendars between two times (recurring events as "
-        "single occurrences, in start order). Times come back in UTC.",
+        "single occurrences, in start order). Times come back in the user's timezone, with their UTC offset.",
         effect=Effect.READ, available=lambda: has(NAME, CAN_READ_CAL), **cal,
         args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.",
               "time_min": "Start of the range, RFC 3339 with offset (2026-10-04T00:00:00+01:00).",
@@ -497,8 +512,9 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         body = await _get(ctx, f"{_cal_base(calendar_id)}/calendarView", startDateTime=lo, endDateTime=hi,
                           **{"$top": max(1, min(50, max_results)), "$orderby": "start/dateTime",
                              "$select": EVENT_FIELDS.replace(",body,", ",")})
-        return {"source": "outlook", "untrusted": UNTRUSTED_CAL, "calendar_id": calendar_id, "time_zone": "UTC",
-                "events": [_event(e, calendar_id, notes_chars=300) for e in body.get("value", [])],
+        return {"source": "outlook", "untrusted": UNTRUSTED_CAL, "calendar_id": calendar_id,
+                "time_zone": ctx.config.runtime.timezone,
+                "events": [_event(e, calendar_id, ctx.config.runtime.timezone, notes_chars=300) for e in body.get("value", [])],
                 "more": bool(body.get("@odata.nextLink"))}
 
     @tool(
@@ -511,7 +527,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         calendar_id = await _calendar_id(ctx, calendar_id)
         e = await _get(ctx, f"{_cal_base(calendar_id)}/events/{_seg(_graph_id(event_id, 'event_id'))}",
                        **{"$select": EVENT_FIELDS})
-        return {"source": "outlook", "untrusted": UNTRUSTED_CAL, **_event(e, calendar_id, notes_chars=MAX_NOTES)}
+        return {"source": "outlook", "untrusted": UNTRUSTED_CAL, **_event(e, calendar_id, ctx.config.runtime.timezone, notes_chars=MAX_NOTES)}
 
     @tool(
         description="Create an event in one of the user's Outlook calendars. Guests listed get Outlook's "
@@ -544,7 +560,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
             body["attendees"] = [{"emailAddress": {"address": g}, "type": "required"} for g in guests]
         r = await ctx.connectors.request(NAME, "POST", f"{API}{_cal_base(calendar_id)}/events", json_body=body,
                                          headers={"Prefer": 'outlook.timezone="UTC"'})
-        return {"created": True, "invitations_sent": bool(guests), **_event(r.json(), calendar_id)}
+        return {"created": True, "invitations_sent": bool(guests), **_event(r.json(), calendar_id, ctx.config.runtime.timezone)}
 
     @tool(
         description="Change an event in one of the user's Outlook calendars. Only the fields given are changed; "
@@ -585,7 +601,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
             NAME, "PATCH", f"{API}{_cal_base(calendar_id)}/events/{_seg(_graph_id(event_id, 'event_id'))}",
             json_body=body, headers={"Prefer": 'outlook.timezone="UTC"'})
         return {"updated": True, "guests_notified": bool(guests) or resolved.get("event_guests", 0) > 0,
-                **_event(r.json(), calendar_id)}
+                **_event(r.json(), calendar_id, ctx.config.runtime.timezone)}
 
     @tool(
         description="Cancel (delete) an event in one of the user's Outlook calendars. If the user organised it, "

@@ -126,6 +126,21 @@ async def test_connecting_without_an_app_never_opens_a_sign_in_page(store, monke
     assert opened == [] and store.get(ms.NAME) is None
 
 
+def test_event_times_reach_the_model_in_the_users_timezone_not_utc():
+    utc = {"dateTime": "2026-10-07T09:30:00.0000000", "timeZone": "UTC"}
+    assert ms._local(utc, "Europe/London", False) == {"dateTime": "2026-10-07T10:30:00+01:00",
+                                                      "timeZone": "Europe/London"}
+    assert ms._local({**utc, "dateTime": "2026-12-07T09:30:00.0000000"}, "Europe/London", False)["dateTime"] \
+        == "2026-12-07T09:30:00+00:00"
+    assert ms._local(utc, "America/New_York", False)["dateTime"] == "2026-10-07T05:30:00-04:00"
+    assert ms._local({"dateTime": "2026-10-07T00:00:00.0000000", "timeZone": "UTC"}, "America/New_York", True) \
+        == {"date": "2026-10-07"}
+    event = ms._event({"id": "e1", "subject": "s", "start": utc, "end": {**utc, "dateTime": "2026-10-07T11:00:00"},
+                       "isAllDay": False}, "cal", "Europe/London")
+    assert (event["start"]["dateTime"], event["end"]["dateTime"]) == ("2026-10-07T10:30:00+01:00",
+                                                                      "2026-10-07T12:00:00+01:00")
+
+
 def test_scopes_are_normalised():
     assert ms.normalise_scopes("https://graph.microsoft.com/User.Read Files.Read", "M.C-x") == \
         ["User.Read", "Files.Read", "offline_access"]
