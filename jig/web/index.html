@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Jig</title>
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <link rel="icon" href="/web/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="/web/icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/web/style.css">
   <script src="/web/theme.js"></script>
   <script type="module" src="/web/app.js"></script>
@@ -359,7 +361,8 @@
   </dialog>
 
   <section class="off-state" id="off-state" aria-labelledby="off-title" data-testid="off-state" hidden>
-    <img class="off-face" src="/web/jig-face.svg" alt="" width="96" height="96">
+    <img class="off-face face-light" src="/web/jig-face-light.png" alt="" width="96" height="96">
+    <img class="off-face face-dark" src="/web/jig-face-dark.png" alt="" width="96" height="96">
     <h2 id="off-title" tabindex="-1" data-testid="off-title">Turning Jig off…</h2>
     <p id="off-text" data-testid="off-text">Finishing up and saving where it got to.</p>
     <p class="hint" id="off-again" data-testid="off-again"></p>
@@ -379,7 +382,8 @@
 
   <dialog id="login" aria-labelledby="login-heading">
     <form id="login-form" method="dialog">
-      <img class="login-face" src="/web/jig-face.svg" alt="" width="64" height="64">
+      <img class="login-face face-light" src="/web/jig-face-light.png" alt="" width="64" height="64">
+      <img class="login-face face-dark" src="/web/jig-face-dark.png" alt="" width="64" height="64">
       <h2 id="login-heading">Sign in to Jig</h2>
       <p>Run <code>jig ui</code> to open this page already signed in, or paste the API token from <code>jig token show</code>. The token is exchanged for a session cookie and is not stored by the page.</p>
       <label for="login-token">API token</label>
@@ -388,7 +392,8 @@
       <button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
     </form>
     <form id="pair-form" data-testid="pair-form" hidden>
-      <img class="login-face" src="/web/jig-face.svg" alt="" width="64" height="64">
+      <img class="login-face face-light" src="/web/jig-face-light.png" alt="" width="64" height="64">
+      <img class="login-face face-dark" src="/web/jig-face-dark.png" alt="" width="64" height="64">
       <h2 id="pair-heading">Pair this device</h2>
       <p>On the computer Jig runs on, open Settings, <strong>Use Jig from your other devices</strong>, and choose <strong>Add a device</strong>. Scan the QR code, or type the code it shows.</p>
       <label for="pair-code">Pairing code</label>

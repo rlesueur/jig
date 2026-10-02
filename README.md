@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://rlesueur.github.io/jig/"><img src="avatar/screenshots/jig-idle.png" alt="Jig, a neon mascot with a round dark head, glowing amber eyes, small horns and a flowing ribbon tail" width="260"></a>
+  <a href="https://rlesueur.github.io/jig/"><img src="avatar/screenshots/jig-idle.png" alt="Jig, a neon mascot with a round dark head, soft leaf ears, big round amber eyes and a flowing ribbon tail" width="260"></a>
 </p>
 
 <h1 align="center">Jig</h1>

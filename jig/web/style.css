@@ -523,6 +523,8 @@ dialog::backdrop { background: var(--backdrop); }
 .off-state h2:focus { outline: none; }
 .off-state p { margin: 0; }
 .off-face { width: 96px; height: 96px; opacity: 0.85; }
+/* Both faces stay in the page, so the one for either theme is already loaded when the server goes away. */
+html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { display: none; }
 
 /* Responsive -------------------------------------------------------------------------------------- */
 @media (max-width: 860px) {
