@@ -1260,7 +1260,7 @@ const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'comma
 const RESOLVED_WORDS = { draft_to: 'To', draft_cc: 'Cc', draft_subject: 'Subject', draft_text: 'Message',
   draft_attachments: 'Attachments', thread_subject: 'Subject', last_from: 'Last message from', last_date: 'Date',
   messages_in_thread: 'Messages in the thread', labels: 'Labels', repeats: 'Repeats', next_runs: 'Next runs',
-  merchant: 'Shop or site', amount: 'Total', items: 'Items', button: 'Button',
+  merchant: 'Shop or site', amount: 'Total', items: 'Items', button: 'Button', signs_in_to: 'Signs in to',
   calendar: 'Calendar', event_summary: 'Event', event_start: 'Starts', event_guests: 'Guests',
   folder: 'Folder', file: 'File', replaces: 'Replaces a file',
   repo: 'Repository', visibility: 'Visibility', issue_title: 'Issue', issue_state: 'State', issue_author: 'Opened by',

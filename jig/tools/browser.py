@@ -38,6 +38,24 @@ async def inspect_target(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
     return classify(info)
 
 
+async def inspect_login(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """Before review: the site the sign-in would go to, and that all three selectors match something on the
+    page, so an attempt that can't work fails here instead of asking the user to approve it."""
+    session = await ctx.container.browser()
+    for key in ("username_selector", "password_selector"):
+        try:
+            await session.call("inspect_submit", selector=args[key])
+        except ToolError as exc:
+            raise ToolError(f"{key} {args[key]!r} doesn't match a field on this page ({exc}); use a selector from "
+                            "browser_read with format 'snapshot'") from None
+    try:
+        info = await session.call("inspect_submit", selector=args["submit_selector"])
+    except ToolError as exc:
+        raise ToolError(f"submit_selector {args['submit_selector']!r} doesn't match a button on this page ({exc}); "
+                        "use a selector from browser_read with format 'snapshot'") from None
+    return {"signs_in_to": str(info.get("host") or ""), **classify(info)}
+
+
 async def _call(ctx: ToolContext, tool: str, command: str, *, network: bool, **args: Any) -> dict[str, Any]:
     session = await ctx.container.browser()
     if not network:
@@ -135,7 +153,7 @@ def register_browser_tools(registry: ToolRegistry) -> None:
         description="Sign in on the current page with credentials from the vault. The password must be a vault "
         "reference {{secret:NAME}} (the username may be one too); the real values never reach you. Always needs "
         "the user's approval.",
-        effect=Effect.SIDE_EFFECT, outbound=True, human_only=True, **web,
+        effect=Effect.SIDE_EFFECT, outbound=True, human_only=True, resolve=inspect_login, **web,
         args={"username_selector": "Selector of the username or email field.",
               "username": "Username, or a vault reference {{secret:NAME}}.",
               "password_selector": "Selector of the password field.",

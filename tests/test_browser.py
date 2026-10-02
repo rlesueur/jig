@@ -141,6 +141,28 @@ async def test_denied_submission_sends_nothing(bjig):
     assert page.result["url"].endswith("/forms/post")
 
 
+async def test_a_sign_in_that_cannot_work_fails_before_asking_and_the_card_names_the_site(bjig):
+    # Sauce Labs' public demo shop; its demo password is printed on the page. Nothing is ever signed in to here.
+    intent = "Sign in to the Sauce Labs demo shop with the demo account."
+    bjig.vault.set("saucedemo-password", "secret_sauce", allowed_tools=["browser_login"])
+    assert (await gated_call(bjig, "browser_open", {"url": "https://www.saucedemo.com/"}, intent=intent))[0].ok
+    args = {"username_selector": "#userName", "username": "standard_user", "password_selector": "#password",
+            "password": "{{secret:saucedemo-password}}", "submit_selector": "#login-button"}
+    guessed, asked = await gated_call(bjig, "browser_login", args, intent=intent)
+    assert not guessed.ok and "username_selector '#userName' doesn't match" in guessed.error, guessed.error
+    assert not asked, "an attempt whose fields aren't on the page is not put to the user"
+    asked = []
+    right, _ = await gated_call(bjig, "browser_login", {**args, "username_selector": "#user-name"}, intent=intent,
+                                on_approval=lambda a: asked.append(a) or False)
+    assert right.error_type in ("ApprovalDenied", "PolicyBlocked"), right.error
+    assert right.policy["resolved"]["signs_in_to"] == "www.saucedemo.com"
+    assert right.policy["resolved"]["checkout"] is None
+    if right.error_type == "ApprovalDenied":
+        assert asked[0]["resolved"]["signs_in_to"] == "www.saucedemo.com"
+    page, _ = await gated_call(bjig, "browser_read", {"format": "text"}, intent=intent)
+    assert page.result["url"] == "https://www.saucedemo.com/", "nothing was signed in to"
+
+
 async def test_login_password_must_be_a_vault_reference(bjig):
     args = {"username_selector": "#u", "username": "robyn", "password_selector": "#p", "password": "hunter2",
             "submit_selector": "button"}

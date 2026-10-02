@@ -41,6 +41,18 @@ async def test_secret_allowlist_is_a_core_rule(jig):
     assert not (jig.sandbox.root / "leak.txt").exists()
 
 
+async def test_a_misnamed_secret_is_refused_with_the_names_the_tool_may_use(jig):
+    jig.vault.set("shop-password", "pw-value-1", allowed_tools=["note_write"])
+    jig.vault.set("other-password", "pw-value-2", allowed_tools=["write_file"])
+    call = ToolCall(id="c2b", name="note_write",
+                    arguments_raw=json.dumps({"title": "t", "body": "{{secret:shop_password}}"}))
+    outcome = await jig.executor.execute(call, CallContext("r_v3", None, Mode.ACTION, "store a note"))
+    assert not outcome.ok and outcome.error_type == "PolicyBlocked"
+    assert "'shop_password' does not exist" in outcome.error and "may use are: shop-password" in outcome.error
+    assert "other-password" not in outcome.error and "pw-value" not in outcome.message_content()
+    assert not jig.store.list_notes()
+
+
 async def test_custom_block_rule(jig):
     jig.rules.create(tool="note_*", decision="block")
     call = ToolCall(id="c3", name="note_write", arguments_raw=json.dumps({"title": "t", "body": "b"}))

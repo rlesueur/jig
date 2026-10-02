@@ -88,7 +88,10 @@ async def evaluate_core(spec: ToolSpec, args: dict[str, Any], vault: Vault) -> l
         try:
             allowed = vault.describe(name)["allowed_tools"]
         except SecretNotFound:
-            findings.append(_finding("secret-allowlist", f"secret {name!r} does not exist"))
+            usable = [s["name"] for s in vault.list() if spec.name in s["allowed_tools"]]
+            hint = (f"; the secrets {spec.name!r} may use are: {', '.join(usable)}" if usable
+                    else f"; no secret in the vault may be used by {spec.name!r}")
+            findings.append(_finding("secret-allowlist", f"secret {name!r} does not exist{hint}"))
             continue
         if spec.name not in allowed:
             findings.append(_finding("secret-allowlist", f"secret {name!r} is not allowed for tool {spec.name!r}"))
