@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from .instance import stop_event_name
+from .logs import log_uncaught_exceptions, protect_logging
 
 log = logging.getLogger(__name__)
 
@@ -66,9 +67,11 @@ def configure_file_logging(log_path: Path, *, capture_std: bool = True) -> loggi
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+    protect_logging()
     if capture_std:
         sys.stdout = _LogWriter(logging.getLogger("jig.stdout"), logging.INFO)  # type: ignore[assignment]
         sys.stderr = _LogWriter(logging.getLogger("jig.stderr"), logging.ERROR)  # type: ignore[assignment]
+        log_uncaught_exceptions()
     return handler
 
 
@@ -198,6 +201,9 @@ def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: b
                                            timeout_graceful_shutdown=10, proxy_headers=False, access_log=access_log,
                                            log_config=None if log_to_file or not access_log
                                            else uvicorn.config.LOGGING_CONFIG))
+    # uvicorn.Config has just set up its loggers; no log line may carry a query string or an error's text.
+    protect_logging()
+    log_uncaught_exceptions()
 
     def request_exit(why: str) -> None:
         if not server.should_exit:

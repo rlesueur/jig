@@ -104,7 +104,7 @@ def test_http_api_crud(config):
         assert state["state"] == "idle" and state["background"] is False
 
         m = client.post("/memory", json={"content": "Likes walking in the Peak District", "tags": ["hobby"]}).json()
-        assert client.get("/memory", params={"q": "walking"}).json()[0]["id"] == m["id"]
+        assert client.post("/memory/search", json={"q": "walking"}).json()[0]["id"] == m["id"]
         assert client.patch(f"/memory/{m['id']}", json={"content": "Likes hiking"}).json()["content"] == "Likes hiking"
         assert client.delete(f"/memory/{m['id']}").status_code == 204
         assert client.get(f"/memory/{m['id']}").status_code == 404

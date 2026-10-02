@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from .endpoints import PROVIDERS, RESERVED_REQUEST_KEYS, Location, Provider, classify, origin
 from .errors import ConfigError
+from .logs import verbose_model_server
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "jig.toml"
 # In the data folder: what the web UI's set-up and Settings chose ([model], [sentinel], [vision], [sandbox]).
@@ -312,6 +313,10 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         raise ConfigError("[model.launch] readiness_timeout_s must be >= 0 and poll_interval_s > 0")
     if model_launch.max_restarts < 0 or model_launch.restart_delay_s < 0:
         raise ConfigError("[model.launch] max_restarts and restart_delay_s must be >= 0")
+    if model_launch.command and (verbose := verbose_model_server(model_launch.args,
+                                                                  {**os.environ, **model_launch.env})):
+        raise ConfigError(f"[model.launch] {verbose} makes llama.cpp's server write every prompt and reply into "
+                          f"model-server.log. Remove it: Jig keeps what you say out of its logs")
     deployment = os.environ.get("JIG_DEPLOYMENT") or raw.get("deployment", "host")
     if deployment not in ("host", "container"):
         raise ConfigError(f"deployment (or JIG_DEPLOYMENT) must be 'host' or 'container', not {deployment!r}")

@@ -21,6 +21,7 @@ from .errors import CannotDelete, JigError, ModelCapabilityError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .instance import InstanceLock
+from .logs import describe_exception
 from .model import ModelClient
 from .model_server import ModelServerSupervisor
 from .pause import RunPaused
@@ -481,7 +482,7 @@ class Jig:
         try:
             await self.planner.plan(goal_id)
         except (JigError, ValueError) as exc:
-            log.error("planning goal %s failed: %s", goal_id, exc)
+            log.error("planning goal %s failed: %s", goal_id, describe_exception(exc))
             return
         self.scheduler.wake()
 

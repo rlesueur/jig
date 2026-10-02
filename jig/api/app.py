@@ -121,6 +121,11 @@ class MemoryIn(BaseModel):
     tags: list[str] = []
 
 
+class MemorySearch(BaseModel):
+    q: str = Field(min_length=1)
+    limit: int = Field(100, ge=1, le=1000)
+
+
 class MemoryPatch(BaseModel):
     content: str | None = None
     kind: str | None = None
@@ -794,10 +799,14 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.get("/memory")
     async def list_memory(request: Request, q: str | None = None, limit: int = Query(100, le=1000),
                           offset: int = 0, kind: str | None = None) -> list[dict[str, Any]]:
-        jig = J(request)
-        if q:
-            return jig.memory.search(q, limit=limit)
-        return jig.memory.list(limit=limit, offset=offset, kind=kind)
+        if q is not None:
+            raise HTTPException(400, "search with POST /memory/search {\"q\": ...}: words in a web address can end "
+                                     "up in logs")
+        return J(request).memory.list(limit=limit, offset=offset, kind=kind)
+
+    @app.post("/memory/search")
+    async def search_memory(request: Request, body: MemorySearch) -> list[dict[str, Any]]:
+        return J(request).memory.search(body.q, limit=body.limit)
 
     @app.post("/memory", status_code=201)
     async def add_memory(request: Request, body: MemoryIn) -> dict[str, Any]:

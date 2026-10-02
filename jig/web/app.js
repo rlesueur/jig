@@ -1554,7 +1554,8 @@ function memoryItem(m) {
 async function loadMemory() {
   let rows;
   try {
-    rows = await api(memoryQuery ? `/memory?q=${encodeURIComponent(memoryQuery)}&limit=100` : '/memory?limit=200');
+    rows = await (memoryQuery ? api('/memory/search', { method: 'POST', body: { q: memoryQuery, limit: 100 } })
+      : api('/memory?limit=200'));
   } catch (err) {
     if (err.status !== 401) showError(err.message);
     return;
