@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://rlesueur.github.io/jig/"><strong>Website and live avatar</strong></a> ·
   <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 28-second video</a> ·
-  <a href="#running-it">Quick start</a> ·
+  <a href="#get-started">Get started</a> ·
   <a href="#run-with-docker">Docker</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -26,6 +26,78 @@ Jig is an open-source, always-on personal AI agent, **built for local models**. 
 Jig is an open, local alternative to hosted always-on agents such as Meta's Muse and OpenAI's Dots. Its safety model is an isolated safety checker, a credential vault, read-only background research, per-action rules and approvals. Because it runs on your machine, its memory is yours to see, edit and wipe, and its audit trail is yours too.
 
 > Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision, a payment and booking checkpoint for the browser, and connectors for Gmail, Google Calendar, Google Drive, Outlook calendar and OneDrive, GitHub, Slack, Discord, Matrix and Signal are in place. Voice is on the roadmap; see [Connectors](#connectors) for exactly what is built and tested.
+
+## Get started
+
+Jig needs two things: Jig itself, and a model to think with. The model can run on your own computer, in a free app such as LM Studio or Ollama, or you can use a paid cloud model with an API key. Jig's set-up page helps you choose, and checks your choice works before Jig starts.
+
+> **Don't run `pip install jig`.** That name on PyPI belongs to an unrelated project ("check your code before you git commit"). Use the installer below, or install from this repository.
+
+### On Windows: the installer
+
+1. Download `JigSetup-<version>.exe` from the [latest release](https://github.com/rlesueur/jig/releases/latest).
+2. Open it. **Windows will probably warn you**, because the installer isn't code-signed (a signing certificate is expensive and Jig is a free project):
+   - your browser may say the file "isn't commonly downloaded": choose **Keep**;
+   - Windows may show **"Windows protected your PC"** (SmartScreen): click **More info**, then **Run anyway**.
+
+   Only do this for a file you downloaded from this repository's releases page.
+3. Click through the installer. It needs no administrator rights and no Python, Git or terminal. It asks whether Jig should start when you sign in to Windows (off unless you tick it).
+4. At the end, Jig opens in your browser on its set-up page. Choose a model there (see [Get a model running](#get-a-model-running) if you don't have one yet), and Jig checks it and starts.
+
+Afterwards, open Jig from the Start menu, or from its icon by the clock, which also shows whether Jig is on and can turn it off and on. Jig keeps its settings, memories and notes in `%LOCALAPPDATA%\Jig`. To remove it, use **Settings > Apps > Installed apps > Jig > Uninstall**: it turns Jig off, removes Start with Windows, and asks whether to keep your data.
+
+### Get a model running
+
+If you already run a model app, skip this: Jig's set-up page finds llama.cpp (port 8080), LM Studio (port 1234) and Ollama (port 11434) by itself, or you can type its address.
+
+Otherwise, install one of these free apps and load **Granite 4.2 8B** (the `Q4_K_M` version, a 5.3 GB download). It's the model Jig has measured on small graphics cards:
+
+| Graphics card memory | What to load | Measured |
+| --- | --- | --- |
+| 12 GB or more | Granite 4.2 8B Q4_K_M, context length 32768 | about 10.6 GB |
+| 10 to 12 GB | Granite 4.2 8B Q4_K_M, context length 16384 (Jig works best with 32K) | about 8.1 GB |
+| Less than 10 GB, or no graphics card | Nothing measured yet: use a [cloud model](#using-a-cloud-model) | |
+
+Those figures were measured with llama.cpp's `llama-server` on one card, as the change in total graphics memory, so allow some margin. LM Studio and Ollama load the same kind of file, but we haven't measured them. Jig's set-up page reads your graphics card and makes the same suggestion.
+
+- **LM Studio** ([lmstudio.ai](https://lmstudio.ai/)): search for `granite-4.2-8b` and download the `Q4_K_M` version from lmstudio-community. Load it with **Context Length** set as in the table, then start the server in the **Developer** tab.
+- **Ollama** ([ollama.com](https://ollama.com/)): in the Ollama app's settings, set **Context length** to 32k (or 16k), then run `ollama pull granite4.2:8b-q4_K_M` in a terminal. Ollama uses a small context unless you change this, and Jig needs room.
+- **llama.cpp**: `llama-server -m granite-4.2-8b-Q4_K_M.gguf -ngl 99 --jinja -c 32768 --port 8080` (file from [lmstudio-community/granite-4.2-8b-GGUF](https://huggingface.co/lmstudio-community/granite-4.2-8b-GGUF)).
+
+Whatever you choose, Jig won't start its agent until the model passes real checks (it must call tools correctly and answer in Jig's format). It never falls back to another model.
+
+### On Mac, Linux, or Windows without the installer
+
+You need [Python](https://www.python.org/downloads/) 3.11 or newer and [Git](https://git-scm.com/downloads). In a terminal:
+
+```powershell
+git clone https://github.com/rlesueur/jig.git
+cd jig
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\jig serve
+```
+
+On Mac and Linux, use `.venv/bin/` instead of `.\.venv\Scripts\`. `jig serve` opens Jig in your browser, already signed in, on its set-up page. **Leave that terminal window open**: closing it stops Jig. To stop Jig, press Ctrl+C there, or run `jig stop` in another window. To open Jig again while it's running, run `jig ui`.
+
+### Once Jig is running
+
+Everything is in the web page, with no terminal or config file: change the model, add or remove a cloud key, let Jig run code (with Docker), start Jig with Windows, connect your accounts and use Jig from your phone are all in **Settings**. Try one of the example prompts on the chat screen to start.
+
+## If something goes wrong
+
+Jig explains problems in plain English on its set-up page, in Settings and in the terminal. The common ones:
+
+- **"Jig couldn't reach your model."** Your model app isn't running, or its server isn't started (in LM Studio, start it in the Developer tab), or it uses another address: type it on the set-up page. If Jig started before your model app (at sign-in, say), it keeps trying by itself and starts as soon as the model answers.
+- **"This model can't do everything Jig needs."** The model didn't call a tool correctly or didn't answer in Jig's format. Choose a model that supports tool calling, such as the one above.
+- **"That model isn't loaded"** or **"Which model should Jig use?"** Load the model in your model app, or choose one of those it lists.
+- **"The API key wasn't accepted."** Copy the key again from the provider's website and paste it into Jig's model settings.
+- **Context too small.** Jig warns if the model has less than 32K of context. Raise the context length in your model app (see the table above).
+- **"Jig can't start on port 8766"**: another program uses that port. Close it, or start Jig with `jig serve --port 8767`.
+- **"Jig is already running for this data folder."** Open it with `jig ui`, or from the Start menu if you used the installer.
+- **The page says Jig isn't running.** Start it again from the Start menu or its icon by the clock, or with `jig serve`.
+
+Jig's log is in its data folder, in `logs\jig.log`.
 
 ## Model requirements
 
@@ -42,7 +114,7 @@ Reasoning text (`reasoning_content` or `reasoning`) is optional. When a server s
 
 **Long pages.** `web_fetch` returns at most `[tools.web_fetch] max_chars` characters of a page at a time (12,000 by default), so one page can't flood the context. When a page is longer, the result gives its total length and a note with the `next_offset` to read on from. The model can also use `find` to get only the passages that mention a word, each with its offset. Nothing is cut silently. The same goes for an earlier task's result handed to a later task in a goal: if it's longer than 4,000 characters, the prompt says where it was cut.
 
-At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, Jig refuses to start and explains why. Run the same checks any time with `jig health`.
+At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, the agent stays off (Jig serves only its set-up page, in set-up mode) and Jig explains why. Run the same checks any time with `jig health`.
 
 Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.cpp fork (`profiles/llamacpp-bonsai.toml`). That is one example setup, not a requirement.
 
@@ -55,7 +127,7 @@ Vision is optional and works with any vision-capable model. Images are sent as s
 enabled = true
 ```
 
-With vision enabled, the start-up check (and `jig health`) also sends a **real test image**: a square in a randomly chosen colour. The model has to name the colour, or Jig refuses to start. Tools that need vision, such as `browser_screenshot` with a question, raise `VisionUnavailable` with a clear message if vision is off; they never quietly carry on without the image. Without vision, use `browser_read` for the page text.
+With vision enabled, the start-up check (and `jig health`) also sends a **real test image**: a square in a randomly chosen colour. The model has to name the colour, or the agent stays off. Tools that need vision, such as `browser_screenshot` with a question, raise `VisionUnavailable` with a clear message if vision is off; they never quietly carry on without the image. Without vision, use `browser_read` for the page text.
 
 How to serve a vision model:
 
@@ -119,28 +191,25 @@ How to serve a vision model:
 | `jig/power.py`, `jig/procinfo.py` | Turning Jig (and the model server it launched) off; what that frees on the GPU; re-adopting a server left running |
 | `jig/remote.py`, `jig/devices.py` | Use Jig from your other devices: `tailscale serve`, the funnel guard, proving a request came through tailscaled, and paired device sessions |
 
-## Running it
+## Running it from the command line
 
-Requirements: Python 3.11 or newer, and a local OpenAI-compatible server with a tool-capable model (or a cloud model; see [Using a cloud model](#using-a-cloud-model)).
+Install from source as in [Get started](#on-mac-linux-or-windows-without-the-installer). For development, install the test tools too: `pip install -e ".[dev]"` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ```powershell
-git clone https://github.com/rlesueur/jig.git
-cd jig
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -e ".[dev]"
-
-# Point jig.toml (or a profile) at your server, then:
+.\.venv\Scripts\jig serve                     # agent, API and web UI on http://127.0.0.1:8766; opens the browser
+.\.venv\Scripts\jig ui                        # opens the web UI signed in (from another window)
 .\.venv\Scripts\jig health                    # checks the endpoints and runs the capability probes
-.\.venv\Scripts\jig serve                     # always-on agent and API on http://127.0.0.1:8766
-.\.venv\Scripts\jig ui                        # opens the web UI, already signed in
-.\.venv\Scripts\jig chat --url http://127.0.0.1:8766
+.\.venv\Scripts\jig chat                      # chat in the terminal
+.\.venv\Scripts\jig stop                      # turns Jig off
 ```
 
-**Running code needs Docker.** Out of the box (`[sandbox] backend = "directory"`), Jig chats, reads the web, remembers, runs schedules and works with files in its own folder, but it **cannot run code, shell commands or a web browser**. Those run only inside an isolated Docker container. To turn them on, install and start Docker, run `jig sandbox build` once, set `[sandbox] backend = "container"` and restart Jig (details in [Container sandbox and headless browser](#container-sandbox-and-headless-browser)). `jig sandbox status` tells you what is missing, and so does Settings > Model and connection > Running code in the web UI. When code is off, the agent is told so and says so plainly rather than pretending.
+`jig serve` uses `jig.toml`, which points at llama.cpp on `http://127.0.0.1:8080/v1`. If your model app is something else, choose it on the set-up page, or start Jig with its profile: `jig --config profiles/lmstudio.toml serve` (LM Studio) or `jig --config profiles/ollama.toml serve` (Ollama). `jig ui`, `jig chat` and `jig stop` find the running Jig through its data folder, on whatever port it uses. If the model isn't set up or fails its checks, `jig serve` starts in **set-up mode**: the web UI runs, while the agent, scheduler, tools and connectors stay off until a model passes the checks. What you choose in the web UI is saved in the data folder's `settings.toml`, which overrides `[model]`, `[sentinel]`, `[vision]` and `[sandbox]` in `jig.toml`; `jig.toml` itself is never rewritten. Delete `settings.toml` to go back to `jig.toml` alone.
+
+**Running code needs Docker.** Out of the box (`[sandbox] backend = "directory"`), Jig chats, reads the web, remembers, runs schedules and works with files in its own folder, but it **cannot run code, shell commands or a web browser**. Those run only inside an isolated Docker container. To turn them on, install and start Docker Desktop, then use **Settings > Model and connection > To let Jig run code**: it builds Jig's container (a one-off download) and turns running code on after checking it works. From the terminal: `jig sandbox build` once, set `[sandbox] backend = "container"` and restart Jig (details in [Container sandbox and headless browser](#container-sandbox-and-headless-browser)); `jig sandbox status` tells you what is missing. When code is off, the agent is told so and says so plainly rather than pretending.
 
 ### Web UI
 
-`jig serve` also serves a dependency-free web UI at `http://127.0.0.1:8766/`. It has the live avatar (on the real `/events` stream), streaming chat with collapsed thinking, activity (goals, tasks and runs, with create, cancel, pause, resume and delete), the approvals inbox with the Sentinel's verdict and reason, memory and notes (list, search, view, edit and delete one, delete all notes, or forget everything), conversations and finished jobs (read and delete one, or delete them all), schedules (list, add, pause, resume and delete, with the next run and the last result), the custom rules editor (core rules are read-only), the audit log, the model status and whether Jig can run code. The avatar is served from `avatar/jig-avatar.js` in this repository, not copied, so the UI needs an editable install (`pip install -e .`) or a source checkout.
+`jig serve` also serves a dependency-free web UI at `http://127.0.0.1:8766/`. It has the live avatar (on the real `/events` stream), streaming chat with collapsed thinking, activity (goals, tasks and runs, with create, cancel, pause, resume and delete), the approvals inbox with the Sentinel's verdict and reason, memory and notes (list, search, view, edit and delete one, delete all notes, or forget everything), conversations and finished jobs (read and delete one, or delete them all), schedules (list, add, pause, resume and delete, with the next run and the last result), the custom rules editor (core rules are read-only), the audit log, the model status and whether Jig can run code. The avatar is served from `avatar/jig-avatar.js` in this repository, not copied, so the UI needs an editable install (`pip install -e .`), a source checkout, or the Windows installer (which bundles it).
 
 Run `jig ui` to open it signed in (see [Access and the API token](#access-and-the-api-token)). `jig ui --print-url` prints the one-time link instead of opening a browser.
 
@@ -181,7 +250,7 @@ Jig does not need a 32 GB card. One model serves as both agent and safety checke
 - **12 GB:** an 8B model at Q4_K_M with a 16K context fits with room to spare. 32K fits, but only just.
 - **8 GB:** we have not yet measured a setup that fits. A smaller model, a lower-bit quantisation or a shorter context reduces memory. llama.cpp can also store the context cache at lower precision (`--cache-type-k` / `--cache-type-v`).
 - **Context:** Jig warns at start-up if the context is under `[runtime] min_context_tokens` (32,768), because long tasks and memory lookups need room. It still runs with less.
-- **The guard:** whatever you choose, Jig refuses to start if the model fails the tool-calling or JSON-schema check (or the vision check, with `[vision] enabled = true`). It never falls back to another model. A model that is too small to call tools reliably is caught there, not halfway through a task.
+- **The guard:** whatever you choose, Jig's agent won't start if the model fails the tool-calling or JSON-schema check (or the vision check, with `[vision] enabled = true`). It never falls back to another model. A model that is too small to call tools reliably is caught there, not halfway through a task.
 
 ### Tests
 
@@ -202,16 +271,18 @@ With `jig serve` running:
 
 ## Using a cloud model
 
-Jig is built for local models, and a local model is the private choice. If you would rather use a cloud model, Jig supports OpenAI, OpenRouter, Anthropic and Google Gemini through their OpenAI-compatible APIs, with these safeguards:
+Jig is built for local models, and a local model is the private choice. If you would rather use a cloud model, Jig supports OpenAI, OpenRouter, Anthropic and Google Gemini through their OpenAI-compatible APIs. You need an **API key** from the provider, and the provider **charges you** for what you use.
+
+The easy way is in the web page: on the set-up page (or **Settings > Model and connection > Change model**), choose **Use a cloud model instead**, pick the provider, paste the key, read exactly what will be sent to them, and agree. Jig checks the key and the model for real before switching. The safeguards:
 
 - **The privacy trade-off is real.** With a cloud agent, your conversation, your most recent memories (Jig adds them to every conversation and task), any memory or note the agent looks up, the tool results it works with, and any images you share are sent to the provider, under its terms and retention policy. If the Sentinel is also on the cloud, every action Jig wants to take, with its details, is sent too. Your memories and notes, history, audit log, rules and vault are stored only on your machine; only what goes into a request leaves it, and deleting a memory or note in Jig does not delete what the provider has already received.
-- **Explicit consent, twice.** Jig refuses to start with a cloud endpoint until you have set `allow_cloud = true` in that section of the config **and** run `jig model cloud confirm`, which shows exactly what is sent and records your confirmation in the audit log. The config line is per role: the safety checker never inherits it, so `[sentinel] allow_cloud = true` is needed too. When the safety checker uses the agent's endpoint (the default), one `jig model cloud confirm` covers both roles. It is recorded once, naming both. A different endpoint asks again. `jig model cloud revoke` withdraws it.
+- **Explicit consent, twice.** Jig's agent stays off with a cloud endpoint until that section of the config has `allow_cloud = true` (the cloud profiles, which the web page uses, have it) **and** you have confirmed, on the set-up page, in Settings or with `jig model cloud confirm`. Each shows exactly what is sent and records your confirmation in the audit log. The config line is per role: the safety checker never inherits it, so `[sentinel] allow_cloud = true` is needed too. When the safety checker uses the agent's endpoint (the default), one `jig model cloud confirm` covers both roles. It is recorded once, naming both. A different endpoint asks again. `jig model cloud revoke` withdraws it.
 - **HTTPS only.** A cloud endpoint over `http://` is a configuration error.
 - **Keys in the vault.** `jig model key set <provider>` stores the key in the vault (prompted without echo, or `--stdin`). It is never logged, never shown to the model, never available to any tool (a core rule blocks it and tool results are redacted), and it is redacted from errors and the audit log, including the masked form some providers echo back. `jig model key status` shows which keys are stored, and `jig model key delete <provider>` removes one. `api_key_env` still works if you prefer an environment variable.
 - **The safety checker uses the same model by default.** In the cloud profiles the safety checker is the agent's cloud model, so you need no local GPU. Its reviews go to the provider too. Each profile has a commented block for running the safety checker on a local model instead. Then its reviews never leave your machine and it is independent of the agent's provider, but you need a local model server and the memory it takes. When it points somewhere else, the safety checker gets none of `[model]`'s key or provider settings.
 - **You can see it.** Settings > Model and connection shows "Local" or "Cloud: host" for the agent and the safety checker, with a short note on what is sent, and a "Cloud model" label sits next to the health dot whenever the agent is on the cloud.
 
-Set up a provider in three steps (Anthropic shown; use `openai`, `openrouter` or `gemini` in the same way):
+From the terminal instead, set up a provider in three steps (Anthropic shown; use `openai`, `openrouter` or `gemini` in the same way):
 
 ```powershell
 .\.venv\Scripts\jig --config profiles/anthropic.toml model key set anthropic   # paste the key
@@ -270,7 +341,7 @@ docker compose start jig
 
 ## Running Jig always-on
 
-Jig can start by itself when you log in, but **only if you turn this on**. It is never enabled by default, by an installer or by the agent. `jig autostart enable` first shows exactly what it will register: the command line, the trigger, the account it runs as, the log location and the settings. It registers nothing until you answer `y` (or pass `--yes` in a script). Turning it on or off is recorded in the audit log (`autostart.enabled`, `autostart.disabled`).
+Jig can start by itself when you log in, but **only if you turn this on**. It is never enabled by default or by the agent. The Windows installer offers it as an unticked box that says what it adds, and then Start with Windows starts Jig's tray icon, which starts Jig. You can also turn it on in Settings > Starting with Windows. `jig autostart enable` first shows exactly what it will register: the command line, the trigger, the account it runs as, the log location and the settings. It registers nothing until you answer `y` (or pass `--yes` in a script). Turning it on or off is recorded in the audit log (`autostart.enabled`, `autostart.disabled`).
 
 ```powershell
 .\.venv\Scripts\jig autostart show       # what would be registered, including the full task XML; changes nothing
@@ -419,7 +490,7 @@ By default (`[sandbox] backend = "directory"`), the file tools are confined to a
 .\.venv\Scripts\jig sandbox build      # docker build -t jig-sandbox:0.1.0 jig/sandbox_container/image
 ```
 
-**Why it isn't the default.** The container backend refuses to start without a running Docker and the built image, and Jig never falls back to the directory sandbox. As the default, it would stop Jig starting at all on a machine without Docker, or whenever Docker Desktop is not running yet at sign-in. So the directory backend stays the default and Jig says plainly what is missing: `jig sandbox status`, `GET /sandbox` and Settings > Model and connection > Running code all list the steps.
+**Why it isn't the default.** The container backend refuses to start without a running Docker and the built image, and Jig never falls back to the directory sandbox. As the default, it would keep Jig's agent off on a machine without Docker, or whenever Docker Desktop is not running yet at sign-in. So the directory backend stays the default and Jig says plainly what is missing: `jig sandbox status`, `GET /sandbox` and Settings > Model and connection > To let Jig run code all list the steps.
 
 ```toml
 [sandbox]
@@ -431,7 +502,7 @@ pids_limit = 512
 egress_ports = [80, 443]
 ```
 
-If the container backend is selected and Docker is not running, or the image has not been built, Jig refuses to start and says why. It never falls back to the directory sandbox. The image is based on `mcr.microsoft.com/playwright/python` (Chromium included) and adds a pinned `playwright` package, an unprivileged `jig` user (uid 10001) and two small scripts: the browser server and the egress relay.
+If the container backend is selected and Docker is not running, or the image has not been built, Jig's agent stays off (set-up mode) and Jig says why. It never falls back to the directory sandbox. The image is based on `mcr.microsoft.com/playwright/python` (Chromium included) and adds a pinned `playwright` package, an unprivileged `jig` user (uid 10001) and two small scripts: the browser server and the egress relay.
 
 **The container.** Each agent workspace gets its own container (`jig-sbx-<agent>-<hash>`). It is created at start-up and removed at shutdown; files persist in the workspace. It runs with:
 
