@@ -134,6 +134,8 @@ Reasoning text (`reasoning_content` or `reasoning`) is optional. When a server s
 
 **Step limit.** One request may use up to `[runtime] max_steps` model calls (12 by default). After each step's tool results, Jig adds a short line saying how many are left and how much of the context window is used, so the model can plan to finish in time. If it still reaches the limit, Jig makes one more call with no tools offered, so nothing more can be done, and you get the model's own account of what it did and what is left instead of a bare error: in chat the `done` event has `limit_reached`, and you can ask it to carry on; a task fails with that account as its result.
 
+**How a task ended.** After a background task replies, Jig asks the model for one more, checked, structured answer: whether the task was `done`, `partial` or `could_not` be done, a one- or two-sentence summary, and what the result rests on (the tools, pages or files used). It is the task's `outcome` in the API (`GET /tasks/{id}`). A task that says it `could_not` be done fails, so tasks that depend on it don't run on nothing; tasks that do run are told how the earlier ones ended. Chat replies stay free text.
+
 At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, the agent stays off (Jig serves only its set-up page, in set-up mode) and Jig explains why. Run the same checks any time with `jig health`.
 
 Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.cpp fork (`profiles/llamacpp-bonsai.toml`). That is one example setup, not a requirement.

@@ -14,6 +14,8 @@ from .recurrence import Recurrence
 
 def _task_out(row: dict[str, Any]) -> dict[str, Any]:
     row["depends_on"] = json.loads(row.pop("depends_on_json"))
+    outcome = row.pop("outcome_json", None)
+    row["outcome"] = json.loads(outcome) if outcome else None
     return row
 
 

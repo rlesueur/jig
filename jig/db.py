@@ -216,7 +216,9 @@ _ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),
                   ("schedules", "created_by", "TEXT"),
                   ("notes", "updated_at", "TEXT"),
                   # The goal a planning run planned; NULL for chat and task runs.
-                  ("runs", "goal_id", "TEXT"))
+                  ("runs", "goal_id", "TEXT"),
+                  # How a background task ended (jig.agent.prompts.OUTCOME_SCHEMA); NULL if it was not recorded.
+                  ("tasks", "outcome_json", "TEXT"))
 
 
 def now() -> datetime:

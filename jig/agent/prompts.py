@@ -254,3 +254,23 @@ STEP_LIMIT_PROMPT = ("[Jig] You have used every model call allowed for this requ
                      "can be used. Reply to the user now, without calling any tool: say plainly that you stopped at "
                      "the step limit, what you did and found so far (only what the tool results above show), and "
                      "what is still left to do.")
+
+# A background task's checked finish: after its reply, one structured call records how it ended.
+OUTCOME_STATUSES = ("done", "partial", "could_not")
+OUTCOME_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": list(OUTCOME_STATUSES)},
+        "summary": {"type": "string"},
+        "basis": {"type": "string"},
+    },
+    "required": ["status", "summary", "basis"],
+    "additionalProperties": False,
+}
+OUTCOME_PROMPT = ("[Jig] Before this task is closed, record how it ended, as JSON matching the schema:\n"
+                  "- status: \"done\" if the task was fully done; \"partial\" if only some of it was; \"could_not\" "
+                  "if it could not be done at all.\n"
+                  "- summary: one or two sentences: what was done, and what was not.\n"
+                  "- basis: what the result rests on (the tools, pages, files or earlier results used), or "
+                  "\"nothing checked\" if it rests on none.\n"
+                  "Judge only from the tool results above, and do not claim more than they show.")

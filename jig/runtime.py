@@ -11,8 +11,8 @@ from typing import Any
 
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
-from .agent.prompts import (CONTEXT_KEY, agent_system_prompt, chosen_memories, for_model, kept_apart,
-                            shown_memories, turn_context)
+from .agent.prompts import (CONTEXT_KEY, OUTCOME_PROMPT, OUTCOME_SCHEMA, agent_system_prompt, chosen_memories,
+                            for_model, kept_apart, shown_memories, turn_context)
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -491,8 +491,11 @@ class Jig:
                    f"result. Read the rest with task_result_read (task_id {dep_id!r}, offset "
                    f"{DEPENDENCY_RESULT_CHARS}), or look for something in it with find; do not guess what it says.]"
                    if len(result) > DEPENDENCY_RESULT_CHARS else "")
+            outcome = dep.get("outcome")
+            ended = (f"\nThat task recorded that it ended {outcome['status'].replace('_', ' ')}: {outcome['summary']} "
+                     f"(based on: {outcome['basis']})" if outcome else "")
             parts.append(f"Result of earlier task '{dep['title']}' (task id {dep_id}):\n"
-                         f"{result[:DEPENDENCY_RESULT_CHARS]}{cut}")
+                         f"{result[:DEPENDENCY_RESULT_CHARS]}{cut}{ended}")
         parts.append("Complete only your task, then reply with a concise result.")
         intent = f"User goal: {goal['description']}\nCurrent task: {task['title']}: {task['description']}"
         return "\n\n".join(parts), intent
@@ -535,12 +538,35 @@ class Jig:
             log.exception("task %s crashed", task_id)
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"internal error: {type(exc).__name__}: {exc}")
             return
+        outcome = await self._task_outcome(task_id, result)
+        fields = {"result": result.final, "outcome_json": json.dumps(outcome) if outcome else None}
         if result.limit_reached:
-            self.set_task_status(task_id, TaskStatus.FAILED, result=result.final,
+            self.set_task_status(task_id, TaskStatus.FAILED, **fields,
                                  error=f"StepLimitExceeded: stopped at the step limit of {self.agent.max_steps} model "
                                        "calls before finishing; the result says what it did and what is left")
-            return
-        self.set_task_status(task_id, TaskStatus.DONE, result=result.final)
+        elif outcome and outcome["status"] == "could_not":
+            self.set_task_status(task_id, TaskStatus.FAILED, **fields,
+                                 error=f"The task reports it could not be done: {outcome['summary']}")
+        else:
+            self.set_task_status(task_id, TaskStatus.DONE, **fields)
+
+    async def _task_outcome(self, task_id: str, result: Any) -> dict[str, str] | None:
+        """How the task ended, from one structured call after its reply (``OUTCOME_SCHEMA``); None if the
+        model gave no valid answer, which is recorded and leaves the task's status to its reply."""
+        messages = [*result.messages, {"role": "user", "content": OUTCOME_PROMPT}]
+        try:
+            reply = await self.model.chat(messages, response_schema=OUTCOME_SCHEMA)
+            outcome = json.loads(reply.content)
+        except (JigError, ValueError) as exc:
+            self.audit.record("task.outcome", f"no outcome: {type(exc).__name__}", actor="runtime", task_id=task_id,
+                              run_id=result.run_id, error_type=type(exc).__name__, error_chars=len(str(exc)))
+            return None
+        self.audit.record("model.call", "task outcome", actor="runtime", task_id=task_id, run_id=result.run_id,
+                          purpose="task_outcome", **reply.summary())
+        self.audit.record("task.outcome", f"outcome: {outcome['status']}", actor="runtime", task_id=task_id,
+                          run_id=result.run_id, status=outcome["status"], retries=list(reply.structured_retries),
+                          summary_chars=len(outcome["summary"]), basis_chars=len(outcome["basis"]))
+        return outcome
 
     # Goals -----------------------------------------------------------------
     def create_goal(self, *, description: str, title: str | None = None) -> dict[str, Any]:
