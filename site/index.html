@@ -117,7 +117,7 @@
         <li class="card"><h3>Your accounts, with approval</h3><p>Connectors for Gmail, Google Calendar, Google Drive, Outlook calendar, OneDrive, GitHub, Slack, Discord, Matrix (unencrypted rooms) and Signal. Reading is just reading. Sending, posting, commenting and calendar changes always ask you first; drafts, label changes and file saves ask by default. Tokens stay in the vault.</p></li>
         <li class="card"><h3>Paying and booking</h3><p>Before any browser click or form submission, Jig checks the page for a checkout, payment or booking. If it finds one, it always asks you first and shows the site, the items and the total. It never types card details: the browser refuses card and bank fields.</p></li>
         <li class="card"><h3>Sandboxed tools</h3><p>File tools are confined to a per-agent folder. Running code needs Docker: code, shell commands and the headless browser run only in an optional hardened Docker container, behind a gated egress proxy. Without it, Jig cannot run code.</p></li>
-        <li class="card"><h3>Vision, if your model has it</h3><p>Image input works with any vision-capable model. With vision turned on, Jig checks at start-up that the model can really see, and refuses to start if it cannot.</p></li>
+        <li class="card"><h3>Vision, if your model has it</h3><p>Image input works with any vision-capable model. With vision turned on, Jig checks at start-up that the model can really see, and keeps the agent off if it cannot.</p></li>
         <li class="card"><h3>A face for the agent</h3><p>The runtime streams its state over WebSocket and server-sent events, so the avatar shows at a glance whether Jig is idle, working or waiting for you.</p></li>
         <li class="card"><h3>HTTP API and CLI</h3><p>Chat, goals, tasks, schedules, approvals, rules, memory, audit, vault and connections are all available locally through a documented API and the <code>jig</code> command.</p></li>
       </ul>
@@ -142,7 +142,7 @@
 
     <section class="wrap section" id="models" aria-labelledby="models-title">
       <h2 id="models-title">Bring your own local model</h2>
-      <p class="section-lede">Jig is model-agnostic. The endpoint, model name and sampling settings all come from config, and nothing in the code assumes a particular model or prompt format.</p>
+      <p class="section-lede">Jig is model-agnostic. The endpoint, model name and sampling settings all come from your settings, and nothing in the code assumes a particular model or prompt format.</p>
       <div class="cols">
         <div class="card">
           <h3>Compatible servers</h3>
@@ -164,7 +164,7 @@
             <li>A context of 32K tokens or more (advisable)</li>
             <li>Decent instruction following</li>
           </ul>
-          <p class="muted">At start-up Jig makes a real tool call and a real structured-output request against your model, and refuses to start if either fails.</p>
+          <p class="muted">At start-up Jig makes a real tool call and a real structured-output request against your model. Until both pass, the agent stays off: Jig shows only its set-up page and says what is wrong.</p>
         </div>
         <div class="card">
           <h3>One tested set-up</h3>
@@ -177,32 +177,37 @@
     <section class="band" id="quick-start" aria-labelledby="qs-title">
       <div class="wrap section">
         <h2 id="qs-title">Quick start</h2>
-        <p class="section-lede">You need Python 3.11 or newer and a local OpenAI-compatible server with a tool-capable model.</p>
+        <p class="section-lede">Jig needs two things: Jig itself, and a model to think with. The model can run on your own computer, in a free app such as LM Studio or Ollama, or you can use a cloud model with an API key. Jig's set-up page helps you choose, and checks your choice works before the agent starts.</p>
+        <p class="limits"><strong>Don't run <code>pip install jig</code>.</strong> That name on PyPI belongs to an unrelated project. Use the Windows installer, or install from the repository as below.</p>
         <div class="cols two">
           <div>
-            <h3 class="code-title">Windows (PowerShell)</h3>
-<pre><code>git clone https://github.com/rlesueur/jig.git
-cd jig
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -e .
-# Point jig.toml (or a profile) at your server, then:
-.\.venv\Scripts\jig health
-.\.venv\Scripts\jig serve
-.\.venv\Scripts\jig chat --url http://127.0.0.1:8766</code></pre>
+            <h3 class="code-title">Windows: the installer</h3>
+            <ol class="gate">
+              <li>Download <code>JigSetup-&lt;version&gt;.exe</code> from the <a href="https://github.com/rlesueur/jig/releases/latest">latest GitHub release</a>. It is for 64-bit Windows.</li>
+              <li>Open it. The installer isn't code-signed yet, so Windows will probably warn you. If your browser says the file isn't commonly downloaded, choose <strong>Keep</strong>. If Windows shows "Windows protected your PC", click <strong>More info</strong>, then <strong>Run anyway</strong>. Only do this for the file from Jig's releases page.</li>
+              <li>Click through the installer. It needs no administrator rights and no Python, Git or terminal. It asks whether Jig should start when you sign in to Windows; that is off unless you tick it.</li>
+              <li>Jig opens in your browser on its set-up page. Choose a model, and Jig checks it and starts. Afterwards, open Jig from the Start menu or its icon by the clock.</li>
+            </ol>
           </div>
           <div>
-            <h3 class="code-title">macOS and Linux</h3>
+            <h3 class="code-title">macOS and Linux: the developer route</h3>
+            <p>There is no installer for macOS or Linux yet. Install from the repository instead; you need Python 3.11 or newer, Git and a terminal. The same steps work on Windows without the installer, using <code>.\.venv\Scripts\</code> instead of <code>.venv/bin/</code>.</p>
 <pre><code>git clone https://github.com/rlesueur/jig.git
 cd jig
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
-# Point jig.toml (or a profile) at your server, then:
-.venv/bin/jig health
-.venv/bin/jig serve
-.venv/bin/jig chat --url http://127.0.0.1:8766</code></pre>
+.venv/bin/jig serve</code></pre>
+            <p><code>jig serve</code> opens Jig in your browser, already signed in. If Jig has no working model yet, it opens on its set-up page. Leave the terminal open: closing it stops Jig. To open Jig again while it's running, run <code>jig ui</code>.</p>
           </div>
         </div>
-        <p>Use a profile with <code>jig --config profiles/ollama.toml serve</code>. The <a href="https://github.com/rlesueur/jig#readme">README</a> covers configuration, the API, tests and the container sandbox.</p>
+        <h3>Need a model?</h3>
+        <p>If you already run llama.cpp, LM Studio or Ollama, the set-up page finds it on its usual port, or you can type its address. If you don't, here is a suggestion for a graphics card with 10 to 12 GB of memory:</p>
+        <ul class="ticks">
+          <li><strong>Granite 4.2 8B</strong>, the <code>Q4_K_M</code> version (a 5.3 GB download). Measured with llama.cpp's <code>llama-server</code>: about 8.1 GB of graphics memory with a 16K context, and about 10.6 GB with 32K. Jig works best with 32K, which needs a 12 GB card.</li>
+          <li>Below 10 GB, or with no graphics card, nothing has been measured yet: a cloud model is the tested choice.</li>
+        </ul>
+        <p class="muted">This is a suggestion, not a requirement: any capable model with tool calling works. The figures are single measurements on one card, so allow some margin. The set-up page reads your graphics card and makes the same suggestion.</p>
+        <p>Once Jig is running, everything is in Settings: changing the model, cloud keys, running code (with Docker), starting with Windows, connecting your accounts and using Jig from your phone. The <a href="https://github.com/rlesueur/jig#readme">README</a> covers the details, configuration files, the API, tests and the container sandbox.</p>
       </div>
     </section>
   </main>

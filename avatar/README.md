@@ -162,7 +162,7 @@ Every pose parameter is interpolated, so changing state never produces a hard cu
 | `paused` | Peacefully asleep: eyes closed in contented curves, a small smile, drooping ears, slow breathing. Motion slows almost to a stop, colours desaturate and a pause badge appears. |
 | `dance` (aliases `dancing`, `jig`) | The full dance routine, looping (see Dance above). |
 
-The state set follows how Meta Muse and OpenAI Dots present always-on agents. Both keep working in the background, return when they need a decision or approval (for example before sending or buying), run proactive read-only research, support calls, and can be paused. Jig adds per-task working variants so the user can tell at a glance what kind of work is under way.
+The state set matches what Jig's runtime does. Jig keeps working in the background, comes back when it needs your approval (for example before it sends anything, or at a checkout or booking), runs proactive read-only research, and can be paused. It shows `talking` while it writes a chat reply; voice is on the roadmap, and there are no calls yet. The per-task working variants show at a glance what kind of work is under way.
 
 ## Mapping agent runtime events to states
 
