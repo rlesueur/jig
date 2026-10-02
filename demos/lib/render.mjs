@@ -204,9 +204,11 @@ async function main() {
   requireTool(FFMPEG, 'ffmpeg');
   requireTool(FFPROBE, 'ffprobe');
   const scenario = await loadScenario(scenarioName);
+  /* an instructional cut can be edited from another scenario's capture of the same real run */
+  const captureName = scenario.captureOf || scenarioName;
   const stamp = !args.capture || args.capture === 'latest'
-    ? readFileSync(path.join(CAPTURES, scenarioName, 'latest.txt'), 'utf8').trim() : args.capture;
-  const captureDir = path.join(CAPTURES, scenarioName, stamp);
+    ? readFileSync(path.join(CAPTURES, captureName, 'latest.txt'), 'utf8').trim() : args.capture;
+  const captureDir = path.join(CAPTURES, captureName, stamp);
   const manifest = JSON.parse(readFileSync(path.join(captureDir, 'manifest.json'), 'utf8'));
   if (manifest.status !== 'passed') throw new Error(`Capture ${stamp} did not pass (${manifest.status}); refusing to render it`);
   if (args.test) manifest.test = true;

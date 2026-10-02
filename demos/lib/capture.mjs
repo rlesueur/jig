@@ -98,7 +98,9 @@ async function main() {
   let status = 'passed';
   let error = null;
   try {
-    await jig.prepare();
+    /* a scenario can film a Jig that is already running with its own accounts (see JigInstance.attachExternal) */
+    if (scenario.external) await jig.attachExternal(scenario.external);
+    else await jig.prepare();
     await scenario.capture(ctx);
   } catch (err) {
     status = err.pending ? 'pending' : 'failed';
@@ -128,7 +130,8 @@ async function main() {
     manifest.checks = checks.results;
     manifest.terms = terms.map((t) => t.manifest([jig.token]));
     manifest.screen = screen ? screen.manifest() : null;
-    manifest.workspace = jig.workspace;
+    manifest.workspace = jig.external ? null : jig.workspace;
+    if (jig.external) manifest.external = jig.external;
     manifest.events = jig.events ? 'events.jsonl' : null;
     writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
     await jig.cleanup({ keep: Boolean(args['keep-data']) || status === 'failed' });

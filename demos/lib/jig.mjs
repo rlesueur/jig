@@ -5,7 +5,7 @@ import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { DEMOS, PORTS, WORK, now, requirePortFree, sleep, venvBin, waitUntil } from './util.mjs';
+import { DEMOS, JIG_REPO, PORTS, WORK, now, requirePortFree, sleep, venvBin, waitUntil } from './util.mjs';
 import { TermSession } from './term.mjs';
 
 export const BASE = `http://127.0.0.1:${PORTS.jig}`;
@@ -20,6 +20,8 @@ export class JigInstance {
   constructor({ name, captureDir, config = 'demo.toml' }) {
     this.name = name;
     this.captureDir = captureDir;
+    this.base = BASE;
+    this.external = null;
     this.configPath = path.join(DEMOS, 'configs', config);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.root = path.join(os.tmpdir(), 'jig-demos', `${name}-${stamp}`);
@@ -54,6 +56,7 @@ export class JigInstance {
   }
 
   async prepare() {
+    if (this.external) return;
     await requirePortFree(PORTS.jig);
     mkdirSync(this.dataDir, { recursive: true });
     mkdirSync(this.sandboxDir, { recursive: true });
@@ -86,14 +89,14 @@ export class JigInstance {
         throw new Error(`jig serve exited during start-up (code ${this.serve.exitCode}). Last output:\n${this.serve.plainText().slice(-2500)}`);
       }
       try {
-        const r = await fetch(`${BASE}/health`);
+        const r = await fetch(`${this.base}/health`);
         return r.ok && (await r.json()).status === 'ok';
       } catch {
         return false;
       }
     }, { timeoutMs, intervalMs: 500 });
     this.token = this.readTokenViaCli();
-    this.events = new EventRecorder(path.join(this.captureDir, 'events.jsonl'), this.token);
+    this.events = new EventRecorder(path.join(this.captureDir, 'events.jsonl'), this.token, this.base);
     await this.events.connect();
   }
 
@@ -102,7 +105,45 @@ export class JigInstance {
     if (!/^[A-Za-z0-9_-]{32,}$/.test(token || '')) throw new Error('attach() needs the token exactly as `jig token show` printed it');
     this.token = token;
     await this.get('/status');
-    this.events = new EventRecorder(path.join(this.captureDir, 'events.jsonl'), this.token);
+    this.events = new EventRecorder(path.join(this.captureDir, 'events.jsonl'), this.token, this.base);
+    await this.events.connect();
+  }
+
+  /**
+   * Use a Jig that is already running elsewhere with its own config and data (the connectors test Jig, whose
+   * accounts are connected). It runs the repository's working tree, so this refuses unless jig/ has no
+   * uncommitted changes and the server started after the last commit to jig/: what is filmed is exactly HEAD.
+   * dataDir: the Jig's data folder when it isn't the config's own (it was started with JIG_DATA_DIR).
+   */
+  async attachExternal({ base, config, dataDir = null, snapshot = false }) {
+    const git = (...a) => spawnSync('git', ['-C', JIG_REPO, ...a], { encoding: 'utf8' }).stdout.trim();
+    if (snapshot) {
+      /* a Jig run from the demo venv (run.ps1's snapshot): its jig/ must be HEAD's, file for file */
+      const sha = readFileSync(path.join(WORK, 'venv-commit.txt'), 'utf8').trim();
+      if (git('rev-parse', `${sha}:jig`) !== git('rev-parse', 'HEAD:jig')) {
+        throw new Error(`The demo venv runs ${sha}, whose jig/ differs from HEAD's; run demos/run.ps1 -PrepareOnly and restart ${base}`);
+      }
+    } else {
+      const dirty = git('status', '--porcelain', '--', 'jig');
+      if (dirty) throw new Error(`jig/ has uncommitted changes, which would end up on camera:\n${dirty}`);
+    }
+    /* the last commit that changed Jig itself; a later commit to tests or demos needs no restart */
+    const head = spawnSync('git', ['-C', JIG_REPO, 'log', '-1', '--format=%h %ct', '--', 'jig'], { encoding: 'utf8' }).stdout.trim().split(' ');
+    this.base = base;
+    this.configPath = config;
+    this.external = { base, config, dataDir, snapshot, head: head[0] };
+    const repoJig = path.join(JIG_REPO, '.venv', 'Scripts', 'jig.exe');
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('JIG_')));
+    if (dataDir) env.JIG_DATA_DIR = dataDir;
+    const r = spawnSync(repoJig, ['--config', config, 'token', 'show'], { env, encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) throw new Error(`jig token show failed (${r.status}): ${r.stderr}`);
+    this.token = r.stdout.trim().split(/\r?\n/).pop().trim();
+    const starts = (await this.get('/audit?kind=runtime.start&limit=1000')).filter((a) => a.kind === 'runtime.start');
+    const started = Math.max(...starts.map((a) => Date.parse(a.ts))) / 1000;
+    if (!(started >= Number(head[1]))) {
+      throw new Error(`The Jig at ${base} started before commit ${head[0]}; restart it so it runs exactly HEAD`);
+    }
+    this.events = new EventRecorder(path.join(this.captureDir, 'events.jsonl'), this.token, this.base);
     await this.events.connect();
   }
 
@@ -116,7 +157,7 @@ export class JigInstance {
   }
 
   async api(method, route, body) {
-    const r = await fetch(`${BASE}${route}`, {
+    const r = await fetch(`${this.base}${route}`, {
       method,
       headers: { Authorization: `Bearer ${this.token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -154,6 +195,7 @@ export class JigInstance {
   }
 
   async cleanup({ keep = false } = {}) {
+    if (this.external) return;
     if (keep) {
       console.log(`Kept Jig's temporary data in ${this.root}`);
       return;
@@ -164,9 +206,10 @@ export class JigInstance {
 
 /** Every event from the real /events WebSocket, timestamped on receipt and saved to disk. */
 export class EventRecorder {
-  constructor(file, token) {
+  constructor(file, token, base = BASE) {
     this.file = file;
     this.token = token;
+    this.base = base;
     this.events = [];
     this.out = createWriteStream(file);
     this.ws = null;
@@ -174,7 +217,7 @@ export class EventRecorder {
 
   connect() {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`${BASE.replace('http', 'ws')}/events`, { headers: { Authorization: `Bearer ${this.token}` } });
+      const ws = new WebSocket(`${this.base.replace('http', 'ws')}/events`, { headers: { Authorization: `Bearer ${this.token}` } });
       this.ws = ws;
       ws.once('open', () => resolve());
       ws.once('error', reject);

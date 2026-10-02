@@ -6,8 +6,11 @@ import { waitUntil } from '../lib/util.mjs';
 /** Open the real UI and sign in with the token from `jig token show`, through the UI's own dialog. */
 export async function signIn(ctx, s) {
   const p = s.page;
-  await s.goto(`${BASE}/`);
+  await s.goto(`${ctx.jig.base || BASE}/`);
   await ui.loginDialog(p).waitFor({ state: 'visible' });
+  /* the token sign-in is folded away under "Advanced" in newer UIs */
+  const advanced = p.getByTestId('login-advanced');
+  if (await advanced.count() && !(await ui.tokenField(p).isVisible())) await s.click(advanced.locator('summary'));
   await s.paste(ui.tokenField(p), ctx.jig.token);
   await s.click(ui.signIn(p));
   await waitUntil('the UI to connect to /events', async () => /Live/.test(await ui.connection(p).textContent()));

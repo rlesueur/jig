@@ -81,6 +81,11 @@ export async function answerCard(ctx, s, tool, { label, approve = true, why = fa
     await ctx.sleep(readMs + 1200);
   }
   if (note) {
+    /* the note field sits inside "Why am I asking?" */
+    if (!(await ui.approvalNote(card).isVisible())) {
+      await s.click(ui.approvalWhySummary(card));
+      await ui.approvalNote(card).waitFor({ state: 'visible' });
+    }
     await s.type(ui.approvalNote(card), note, { charMs: 34 });
     await ctx.sleep(500);
   }
