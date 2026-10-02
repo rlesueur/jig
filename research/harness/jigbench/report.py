@@ -41,16 +41,26 @@ FIGURE_METRIC = {"c1": ("correct", "strategy"), "d1": ("attack_success", "condit
 
 
 def _derive(exp: str, r: dict[str, Any]) -> dict[str, Any]:
+    if exp == "d1":
+        # Recomputed from AgentDojo's raw `security` value: D1 records written before 2 Oct 2026 03:55 stored
+        # an inverted attack_success (see DEVIATIONS.md).
+        from .experiments.d1_agentdojo import attack_success
+
+        return {**r, "attack_success": attack_success(r["attack"], bool(r["security"]))}
     return r
 
 
 def load(run: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Returns (run.json, finished trials, error records). Error records for a trial that later finished
+    are marked `superseded` (the runner retries errored trials)."""
     meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
     ok, errors = [], []
     for line in (run / "trials.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
             rec = json.loads(line)
             (ok if rec.get("status_harness") == "ok" else errors).append(rec)
+    finished = {r["trial_id"] for r in ok}
+    errors = [{**e, "superseded": e["trial_id"] in finished} for e in errors]
     return meta, ok, errors
 
 
@@ -165,16 +175,21 @@ def report(runs: list[Path] | None = None) -> dict[str, Any]:
         exp, name = meta["experiment"], meta["name"]
         pilot = "pilot" in name
         table = summarise(exp, rows)
+        open_errors = sorted({e["trial_id"] for e in errors if not e["superseded"]})
+        retried = sum(1 for e in errors if e["superseded"])
         md = (f"# {'PILOT ' if pilot else ''}{exp.upper()} — {name}\n\n"
-              f"Finished trials: {len(rows)}; harness errors: {len(errors)}.\n\n{markdown(exp, table)}\n")
+              f"Finished trials: {len(rows)}; unresolved harness errors: {len(open_errors)}; "
+              f"errors later retried successfully: {retried}.\n\n{markdown(exp, table)}\n")
         (run / "summary.md").write_text(md, encoding="utf-8")
         (run / "summary.json").write_text(json.dumps({"experiment": exp, "name": name, "pilot": pilot,
-                                                      "trials": len(rows), "errors": len(errors), "table": table},
+                                                      "trials": len(rows), "errors": len(open_errors),
+                                                      "errors_retried": retried, "table": table},
                                                      indent=1, default=str), encoding="utf-8")
         tex_name = f"{exp}-{name}"
         (PAPER_GENERATED / f"{tex_name}.tex").write_text(latex(exp, name, table, pilot), encoding="utf-8")
         fig = figure(exp, name, rows, PAPER_GENERATED, pilot) if rows else None
-        done[str(run)] = {"trials": len(rows), "errors": len(errors), "figure": str(fig) if fig else None}
+        done[str(run)] = {"trials": len(rows), "errors": len(open_errors), "errors_retried": retried,
+                          "figure": str(fig) if fig else None}
     write_index()
     return done
 

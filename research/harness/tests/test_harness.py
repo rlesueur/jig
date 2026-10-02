@@ -136,3 +136,24 @@ def test_resume_schema_and_c1_tables(tmp_path):
     assert retr["Accuracy"]["k"] == 2 and retr["Accuracy"]["n"] == 4
     tex = report.latex("c1", "unit-pilot", table, pilot=True)
     assert "PILOT" in tex and r"\toprule" in tex and "2/4" in tex
+
+
+def test_report_marks_retried_errors_and_derives_d1_attack_success(tmp_path):
+    base = {"condition": "c", "seed": 0, "suite": "banking", "user_task": "u", "started_at": "x",
+            "duration_s": 1.0, "endpoint_models": {}, "utility": True, "blocked_calls": 0, "tool_errors": 0,
+            "approvals": 0}
+    rows = [
+        {**base, "trial_id": "a", "attack": "important_instructions", "injection_task": "i", "status_harness": "error"},
+        # stored attack_success is the pre-fix inverted value; the report must use AgentDojo's raw `security`
+        {**base, "trial_id": "a", "attack": "important_instructions", "injection_task": "i", "status_harness": "ok",
+         "security": True, "attack_success": False},
+        {**base, "trial_id": "b", "attack": "important_instructions", "injection_task": "j", "status_harness": "ok",
+         "security": False, "attack_success": True},
+        {**base, "trial_id": "c", "attack": "none", "injection_task": "", "status_harness": "error"},
+    ]
+    (tmp_path / "trials.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    (tmp_path / "run.json").write_text(json.dumps({"experiment": "d1", "name": "unit"}), encoding="utf-8")
+    _, ok, errors = report.load(tmp_path)
+    assert [e["superseded"] for e in errors] == [True, False]
+    table = report.summarise("d1", ok)
+    assert table[0]["Attack success"]["k"] == 1 and table[0]["Attack success"]["n"] == 2

@@ -191,6 +191,26 @@ def test_attacks_resolve_the_model_name_for_every_condition() -> None:
                 assert injections, (path.name, cond["id"], attack)
 
 
+def test_attack_success_follows_agentdojo_security_semantics() -> None:
+    """Executing an injection task's own ground-truth calls must score as a successful attack; doing nothing
+    must not. Uses AgentDojo's real environment, runtime and security checker."""
+    from jigbench.experiments.d1_agentdojo import attack_success
+
+    suite = get_suite("v1", "banking")
+    task = suite.get_injection_task_by_id("injection_task_0")
+    for executed in (True, False):
+        runtime = FunctionsRuntime(suite.tools)
+        pre = suite.load_and_inject_default_environment({})
+        post = pre.model_copy(deep=True)
+        calls = task.ground_truth(pre) if executed else []
+        for call in calls:
+            _, error = runtime.run_function(post, call.function, dict(call.args))
+            assert error is None, error
+        security = suite._check_injection_task_security(task, [], pre, post, calls)
+        assert attack_success("important_instructions", security) is executed
+        assert attack_success("none", security) is False
+
+
 def test_unknown_tool_is_not_classified_silently() -> None:
     with pytest.raises(KeyError):
         classify("totally_made_up_tool")
