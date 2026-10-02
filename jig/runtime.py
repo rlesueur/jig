@@ -17,7 +17,7 @@ from .connectors import ConnectionStore, Connectors
 from .connectors import register_tools as register_connector_tools
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
-from .errors import CannotDelete, JigError, NotFound
+from .errors import CannotDelete, JigError, ModelCapabilityError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .instance import InstanceLock
@@ -45,18 +45,51 @@ _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_END, EventType.SENTINE
                      EventType.APPROVAL_REQUESTED, EventType.APPROVAL_RESOLVED}
 
 
+async def probe_capabilities(config: Config, model: ModelClient, sentinel_model: ModelClient,
+                             vision: VisionService, progress: Any = None) -> dict[str, Any]:
+    """Real probes: the agent model must make well-formed tool calls and produce JSON-schema output
+    (used by the planner); the Sentinel model must produce JSON-schema output; with vision on, the
+    agent model must describe a test picture. ``progress(step)`` is called before each probe."""
+    say = progress or (lambda step: None)
+
+    async def check(step: str, probe: Any) -> dict[str, Any]:
+        say(step)
+        try:
+            return await probe()
+        except ModelCapabilityError as exc:
+            exc.check = exc.check or step
+            raise
+
+    agent = await check("tools", model.probe_tool_calling)
+    agent |= await check("structured", model.probe_structured_output)
+    caps: dict[str, Any] = {"agent": agent}
+    same = (config.sentinel.base_url.rstrip("/") == config.model.base_url.rstrip("/")
+            and sentinel_model.model_name == model.model_name)
+    caps["sentinel"] = ({"same_as_agent": True} if same
+                        else await check("sentinel", sentinel_model.probe_structured_output))
+    if vision.enabled:
+        caps["agent"] |= await check("vision", vision.probe)
+    return caps
+
+
 class Jig:
-    def __init__(self, config: Config, *, start_reason: str = "manual"):
+    def __init__(self, config: Config, *, start_reason: str = "manual", instance_lock: InstanceLock | None = None):
+        """``instance_lock``: a lock the caller already holds for this data directory (the server holds it
+        through set-up mode and model changes); the runtime then never releases it."""
         self.config = config
         self.start_reason = start_reason
         # Taken first: two runtimes must never open the same data directory.
-        self.instance_lock = InstanceLock(config.data_dir)
-        self.instance_lock.acquire(start_reason=start_reason, host=config.server.host, port=config.server.port,
-                                   config=str(config.source))
+        self._owns_lock = instance_lock is None
+        if instance_lock is None:
+            instance_lock = InstanceLock(config.data_dir)
+            instance_lock.acquire(start_reason=start_reason, host=config.server.host, port=config.server.port,
+                                  config=str(config.source))
+        self.instance_lock = instance_lock
         try:
             self._init_components(config)
         except BaseException:
-            self.instance_lock.release()
+            if self._owns_lock:
+                self.instance_lock.release()
             raise
 
     def _init_components(self, config: Config) -> None:
@@ -142,8 +175,13 @@ class Jig:
         return ContainerSandbox(self.config.sandbox, self.sandbox.root, self.config.runtime.agent_id, egress)
 
     # Lifecycle -------------------------------------------------------------
-    async def start(self, *, run_scheduler: bool = True, check_capabilities: bool = True) -> None:
-        """Check the model servers and capabilities (failing loudly), recover interrupted work, start the heartbeat."""
+    async def start(self, *, run_scheduler: bool = True, check_capabilities: bool = True,
+                    capabilities: dict[str, Any] | None = None) -> None:
+        """Check the model servers and capabilities (failing loudly), recover interrupted work, start the heartbeat.
+        ``capabilities``: results of ``probe_capabilities`` just run against this same config (set-up mode
+        checks the model before switching to it), used instead of probing again."""
+        if capabilities is not None:
+            self.capabilities, check_capabilities = dict(capabilities), False
         try:
             await self._start(run_scheduler=run_scheduler, check_capabilities=check_capabilities)
         except BaseException:
@@ -193,17 +231,7 @@ class Jig:
             self.scheduler.start()
 
     async def check_capabilities(self) -> dict[str, Any]:
-        """Real probes: the agent model must make well-formed tool calls and produce JSON-schema output
-        (used by the planner); the Sentinel model must produce JSON-schema output."""
-        caps: dict[str, Any] = {
-            "agent": {**await self.model.probe_tool_calling(), **await self.model.probe_structured_output()},
-        }
-        same = (self.config.sentinel.base_url.rstrip("/") == self.config.model.base_url.rstrip("/")
-                and self.sentinel_model.model_name == self.model.model_name)
-        caps["sentinel"] = {"same_as_agent": True} if same else await self.sentinel_model.probe_structured_output()
-        if self.vision.enabled:
-            caps["agent"] |= await self.vision.probe()
-        return caps
+        return await probe_capabilities(self.config, self.model, self.sentinel_model, self.vision)
 
     async def stop(self, *, stop_request: dict[str, Any] | None = None) -> None:
         """Graceful shutdown. ``stop_request`` comes from 'Turn Jig off' (``POST /power/stop`` or ``jig stop``):
@@ -245,7 +273,8 @@ class Jig:
             await self.sentinel_model.aclose()
             self.db.close()
         finally:
-            self.instance_lock.release()
+            if self._owns_lock:
+                self.instance_lock.release()
 
     def _mark_interrupted(self, why: str) -> list[str]:
         """Put tasks that were mid-run back in the queue (they resume from their checkpoint) and close the

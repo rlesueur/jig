@@ -184,7 +184,7 @@ class StopSignals:
             self._event_handle = None
 
 
-def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: bool) -> int:
+def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: bool, access_log: bool = True) -> int:
     """Run uvicorn with Jig's stop signals. Returns 0 after a clean stop. If start-up fails, uvicorn
     exits the process with code 3; the 1 below covers any start-up failure that returns instead."""
     import uvicorn
@@ -192,9 +192,12 @@ def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: b
     # Open event streams (SSE, WebSockets) would otherwise hold a graceful shutdown open indefinitely.
     # proxy_headers=False: X-Forwarded-For/-Proto must never replace the real TCP peer, because remote access
     # checks that the connection itself belongs to tailscaled (jig.remote).
+    # Without access_log (a person at a terminal), uvicorn logs through Jig's handlers: warnings on screen,
+    # everything in the log file.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info", lifespan="on",
-                                           timeout_graceful_shutdown=10, proxy_headers=False,
-                                           log_config=None if log_to_file else uvicorn.config.LOGGING_CONFIG))
+                                           timeout_graceful_shutdown=10, proxy_headers=False, access_log=access_log,
+                                           log_config=None if log_to_file or not access_log
+                                           else uvicorn.config.LOGGING_CONFIG))
 
     def request_exit(why: str) -> None:
         if not server.should_exit:

@@ -12,11 +12,33 @@ class ConfigError(JigError):
 
 
 class ModelServerUnavailable(JigError):
-    """The local model server could not be reached or is not serving the model."""
+    """The local model server could not be reached or is not serving the model.
+
+    ``reason`` says which, for plain-English messages (``jig.friendly``): "unreachable", "key_refused",
+    "http_error", "not_json", "not_served" or "which_model" (several models and no name set); empty when
+    not known. ``available`` lists the models the server reported, ``status`` its HTTP status."""
+
+    def __init__(self, message: str, *, reason: str = "", status: int | None = None,
+                 available: list[str] | None = None):
+        super().__init__(message)
+        self.reason = reason
+        self.status = status
+        self.available = available or []
+
+
+class ModelKeyMissing(ConfigError):
+    """An endpoint names a vault key (``api_key_secret``) that has not been stored yet."""
+
+    def __init__(self, message: str, *, secret: str):
+        super().__init__(message)
+        self.secret = secret
 
 
 class ModelCapabilityError(JigError):
-    """The configured model cannot do something Jig requires (for example, well-formed tool calls)."""
+    """The configured model cannot do something Jig requires (for example, well-formed tool calls).
+    ``check`` names the check it failed ("tools", "structured", "sentinel" or "vision") when known."""
+
+    check: str = ""
 
 
 class ModelError(JigError):

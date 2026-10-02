@@ -297,8 +297,8 @@ class ModelServerSupervisor:
 
     def _not_managed_reason(self, base_url: str) -> str:
         if not self.configured:
-            return (f"Jig doesn't manage a model server: [model.launch] has no command, so the server at {base_url} "
-                    "is one you run yourself. Stop it where you started it.")
+            return (f"You started your model app yourself (at {base_url}), so Jig leaves it running. Close it from "
+                    "its own window or tray icon if you want to free the graphics memory.")
         if self.stopped_by_user:
             return "The model server Jig started is already stopped. Start it again with 'jig model start'."
         return (f"Jig didn't start the model server at {base_url}: it was already running when Jig started "

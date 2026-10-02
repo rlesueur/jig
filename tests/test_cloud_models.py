@@ -214,10 +214,19 @@ async def test_refuses_to_start_without_consent(tls, tmp_path, monkeypatch):
     with pytest.raises(CloudConsentRequired, match="jig model cloud confirm"):
         Jig(cfg)
 
-    # The real CLI refuses too, before the server starts, with the same explanation.
-    out = cli(tmp_path / "jig.toml", data, "serve", "--port", str(free_port()),
-              env={"JIG_TEST_SENTINEL_KEY": tls.api_key})
-    assert out.returncode == 1 and "CloudConsentRequired" in out.stderr and "jig model cloud confirm" in out.stderr
+    # The real server keeps the agent off too: it serves only the set-up page, which asks for the OK.
+    port = free_port()
+    proc, log = start_jig(data, port, config=tmp_path / "jig.toml", env={"JIG_TEST_SENTINEL_KEY": tls.api_key})
+    try:
+        wait_health(port, proc=proc, log=log, timeout=60)
+        status = httpx.get(f"http://127.0.0.1:{port}/status", headers=token(data), timeout=10).json()
+        assert status["status"] == "setup", status
+        assert status["setup"]["problem"]["kind"] == "consent" and status["setup"]["recheck"] is False
+        assert "jig model cloud confirm" in status["setup"]["detail"]
+    finally:
+        cli(tmp_path / "jig.toml", data, "stop")
+        proc.wait(60)
+        kill(proc)
     # Confirming without a terminal (and without --yes) changes nothing.
     out = cli(tmp_path / "jig.toml", data, "model", "cloud", "confirm")
     assert out.returncode == 1 and "Re-run with --yes" in out.stderr

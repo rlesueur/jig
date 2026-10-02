@@ -136,7 +136,9 @@ def test_scheduled_task_end_to_end(tmp_path):
         wait_stopped(data_dir)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            st = json.loads(jig_cli("autostart", "status", "--json", *common).stdout)
+            out = jig_cli("autostart", "status", "--json", *common)
+            assert out.returncode == 0, out.stdout + out.stderr
+            st = json.loads(out.stdout)
             if st["state"] == "Ready":
                 break
             time.sleep(1)

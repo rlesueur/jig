@@ -3,6 +3,7 @@ real Windows session-end message), the bounded model readiness wait, and schedul
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -52,7 +53,8 @@ def test_second_process_on_same_data_dir_is_refused(tmp_path):
         # A second real 'jig serve' on another port but the same data directory.
         b, log_b = start_jig(data_dir, port_b)
         assert b.wait(60) == EXIT_INSTANCE_LOCKED
-        assert "already uses" in log_b.read_text(errors="replace")
+        refused = log_b.read_text(errors="replace")
+        assert f"Jig is already running for this data folder, at http://127.0.0.1:{port_a}" in refused, refused
 
         # The runtime's own lock, taken from this (third) process, is refused too.
         with pytest.raises(InstanceLocked, match="already using the data directory"):
@@ -193,15 +195,61 @@ async def test_launched_server_that_exits_fails_at_once(tmp_path):
     assert "boom" in (config.data_dir / "logs" / "model-server.log").read_text()
 
 
-def test_serve_exits_non_zero_when_model_never_ready(tmp_path):
+async def _relay(listen_port: int, target_host: str, target_port: int) -> asyncio.Server:
+    """A plain TCP relay to the real model server: the model app 'comes up' on listen_port."""
+
+    async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+
+    async def handle(client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
+        server_r, server_w = await asyncio.open_connection(target_host, target_port)
+        await asyncio.gather(pipe(client_r, server_w), pipe(server_r, client_w))
+
+    return await asyncio.start_server(handle, "127.0.0.1", listen_port)
+
+
+async def test_serve_waits_in_setup_mode_and_starts_when_the_model_comes_up(tmp_path):
+    """A model app that isn't up yet (Jig started at sign-in before it, say) keeps Jig in set-up mode, not
+    exited, and Jig tries the same model again by itself, starting the agent once it answers."""
     cfg = _dead_endpoint_config(tmp_path, timeout_s=3)
-    started = time.monotonic()
-    proc = subprocess.run([sys.executable, "-m", "jig.cli", "--config", str(cfg), "serve", "--port",
-                           str(free_port())], capture_output=True, text=True, timeout=60,
-                          env={**os.environ, "JIG_DATA_DIR": str(tmp_path / "data")})
-    assert proc.returncode == 3  # uvicorn's start-up failure code; the launcher retries any non-zero exit
-    assert "was not ready within 3s" in proc.stdout + proc.stderr
-    assert time.monotonic() - started < 30
+    real = httpx.URL(load_config().model.base_url)
+    dead_port = httpx.URL(load_config(cfg).model.base_url).port
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('name = "any-model"\n', ""), encoding="utf-8")
+    data, port = tmp_path / "data", free_port()
+    proc, out = start_jig(data, port, config=cfg)
+    relay = None
+    try:
+        wait_health(port, proc=proc, log=out, timeout=60)
+        auth = token(data)
+        status = httpx.get(f"http://127.0.0.1:{port}/status", headers=auth, timeout=10).json()
+        assert status["status"] == "setup", status
+        assert status["setup"]["recheck"] is True and status["setup"]["configured"] is True
+        assert "set-up mode" in out.read_text(errors="replace")
+
+        relay = await _relay(dead_port, real.host, real.port)
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            status = await asyncio.to_thread(
+                lambda: httpx.get(f"http://127.0.0.1:{port}/status", headers=auth, timeout=10).json())
+            if status.get("status") != "setup":
+                break
+            await asyncio.sleep(2)
+        assert status.get("status") != "setup", status
+        assert proc.poll() is None
+    finally:
+        await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "jig.cli", "--config", str(cfg), "stop",
+                                                 "--data-dir", str(data)], capture_output=True, timeout=120)
+        await asyncio.to_thread(wait_stopped, data)
+        kill(proc)
+        if relay is not None:
+            relay.close()
 
 
 async def test_already_running_server_is_not_launched_again(tmp_path, config):

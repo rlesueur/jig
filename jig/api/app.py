@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,7 +45,9 @@ from ..policy.approvals import ApprovalConflict
 from ..policy.core import CORE_RULES
 from ..power import PowerRefused, autostart_summary, check_stop, gpu_usage, power_state, start_again
 from ..remote import Refused, RemoteAccess, RemoteError, RequestSource
+from ..friendly import explain
 from ..runtime import Jig
+from .setup import Controller, setup_router
 
 
 class ChatIn(BaseModel):
@@ -217,6 +220,10 @@ def _qr_data_uri(text: str) -> str:
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 AVATAR_JS = Path(__file__).resolve().parents[2] / "avatar" / "jig-avatar.js"
+# The Windows installer writes this next to the jig package, and registers jig:// links that start Jig's
+# tray app (so the "Jig is off" page can offer a Turn on button).
+DESKTOP_MARKER = Path(__file__).resolve().parents[2] / "installed.json"
+DESKTOP = {"installed": DESKTOP_MARKER.is_file(), "start_link": "jig://start" if DESKTOP_MARKER.is_file() else None}
 
 # The UI is dependency-free and same-origin only. The avatar's shadow DOM uses an inline <style>.
 UI_HEADERS = {
@@ -251,16 +258,22 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Refuses to start (RemoteError) if a Tailscale Funnel leads to this port.
         remote_records = await asyncio.to_thread(remote.startup_check, port)
-        jig = Jig(config, start_reason=start_reason)
-        await jig.start()
-        app.state.jig = jig
+        # Starts the agent, or set-up mode if the model isn't set up or fails its checks (jig.setup_mode).
+        try:
+            await controller.boot()
+        except JigError as exc:
+            logging.getLogger("jig.startup").error("Jig didn't start. %s", explain(exc, config))
+            raise
         for kind, summary, data in remote_records:
-            jig.audit.record(kind, summary, actor="runtime", **data)
+            controller.current.audit.record(kind, summary, actor="runtime", **data)
+        on_started = getattr(app.state, "on_started", None)
+        if on_started:
+            on_started(controller)
         try:
             yield
         finally:
             stop_request = getattr(app.state, "stop_request", None) or take_stop_request(config.data_dir)
-            await jig.stop(stop_request=stop_request)
+            await controller.shutdown(stop_request)
             devices.close()
 
     app = FastAPI(title="Jig", version=__version__, lifespan=lifespan)
@@ -274,10 +287,22 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
 
         app.add_middleware(SandboxPeerGuard)  # added last, so it runs before authentication
 
+    controller = Controller(app, config, start_reason)
+    app.state.controller = controller
+
     def J(request: Request) -> Jig:
-        return request.app.state.jig
+        jig = request.app.state.jig
+        if jig is None:
+            raise HTTPException(503, "Jig is off until its model is set up and passes its checks. Open Jig's set-up "
+                                     "page to choose one.")
+        return jig
+
+    def A(request: Request) -> Any:
+        """The audit log, in set-up mode too."""
+        return controller.current.audit
 
     app.include_router(autostart_router(config))
+    app.include_router(setup_router(controller, _who))
 
     # Web UI (public static files; every API call it makes is authenticated) ------------------
     @app.get("/", include_in_schema=False)
@@ -334,7 +359,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         principal: Principal | None = request.scope["state"].get("principal")
         if principal and principal.device:
             devices.revoke(principal.device["id"], "signed out on the device")
-            request.app.state.jig.audit.record("device.revoked", f"device {principal.device['name']!r} signed out",
+            A(request).record("device.revoked", f"device {principal.device['name']!r} signed out",
                                                actor="user", device_id=principal.device["id"], **_who(request))
         response = JSONResponse({"authenticated": False})
         for header in clear_cookie_headers(secure=_source(request).secure):
@@ -358,9 +383,9 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             device, value = devices.redeem(body.code, name=body.name, paired_via=source.kind,
                                            tailscale_login=source.login)
         except PairingError as exc:
-            request.app.state.jig.audit.record("device.pairing_failed", str(exc), actor="user", **_who(request))
+            A(request).record("device.pairing_failed", str(exc), actor="user", **_who(request))
             raise HTTPException(401, str(exc)) from exc
-        request.app.state.jig.audit.record("device.paired", f"device {device['name']!r} paired", actor="user",
+        A(request).record("device.paired", f"device {device['name']!r} paired", actor="user",
                                            device_id=device["id"], device_name=device["name"],
                                            expires_at=device["expires_at"], **_who(request))
         cookie = device_cookie_header(value, devices.cookie_max_age(device), secure=source.secure)
@@ -373,7 +398,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         _require_confirm(body, "The token was not rotated")
         tokens.rotate()
         revoked = devices.revoke_all("the master API token was rotated")
-        request.app.state.jig.audit.record("auth.token_rotated", f"master token rotated; {revoked} device(s) revoked",
+        A(request).record("auth.token_rotated", f"master token rotated; {revoked} device(s) revoked",
                                            actor="user", devices_revoked=revoked, **_who(request))
         response = JSONResponse({"rotated": True, "devices_revoked": revoked,
                                  "message": "The master token was replaced. Every browser is signed out and every "
@@ -418,14 +443,20 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
 
     @app.get("/status")
     async def status(request: Request) -> dict[str, Any]:
+        if controller.setup is not None:
+            st = controller.setup
+            return {"status": "setup", "version": __version__, "setup": st.as_dict(), "connection": st.connection(),
+                    "model_endpoint": st.config.model.base_url, "start_reason": st.start_reason,
+                    "vault_backend": st.vault.backend, "desktop": DESKTOP}
         jig = J(request)
         model = await jig.model.health()
         sentinel = await jig.sentinel_model.health()
         return {
             "status": "ok",
             "version": __version__,
-            "model_endpoint": config.model.base_url,
-            "sentinel_endpoint": config.sentinel.base_url,
+            "desktop": DESKTOP,
+            "model_endpoint": jig.config.model.base_url,
+            "sentinel_endpoint": jig.config.sentinel.base_url,
             # Local or cloud, for the agent and for the safety checker (and what a cloud endpoint receives).
             "connection": jig.connection(),
             "agent": jig.agent_status(),
@@ -452,18 +483,34 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def sandbox_status(request: Request) -> dict[str, Any]:
         """Whether Jig can run code; if not, whether Docker is there and what to do to turn it on."""
         names = {t.name for t in J(request).registry.all()}
-        return await asyncio.to_thread(code_execution_status, config, names)
+        return await asyncio.to_thread(code_execution_status, J(request).config, names)
 
     # Events ----------------------------------------------------------------
     @app.websocket("/events")
     async def events_ws(ws: WebSocket) -> None:
-        jig: Jig = ws.app.state.jig
+        jig: Jig | None = ws.app.state.jig
         await ws.accept()
+        if jig is None:
+            # Set-up mode: nothing happens until the agent starts; then the page reconnects to its events.
+            await ws.send_json({"type": "setup", "snapshot": True, "data": {}})
+            try:
+                while ws.app.state.jig is None:
+                    await asyncio.sleep(1)
+                await ws.close(code=1012, reason="Jig started")
+            except WebSocketDisconnect:
+                pass
+            return
         sub = jig.bus.subscribe()
         try:
             await ws.send_json({"type": EventType.AVATAR_STATE.value, "snapshot": True, "data": jig.tracker.current})
             while True:
-                event = await sub.get()
+                try:
+                    event = await asyncio.wait_for(sub.get(), timeout=2)
+                except TimeoutError:
+                    if ws.app.state.jig is not jig:  # the model was changed: this runtime has stopped
+                        await ws.close(code=1012, reason="Jig restarted")
+                        return
+                    continue
                 await ws.send_json(event.as_dict())
         except SubscriberOverflow as exc:
             await ws.close(code=1013, reason=str(exc))
@@ -831,7 +878,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def audit(request: Request, kind: str | None = None, task_id: str | None = None,
                     run_id: str | None = None, after_id: int = 0, before_id: int | None = None,
                     newest_first: bool = False, limit: int = Query(200, le=5000)) -> list[dict[str, Any]]:
-        rows = J(request).audit.query(kind=kind, task_id=task_id, run_id=run_id, after_id=after_id,
+        rows = A(request).query(kind=kind, task_id=task_id, run_id=run_id, after_id=after_id,
                                       before_id=before_id, newest_first=newest_first, limit=limit)
         for r in rows:
             r["data"] = json.loads(r.pop("data_json"))
@@ -1031,14 +1078,17 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.get("/power")
     async def power(request: Request) -> dict[str, Any]:
         """Whether Jig manages the model server, what stopping it would free, and how Jig starts again."""
-        return await asyncio.to_thread(power_state, config, J(request).model_server)
+        out = await asyncio.to_thread(power_state, controller.config, controller.current.model_server)
+        if out.get("autostart") is not None:
+            out["start_again"] = start_again(out["autostart"], tray=DESKTOP["installed"])
+        return out
 
     @app.post("/power/stop", status_code=202)
     async def power_stop(request: Request, body: PowerStopIn) -> JSONResponse:
         """Turn Jig off (scope "jig") or Jig and the model server it launched ("jig_and_model"). Replies first,
-        then shuts down gracefully. Autostart is left as it is."""
-        jig = J(request)
-        check_stop(config, jig.model_server, body.scope, body.confirm)
+        then shuts down gracefully. Autostart is left as it is. Works in set-up mode too."""
+        jig = controller.current
+        check_stop(controller.config, jig.model_server, body.scope, body.confirm)
         request_exit = getattr(request.app.state, "request_exit", None)
         if request_exit is None:
             raise HTTPException(409, "This Jig was not started with 'jig serve', so it can't turn itself off. Stop "
@@ -1057,19 +1107,20 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         request.app.state.stop_request = {"scope": body.scope, "via": "api"}
         jig.bus.publish(EventType.POWER_STOPPING, scope=body.scope)
         what = "Jig and the model server are" if body.scope == "jig_and_model" and model["managed"] else "Jig is"
+        again = start_again(autostart, tray=DESKTOP["installed"])
         return JSONResponse({"stopping": True, "scope": body.scope, "model_server": model_action,
-                             "autostart": autostart, "start_again": start_again(autostart),
-                             "message": f"{what} turning off. {start_again(autostart)}"},
+                             "autostart": autostart, "start_again": again, "message": f"{what} turning off. {again}"},
                             status_code=202, background=BackgroundTask(request_exit, "POST /power/stop"))
 
     @app.get("/model")
     async def model_status(request: Request) -> dict[str, Any]:
         sup = J(request).model_server
-        out = {"base_url": config.model.base_url, "configured": sup.configured, **sup.info()}
+        base_url = J(request).config.model.base_url
+        out = {"base_url": base_url, "configured": sup.configured, **sup.info()}
         if sup.managed:
             out["gpu"] = await asyncio.to_thread(gpu_usage, sup.process.pid)  # type: ignore[union-attr]
         else:
-            out["refusal"] = sup._not_managed_reason(config.model.base_url)
+            out["refusal"] = sup._not_managed_reason(base_url)
         return out
 
     @app.post("/model/stop")
@@ -1077,7 +1128,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         """Stop the model server Jig launched, and keep Jig running. Refuses any server Jig didn't start."""
         _require_confirm(body, "The model server was not stopped")
         jig = J(request)
-        pid = await jig.model_server.stop_by_user(config.model.base_url)
+        pid = await jig.model_server.stop_by_user(jig.config.model.base_url)
         jig.audit.record("model_server.stopped", f"stopped the model server Jig launched (pid {pid})", actor="user",
                          pid=pid, via="api", **_who(request))
         return {**jig.model_server.info(), "stopped": True, "pid": pid,
@@ -1108,7 +1159,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         _require_local(request, "Turning on remote access")
         _require_confirm(body, "Remote access was not turned on")
         out = await asyncio.to_thread(remote.enable, port)
-        J(request).audit.record("remote.enabled", f"remote access on at {out['url']}", actor="user", url=out["url"],
+        A(request).record("remote.enabled", f"remote access on at {out['url']}", actor="user", url=out["url"],
                                 allowed_logins=out["allowed_logins"], **_who(request))
         return out
 
@@ -1116,7 +1167,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def remote_disable(request: Request, body: ConfirmIn) -> dict[str, Any]:
         _require_confirm(body, "Remote access was not turned off")
         out = await asyncio.to_thread(remote.disable, port)
-        J(request).audit.record("remote.disabled", "remote access off", actor="user",
+        A(request).record("remote.disabled", "remote access off", actor="user",
                                 removed_serve_entry=out["removed_serve_entry"], **_who(request))
         return out
 
@@ -1133,14 +1184,14 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         pairing = devices.new_pairing(expires_in_days=body.expires_in_days)
         origin = remote.origin() or _source(request).origin
         url = f"{origin}/#pair={pairing['code']}"
-        J(request).audit.record("device.pairing_created", "pairing code created", actor="user", origin=origin,
+        A(request).record("device.pairing_created", "pairing code created", actor="user", origin=origin,
                                 device_expires_in_days=body.expires_in_days, **_who(request))
         return {**pairing, "url": url, "qr_svg_data_uri": _qr_data_uri(url), "remote_enabled": bool(remote.origin())}
 
     @app.delete("/devices/{device_id}")
     async def revoke_device(request: Request, device_id: str) -> dict[str, Any]:
         device = devices.revoke(device_id)
-        J(request).audit.record("device.revoked", f"device {device['name']!r} revoked", actor="user",
+        A(request).record("device.revoked", f"device {device['name']!r} revoked", actor="user",
                                 device_id=device_id, **_who(request))
         return device
 

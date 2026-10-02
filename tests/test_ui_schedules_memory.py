@@ -230,8 +230,13 @@ def test_running_code_is_explained(server, browser, shots):
         page.wait_for_selector('#st-code:text-matches("^(On|Off):")', timeout=60_000)
         assert page.get_by_test_id("code-execution").inner_text().startswith("Off: Jig is using the folder-only sandbox")
         assert page.get_by_test_id("code-help").is_visible()
-        steps = page.get_by_test_id("code-steps").inner_text()
-        assert 'backend = "container"' in steps and "restart Jig" in steps
+        # Turned on from here, with no terminal: a button once Docker is ready, or the steps to get it ready.
+        actions = page.get_by_test_id("code-actions")
+        actions.locator("button").first.wait_for(timeout=60_000)
+        buttons = actions.locator("button").all_inner_texts()
+        assert any(b in buttons for b in ("Turn on running code\u2026", "Build the safe container",
+                                          "Check for Docker again")), buttons
+        assert 'backend = "container"' not in page.get_by_test_id("code-steps").inner_text()
         page.screenshot(path=str(shots / f"running-code-{scheme}.png"), full_page=True)
         page.goto(f"{BASE}/#settings/rules")
         note = page.get_by_test_id("no-code-note")

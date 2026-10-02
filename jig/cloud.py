@@ -21,7 +21,7 @@ from typing import Any
 from .audit import AuditLog
 from .config import MODEL_KEY_PREFIX, Config, EndpointConfig
 from .endpoints import Location, origin
-from .errors import ConfigError, SecretNotFound
+from .errors import ConfigError, ModelKeyMissing, SecretNotFound
 
 CONSENT_KIND = "model.cloud_consent"
 GIVEN, REVOKED = f"{CONSENT_KIND}.given", f"{CONSENT_KIND}.revoked"
@@ -157,8 +157,8 @@ def require_consent(config: Config, audit: AuditLog) -> list[CloudUse]:
                          "base_url (and name) to a local model server.")
         else:
             steps.append(f"Add allow_cloud = true under [{section}] in {config.source} to accept this.")
-    if unconfirmed or not_allowed:
-        steps.append("Then run 'jig model cloud confirm' once to confirm it; that is recorded in the audit log.")
+    steps.append(f"{'Then confirm' if not_allowed else 'Confirm'} it once, in Jig's set-up page or model settings, "
+                 "or with 'jig model cloud confirm'. Your confirmation is recorded in the audit log.")
     raise CloudConsentRequired(
         "Jig did not start: it is set up to use a cloud model, which needs your explicit consent first.\n\n"
         + disclosure(not_allowed + unconfirmed) + "\n\n" + "\n".join(f"- {s}" for s in steps)
@@ -200,8 +200,8 @@ def resolve_api_key(endpoint: EndpointConfig, vault: Any, *, role: str) -> str |
         return vault.reveal(endpoint.api_key_secret)
     except SecretNotFound as exc:
         short = endpoint.api_key_secret.removeprefix(MODEL_KEY_PREFIX)
-        raise ConfigError(f"the API key for {ROLES[role]} ({endpoint.api_key_secret!r}) is not in the vault; store "
-                          f"it with 'jig model key set {short}'") from exc
+        raise ModelKeyMissing(f"the API key for {ROLES[role]} ({endpoint.api_key_secret!r}) is not in the vault; "
+                              f"store it with 'jig model key set {short}'", secret=endpoint.api_key_secret) from exc
 
 
 def connection_summary(config: Config, uses_consent: AuditLog | None = None) -> dict[str, Any]:

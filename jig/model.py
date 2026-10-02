@@ -168,17 +168,18 @@ class ModelClient:
         except httpx.HTTPError as exc:
             raise ModelServerUnavailable(self.redact(
                 f"{self.label} server at {self.config.base_url} is unreachable: {exc!r}"
-            )) from exc
+            ), reason="unreachable") from exc
         if r.status_code != 200:
-            hint = (" (the API key was refused: check it with 'jig model key status')"
-                    if r.status_code in (401, 403) and (self._key or self.config.location.is_cloud) else "")
+            refused = r.status_code in (401, 403) and bool(self._key or self.config.location.is_cloud)
+            hint = " (the API key was refused: check it with 'jig model key status')" if refused else ""
             raise ModelServerUnavailable(self.redact(
                 f"{self.label} server {self.config.base_url}/models returned {r.status_code}{hint}: {r.text[:300]}"
-            ))
+            ), reason="key_refused" if refused else "http_error", status=r.status_code)
         try:
             entries = r.json().get("data") or []
-        except ValueError as exc:
-            raise ModelServerUnavailable(f"{self.label} server /models did not return JSON") from exc
+        except (ValueError, AttributeError) as exc:
+            raise ModelServerUnavailable(f"{self.label} server /models did not return JSON",
+                                         reason="not_json") from exc
         by_name: dict[str, dict[str, Any]] = {}
         prefixes = provider.model_id_prefixes if provider else ()
         for entry in entries:
@@ -192,16 +193,15 @@ class ModelClient:
         if self.config.name:
             if self.config.name not in by_name:
                 raise ModelServerUnavailable(
-                    f"{self.label} {self.config.name!r} is not served at {self.config.base_url}; available: {ids}"
-                )
+                    f"{self.label} {self.config.name!r} is not served at {self.config.base_url}; available: {ids}",
+                    reason="not_served", available=ids)
             name = self.config.name
         elif len(ids) == 1:
             name = ids[0]
         else:
             raise ModelServerUnavailable(
                 f"{self.label} name is not configured and {self.config.base_url} serves "
-                f"{len(ids)} models ({ids}); set 'name' in the config"
-            )
+                f"{len(ids)} models ({ids}); set 'name' in the config", reason="which_model", available=ids)
         self.model_name = name
         entry = by_name[name]
         self.server_info = {"model": name, "base_url": self.config.base_url, "context_tokens": _context_size(entry),
@@ -288,7 +288,8 @@ class ModelClient:
         except httpx.TimeoutException as exc:
             raise ModelError(self.redact(f"{self.label} request timed out: {exc!r}")) from exc
         except httpx.HTTPError as exc:
-            raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}")) from exc
+            raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}"),
+                                         reason="unreachable") from exc
         result.elapsed_s = time.perf_counter() - started
         if result.finish_reason == "length":
             raise ModelError(self._cut_off_message(body, result))

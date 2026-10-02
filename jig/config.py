@@ -18,6 +18,11 @@ from .endpoints import PROVIDERS, RESERVED_REQUEST_KEYS, Location, Provider, cla
 from .errors import ConfigError
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "jig.toml"
+# In the data folder: what the web UI's set-up and Settings chose ([model], [sentinel], [vision], [sandbox]).
+# Each of [model], [sentinel] and [vision] in it replaces that whole section of jig.toml; [sandbox] keys are
+# merged into it. jig.toml itself is never rewritten.
+SETTINGS_FILE = "settings.toml"
+SETTINGS_SECTIONS = {"model": "replace", "sentinel": "replace", "vision": "replace", "sandbox": "merge"}
 # Vault secrets holding model API keys. Tools can never use them (core rule secret-allowlist).
 MODEL_KEY_PREFIX = "model-key."
 
@@ -75,6 +80,8 @@ class EndpointConfig:
 
     @property
     def location(self) -> Location:
+        if not self.base_url:
+            return Location("local", "", "not set up yet")
         return classify(self.base_url)
 
 
@@ -237,6 +244,8 @@ class Config:
     # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
     # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
     deployment: str = "host"
+    # The data folder's settings.toml, when it exists and was applied (see SETTINGS_FILE).
+    settings_file: Path | None = None
 
     @property
     def db_path(self) -> Path:
@@ -261,7 +270,8 @@ def _build(cls: type, values: dict[str, Any], section: str) -> Any:
 
 
 def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) -> Config:
-    """Load configuration. ``overrides`` may set ``data_dir``, ``sandbox_dir`` and ``sandbox_backend``."""
+    """Load configuration. ``overrides`` may set ``data_dir``, ``sandbox_dir``, ``sandbox_backend`` and
+    ``settings`` (used instead of the data folder's settings.toml)."""
     config_path = Path(path or os.environ.get("JIG_CONFIG") or DEFAULT_CONFIG_PATH)
     if not config_path.is_file():
         raise ConfigError(f"Config file not found: {config_path}")
@@ -273,6 +283,25 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{config_path} is not valid TOML: {exc}") from exc
     base = config_path.resolve().parent
+
+    paths = _section(raw, "paths")
+    data_dir = Path(overrides.get("data_dir") or os.environ.get("JIG_DATA_DIR") or paths.get("data_dir", "data"))
+    sandbox_dir = Path(
+        overrides.get("sandbox_dir") or os.environ.get("JIG_SANDBOX_DIR") or paths.get("sandbox_dir", "sandbox")
+    )
+    if not data_dir.is_absolute():
+        data_dir = base / data_dir
+    if not sandbox_dir.is_absolute():
+        sandbox_dir = base / sandbox_dir
+    settings_path = data_dir.resolve() / SETTINGS_FILE
+    # overrides["settings"]: sections to check before they are saved (set-up mode), instead of the file.
+    settings = overrides["settings"] if "settings" in overrides else _read_settings(settings_path)
+    if unknown := sorted(set(settings) - set(SETTINGS_SECTIONS)):
+        raise ConfigError(f"{settings_path} has sections Jig doesn't save there: {unknown}")
+    if settings:
+        raw = dict(raw)
+        for name, values in settings.items():
+            raw[name] = values if SETTINGS_SECTIONS[name] == "replace" else {**_section(raw, name), **values}
 
     model_raw = dict(_section(raw, "model"))
     launch_raw = model_raw.pop("launch", {})
@@ -327,16 +356,6 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     if v := os.environ.get("JIG_PORT"):
         server_raw["port"] = int(v)
 
-    paths = _section(raw, "paths")
-    data_dir = Path(overrides.get("data_dir") or os.environ.get("JIG_DATA_DIR") or paths.get("data_dir", "data"))
-    sandbox_dir = Path(
-        overrides.get("sandbox_dir") or os.environ.get("JIG_SANDBOX_DIR") or paths.get("sandbox_dir", "sandbox")
-    )
-    if not data_dir.is_absolute():
-        data_dir = base / data_dir
-    if not sandbox_dir.is_absolute():
-        sandbox_dir = base / sandbox_dir
-
     return Config(
         model=model,
         sentinel=sentinel,
@@ -354,7 +373,22 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         autostart=_autostart_config(_section(raw, "autostart")),
         connectors=_connectors_config(_section(raw, "connectors")),
         deployment=deployment,
+        settings_file=settings_path if settings else None,
     )
+
+
+def _read_settings(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        return {}
+    try:
+        values = tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"{path} (saved by Jig's Settings) can't be read: {exc}. Delete it to go back to the "
+                          "settings in jig.toml.") from exc
+    for name, table in values.items():
+        if not isinstance(table, dict):
+            raise ConfigError(f"[{name}] in {path} must be a table")
+    return values
 
 
 def _connectors_config(values: dict[str, Any]) -> dict[str, ConnectorLimits]:
@@ -390,7 +424,10 @@ def _same_origin(a: str, b: str) -> bool | None:
 
 
 def _check_endpoint(ep: EndpointConfig, section: str, base: Path) -> EndpointConfig:
-    """Validate one endpoint. Cloud endpoints must use HTTPS; provider differences are checked, never guessed."""
+    """Validate one endpoint. Cloud endpoints must use HTTPS; provider differences are checked, never guessed.
+    An empty base_url means no model is set up yet: Jig starts in set-up mode (``jig.setup_mode``)."""
+    if ep.base_url == "":
+        return ep
     parts = urlsplit(ep.base_url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ConfigError(f"[{section}] base_url must be an http:// or https:// URL, not {ep.base_url!r}")

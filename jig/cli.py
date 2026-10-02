@@ -20,6 +20,21 @@ from .model import ModelClient
 from .vision import probe_vision
 
 
+def _port_free(host: str, port: int) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        try:
+            s.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _local_url(host: str, port: int) -> str:
+    return f"http://{'127.0.0.1' if host in ('0.0.0.0', '::', '') else host}:{port}"
+
+
 def _serve(args: argparse.Namespace) -> int:
     import dataclasses
 
@@ -27,39 +42,87 @@ def _serve(args: argparse.Namespace) -> int:
     from .instance import EXIT_INSTANCE_LOCKED, running_instance
     from .lifecycle import configure_file_logging, run_server
 
-    config = load_config(args.config)
+    config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
     host = args.host or config.server.host
     port = args.port or config.server.port
     if port == 8080:
-        print("Port 8080 is reserved for the model server; choose another port.", file=sys.stderr)
+        print("Jig can't use port 8080: that's where llama.cpp's model server usually runs. Choose another port, "
+              "for example: jig serve --port 8766", file=sys.stderr)
         return 2
     config = dataclasses.replace(config, server=dataclasses.replace(config.server, host=host, port=port))
+    # A person at a terminal sees a short summary; the full log goes to the log file. Services, and
+    # anything reading the output, keep the full log on the console as before.
+    interactive = sys.stdout.isatty() and not args.verbose and not args.log_file
     if args.log_file:
         configure_file_logging(config.data_dir / "logs" / "jig.log")
+    elif interactive:
+        configure_file_logging(config.data_dir / "logs" / "jig.log", capture_std=False)
+        console = logging.StreamHandler()
+        console.setLevel(logging.WARNING)
+        console.setFormatter(logging.Formatter("%(message)s"))
+        # A failed start is explained in one plain line (jig.startup); the traceback stays in the log file.
+        console.addFilter(lambda r: not (r.name.startswith("uvicorn") and r.levelno >= logging.ERROR))
+        logging.getLogger().addHandler(console)
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    url = _local_url(host, port)
     if holder := running_instance(config.data_dir):
-        print(f"Not starting: another Jig (pid {holder.get('pid')}, port {holder.get('port')}, started "
-              f"{holder.get('started_at')} by {holder.get('start_reason')}) already uses {config.data_dir} and "
-              "holds its lock; stop it first with 'jig stop'.", file=sys.stderr)
+        where = _local_url(holder.get("host") or host, holder.get("port") or port)
+        print(f"Jig is already running for this data folder, at {where}. Open it with: jig ui\n"
+              f"(To restart it, run jig stop first.)", file=sys.stderr)
         return EXIT_INSTANCE_LOCKED
-    from .cloud import require_consent
-
-    db, audit, _vault = _open_vault(config)
-    try:
-        cloud = require_consent(config, audit)  # refuse here, with the explanation, before the server starts
-    finally:
-        db.close()
-    print(f"Jig serving on http://{host}:{port}  (model {config.model.name or '(auto-discover)'} "
-          f"at {config.model.base_url}; config {config.source})")
-    for use in cloud:
-        who = "Agent" if use.role == "agent" else "Safety checker"
-        print(f"{who}: CLOUD model at {use.location.host} (confirmed). What it is sent leaves this machine.")
-    print(f"Data: {config.data_dir}   Sandbox: {config.sandbox_dir}")
+    if not _port_free(host, port):
+        print(f"Jig can't start on port {port}: another program is already using it. Close that program, or "
+              f"start Jig on another port: jig serve --port {port + 1}", file=sys.stderr)
+        return 1
+    open_browser = args.start_reason == "manual" and (args.browser or (sys.stdout.isatty() and not args.no_browser))
     app = create_app(config, start_reason=args.start_reason)
-    print(f"Web UI: run 'jig ui' to open it signed in. API token: {config.data_dir / 'api-token'} "
-          "('jig token show').")
-    return run_server(app, host=host, port=port, data_dir=config.data_dir, log_to_file=args.log_file)
+    ui_cmd = f'jig --config "{args.config}" ui' if args.config else "jig ui"
+    app.state.on_started = lambda controller: _started(app, controller, url, config, open_browser, interactive, ui_cmd)
+    return run_server(app, host=host, port=port, data_dir=config.data_dir, log_to_file=args.log_file,
+                      access_log=not interactive)
+
+
+def _started(app, controller, url: str, config, open_browser: bool, interactive: bool, ui_cmd: str = "jig ui") -> None:
+    """Called once the agent (or set-up mode) has started, before the port opens."""
+    import threading
+
+    if controller.setup is not None:
+        problem = controller.setup.problem
+        print(f"Jig is running at {url}, in set-up mode: {problem.title} {problem.text}", flush=True)
+        print("The agent stays off until a model passes its checks. Finish setting up in your browser"
+              + ("." if open_browser else f": {ui_cmd}"), flush=True)
+    else:
+        jig = controller.jig
+        where = jig.config.model.location
+        print(f"Jig is running at {url}, using {jig.model.model_name} "
+              f"({'in the cloud at ' + where.host if where.is_cloud else 'on ' + jig.config.model.base_url}).",
+              flush=True)
+        print("Open it in your browser" + (" (opening now)." if open_browser else f" with: {ui_cmd}"), flush=True)
+    if interactive:
+        print(f"Stop Jig with Ctrl+C or jig stop. Log: {config.data_dir / 'logs' / 'jig.log'}", flush=True)
+    if open_browser:
+        threading.Thread(target=_open_signed_in, args=(app, url), daemon=True, name="jig-open-browser").start()
+
+
+def _open_signed_in(app, url: str) -> None:
+    """Wait until the server answers, then open the web UI with a one-time sign-in code (as 'jig ui' does)."""
+    import time
+    import webbrowser
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(f"{url}/health", timeout=2).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.3)
+    else:
+        return
+    code, _ttl = app.state.auth.new_login_code()
+    link = f"{url}/#code={code}"
+    if not webbrowser.open(link):
+        print(f"Couldn't open a browser. Open this link within two minutes (it works once): {link}", flush=True)
 
 
 def _open_vault(config):
@@ -79,7 +142,13 @@ async def _health(args: argparse.Namespace) -> int:
     """Check the configured endpoints and run the real capability probes."""
     from .cloud import require_consent, resolve_api_key
 
+    from .friendly import explain
+
     config = load_config(args.config)
+    if not config.model.base_url:
+        print("Jig isn't set up yet: no model has been chosen. Start Jig with jig serve and finish setting up in "
+              "your browser.", file=sys.stderr)
+        return 1
     db, audit, vault = _open_vault(config)
     try:
         require_consent(config, audit)  # the probes send test prompts, so a cloud endpoint needs consent too
@@ -88,6 +157,7 @@ async def _health(args: argparse.Namespace) -> int:
     finally:
         db.close()
     report: dict = {}
+    failed = None
     for label, endpoint in (("agent", config.model), ("sentinel", config.sentinel)):
         client = ModelClient(endpoint, label=f"{label} model", api_key=keys[label])
         try:
@@ -98,9 +168,32 @@ async def _health(args: argparse.Namespace) -> int:
                     report[label] |= await client.probe_tool_calling()
                     if config.vision.enabled:
                         report[label] |= await probe_vision(client)
+        except JigError as exc:
+            report[label] = {"status": "failed", "error": str(exc), "location": endpoint.location.as_dict()}
+            failed = failed or exc
         finally:
             await client.aclose()
-    print(json.dumps(report, indent=2))
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 1 if failed else 0
+    for label, who in (("agent", "Agent"), ("sentinel", "Safety checker")):
+        r = report[label]
+        if r.get("status") == "failed":
+            print(f"{who}: not working.")
+            continue
+        where = "cloud" if r["location"]["kind"] == "cloud" else "this computer"
+        checks = [] if args.quick else [name for key, name in (("tool_calling", "tools"),
+                                                                ("structured_output", "Jig's answer format"),
+                                                                ("vision", "pictures")) if r.get(key)]
+        print(f"{who}: {r['model']} on {where} ({r['base_url']}) is working"
+              + (f": it passed the {', '.join(checks)} checks." if checks else "."))
+        if r.get("context_tokens"):
+            print(f"  Context: {r['context_tokens']:,} tokens"
+                  + ("" if r["context_tokens"] >= config.runtime.min_context_tokens else
+                     f" (Jig works best with {config.runtime.min_context_tokens:,} or more)"))
+    if failed:
+        print(f"\n{explain(failed, config)}")
+        return 1
     return 0
 
 
@@ -457,11 +550,19 @@ async def _ui(args: argparse.Namespace) -> int:
     or written to its logs; the page swaps it for a session cookie and removes it from the address bar."""
     import webbrowser
 
-    base = args.url.rstrip("/")
+    base = _target_url(args)
     async with httpx.AsyncClient(timeout=10.0, headers=_auth_headers(args)) as client:
-        r = await client.post(f"{base}/auth/login-code")
+        try:
+            r = await client.post(f"{base}/auth/login-code")
+        except httpx.HTTPError:
+            print(_not_running(base), file=sys.stderr)
+            return 1
+        if r.status_code == 401:
+            print(_other_jig(base), file=sys.stderr)
+            return 1
         if r.status_code != 200:
-            print(f"error: HTTP {r.status_code} {r.text}", file=sys.stderr)
+            print(f"Jig at {base} couldn't make a sign-in link (error {r.status_code}): {_error_text(r)}",
+                  file=sys.stderr)
             return 1
     url = f"{base}/#code={r.json()['code']}"
     if args.print_url:
@@ -473,14 +574,50 @@ async def _ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _target_url(args: argparse.Namespace) -> str:
+    """--url, else the Jig running for this config's data folder, else the configured address."""
+    if args.url:
+        return args.url.rstrip("/")
+    from .instance import running_instance
+
+    config = load_config(args.config)
+    info = running_instance(config.data_dir) or {}
+    return _local_url(info.get("host") or config.server.host, info.get("port") or config.server.port)
+
+
+def _not_running(base: str) -> str:
+    return f"Jig isn't running at {base}. Start it with: jig serve"
+
+
+def _other_jig(base: str) -> str:
+    return (f"Something at {base} didn't accept this Jig's sign-in token. It may be another Jig with a different "
+            "data folder. Check the address, or use --config for that Jig.")
+
+
+def _error_text(r: httpx.Response) -> str:
+    try:
+        return str(r.json().get("error", r.text))
+    except ValueError:
+        return r.text[:300]
+
+
 async def _chat(args: argparse.Namespace) -> int:
-    base = args.url.rstrip("/")
+    base = _target_url(args)
     session_id = None
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None), headers=_auth_headers(args)) as client:
-        check = await client.get(f"{base}/auth/session")
-        check.raise_for_status()
-        if not check.json()["authenticated"]:
-            print(f"error: {base} rejected the API token from the configured data directory", file=sys.stderr)
+        try:
+            check = await client.get(f"{base}/auth/session")
+        except httpx.HTTPError:
+            print(_not_running(base), file=sys.stderr)
+            return 1
+        if check.status_code != 200 or not check.json()["authenticated"]:
+            print(_other_jig(base), file=sys.stderr)
+            return 1
+        status = await client.get(f"{base}/status")
+        if status.status_code == 200 and status.json().get("status") == "setup":
+            problem = status.json()["setup"]["problem"]
+            print(f"Jig is in set-up mode: {problem['title']} {problem['text']}\nFinish setting up in the browser: "
+                  "jig ui", file=sys.stderr)
             return 1
         print("Jig chat. Type /quit to leave. Approvals are asked for inline.")
         while True:
@@ -496,7 +633,8 @@ async def _chat(args: argparse.Namespace) -> int:
             pending: list[dict] = []
             async with client.stream("POST", f"{base}/chat", json=body) as r:
                 if r.status_code != 200:
-                    print(f"error: HTTP {r.status_code} {(await r.aread()).decode()}")
+                    await r.aread()
+                    print(f"Jig couldn't answer (error {r.status_code}): {_error_text(r)}")
                     continue
                 print("jig> ", end="", flush=True)
                 async for line in r.aiter_lines():
@@ -527,29 +665,45 @@ async def _ask_approval(client: httpx.AsyncClient, base: str, data: dict) -> Non
     r.raise_for_status()
 
 
+MENU = """Jig, your always-on personal AI agent.
+
+  jig serve       Start Jig. It opens in your browser, and walks you through set-up the first time.
+  jig ui          Open Jig in your browser, already signed in.
+  jig stop        Turn Jig off.
+  jig health      Check your model works with Jig.
+  jig chat        Chat with Jig here in the terminal.
+
+More: jig --help"""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jig", description="Jig: an always-on personal AI agent, built for local "
                                                              "models.")
     parser.add_argument("--config", help="path to jig.toml")
-    sub = parser.add_subparsers(dest="command", required=True)
-    s = sub.add_parser("serve", help="run the always-on agent and HTTP API")
+    sub = parser.add_subparsers(dest="command")
+    s = sub.add_parser("serve", help="start Jig (opens it in your browser when you run it yourself)")
     s.add_argument("--host")
     s.add_argument("--port", type=int)
+    s.add_argument("--data-dir", help="data folder (default: from the config)")
     s.add_argument("--start-reason", choices=["manual", "autostart"], default="manual",
                    help="recorded in the audit log and /status (autostart entries pass 'autostart')")
     s.add_argument("--log-file", action="store_true",
                    help="log to <data_dir>/logs/jig.log (rotating) instead of the console")
+    s.add_argument("--browser", action="store_true", help="open the web UI, signed in, once Jig has started")
+    s.add_argument("--no-browser", action="store_true", help="don't open the web UI")
+    s.add_argument("--verbose", action="store_true", help="show the full log on the console")
     autostart_cli.add_parsers(sub)
-    c = sub.add_parser("chat", help="chat with a running Jig server")
-    c.add_argument("--url", default="http://127.0.0.1:8766")
+    c = sub.add_parser("chat", help="chat with Jig in the terminal")
+    c.add_argument("--url", help="Jig's address (default: the running Jig for this config, else [server] port)")
     c.add_argument("--mode", choices=["action", "research"], default="action")
     c.add_argument("--show-thinking", action="store_true")
-    h = sub.add_parser("health", help="check the configured model servers and their capabilities")
+    h = sub.add_parser("health", help="check the configured models work with Jig")
     h.add_argument("--quick", action="store_true", help="only check that the models are served")
+    h.add_argument("--json", action="store_true", help="machine-readable output")
     t = sub.add_parser("token", help="show or rotate the API access token")
     t.add_argument("action", choices=["show", "rotate"])
     u = sub.add_parser("ui", help="open the web UI in your browser, already signed in")
-    u.add_argument("--url", default="http://127.0.0.1:8766")
+    u.add_argument("--url", help="Jig's address (default: the running Jig for this config, else [server] port)")
     u.add_argument("--print-url", action="store_true", help="print the one-time sign-in link instead of opening it")
     sb = sub.add_parser("sandbox", help="manage the container sandbox")
     sb.add_argument("action", choices=["build", "status"],
@@ -576,6 +730,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--data-dir", help="data directory (default: from the config)")
     connectors_cli.add_parsers(sub)
     args = parser.parse_args(argv)
+    if args.command is None:
+        print(MENU)
+        return 0
     try:
         if args.command == "serve":
             return _serve(args)
@@ -599,7 +756,10 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(_ui(args))
         return asyncio.run(_chat(args))
     except JigError as exc:
-        print(f"jig: {type(exc).__name__}: {exc}", file=sys.stderr)
+        from .friendly import explain
+
+        logging.getLogger("jig.cli").debug("command failed", exc_info=exc)
+        print(f"{explain(exc)}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

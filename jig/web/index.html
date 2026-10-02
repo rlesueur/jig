@@ -9,6 +9,7 @@
   <link rel="icon" href="/web/icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/web/style.css">
+  <link rel="stylesheet" href="/web/setup.css">
   <script src="/web/theme.js"></script>
   <script type="module" src="/web/app.js"></script>
   <script type="module" src="/web/autostart.js"></script>
@@ -117,6 +118,7 @@
               <dt>Passwords kept in</dt><dd id="st-vault">—</dd>
               <dt>Running code</dt><dd id="st-code" data-testid="code-execution">—</dd>
             </dl>
+            <div id="model-change" data-testid="model-change"></div>
             <div class="card-soft code-help" id="code-help" data-testid="code-help" hidden>
               <h4>To let Jig run code</h4>
               <p class="hint">Jig runs code, shell commands and a web browser only inside an isolated Docker container, so nothing it runs can touch the rest of this computer. Without Docker, it still chats, reads the web, remembers and works with files in its own folder.</p>
@@ -124,6 +126,7 @@
               <ol class="steps" id="code-steps" data-testid="code-steps"></ol>
               <p class="hint-quiet">Jig never changes this setting by itself. Each command or piece of code still asks you first.</p>
             </div>
+            <div class="row wrap" id="code-actions" data-testid="code-actions"></div>
           </section>
 
           <!-- Rules -->
@@ -489,8 +492,11 @@
     <h2 id="off-title" tabindex="-1" data-testid="off-title">Turning Jig off…</h2>
     <p id="off-text" data-testid="off-text">Finishing up and saving where it got to.</p>
     <p class="hint" id="off-again" data-testid="off-again"></p>
+    <a class="btn btn-primary" id="off-start" href="jig://start" data-testid="off-start" hidden>Turn Jig on</a>
     <p class="hint-quiet" id="off-watch" aria-live="polite" data-testid="off-watch"></p>
   </section>
+
+  <section class="setup" id="setup" aria-label="Set up Jig" data-testid="setup" hidden></section>
 
   <dialog id="confirm" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-body" data-testid="confirm-dialog">
     <form method="dialog" class="confirm-form">
@@ -508,11 +514,15 @@
       <img class="login-face face-light" src="/web/jig-face-light.png" alt="" width="64" height="64">
       <img class="login-face face-dark" src="/web/jig-face-dark.png" alt="" width="64" height="64">
       <h2 id="login-heading">Sign in to Jig</h2>
-      <p>Run <code>jig ui</code> to open this page already signed in, or paste the API token from <code>jig token show</code>. The token is exchanged for a session cookie and is not stored by the page.</p>
-      <label for="login-token">API token</label>
-      <input id="login-token" type="password" autocomplete="off" required data-testid="login-token">
+      <p>To keep Jig private, it needs a one-time sign-in on this computer. In the window where Jig is running, type <code>jig ui</code> and press Enter (or, if you used the Jig installer, open Jig from the Start menu). That opens Jig signed in.</p>
       <p id="login-error" class="error-text" role="alert"></p>
-      <button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
+      <details class="login-advanced" data-testid="login-advanced">
+        <summary>Advanced: sign in with the API token</summary>
+        <p class="hint-quiet">Paste the token from <code>jig token show</code>. It's swapped for a session cookie and isn't stored by the page.</p>
+        <label for="login-token">API token</label>
+        <input id="login-token" type="password" autocomplete="off" required data-testid="login-token">
+        <button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
+      </details>
     </form>
     <form id="pair-form" data-testid="pair-form" hidden>
       <img class="login-face face-light" src="/web/jig-face-light.png" alt="" width="64" height="64">

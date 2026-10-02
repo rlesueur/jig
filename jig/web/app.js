@@ -9,6 +9,7 @@
  */
 import { STATES } from '/avatar/jig-avatar.js';
 import { renderMarkdown } from './markdown.js';
+import { linkify, showSetupIfNeeded } from './setup.js';
 
 const $ = (id) => document.getElementById(id);
 const TERMINAL_TASK = new Set(['done', 'failed', 'cancelled', 'blocked']);
@@ -349,11 +350,16 @@ function askConfirm({ title, body, ok, danger = false }) {
 const bullets = (lines) => el('ul', { class: 'confirm-list' }, lines.filter(Boolean).map((t) => el('li', { text: t })));
 window.jigConfirm = askConfirm;
 
-function start() {
+async function start() {
   if (started) return;
   started = true;
-  $('app').hidden = false;
   $('logout').hidden = false;
+  // Set-up mode: the agent is off until a model passes its checks, so show the set-up page instead.
+  if (await showSetupIfNeeded()) {
+    setConn('Setting up', 'warn');
+    return;
+  }
+  $('app').hidden = false;
   route(false);
   connectEvents();
   refreshAll();
@@ -499,6 +505,10 @@ function connectEvents() {
   socket.addEventListener('close', async (e) => {
     if (ws !== socket || !wsWanted) return;
     ws = null;
+    if (e.code === 1012) { // Jig restarted with a new model, or went into set-up mode
+      location.reload();
+      return;
+    }
     if (e.code === 1013) showError(`Event stream: ${e.reason || 'the connection fell behind and was closed'}`);
     // A refused handshake reaches the browser as 1006, so ask the server whether the session is still valid.
     try {
@@ -663,6 +673,7 @@ function showConnection(conn) {
 }
 
 let lastConnection = null;
+let desktop = null; // from /status: whether the Windows installer set Jig up (it can turn Jig back on)
 
 function unreachableFix(conn) {
   if (conn && conn.agent.kind === 'cloud') {
@@ -686,6 +697,11 @@ async function loadStatus() {
     renderHealth();
     return;
   }
+  if (s.status === 'setup') { // the agent was turned off (for example, cloud consent withdrawn elsewhere)
+    location.reload();
+    return;
+  }
+  desktop = s.desktop || null;
   lastConnection = s.connection;
   showConnection(s.connection);
   $('st-endpoint').textContent = s.model_endpoint;
@@ -720,7 +736,7 @@ async function loadSandbox() {
   const problem = s.docker ? s.docker.problem : null;
   $('code-problem').hidden = !problem;
   $('code-problem').textContent = problem || '';
-  $('code-steps').replaceChildren(...s.steps.map((t) => el('li', { text: t })));
+  if (!$('code-steps').dataset.fromSetup) $('code-steps').replaceChildren(...s.steps.map((t) => el('li', { text: t })));
 }
 
 /* ---------- what Jig's up to ---------- */
@@ -899,10 +915,21 @@ function nearBottom() {
   return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 80;
 }
 
+const EXAMPLES = ['What\u2019s in the news today?', 'Remember that I prefer short answers',
+  'Every weekday at 8am, summarise the BBC headlines'];
+
 function welcome() {
+  const tryIt = (text) => {
+    const input = $('chat-input');
+    input.value = text;
+    fitInput();
+    input.focus();
+  };
   return el('div', { class: 'welcome', 'data-testid': 'chat-welcome' },
     el('p', { class: 'welcome-title', text: 'Hello! What shall we do?' }),
-    el('p', { class: 'hint', text: 'Ask me anything, or give me something to do. I\u2019ll always check with you before I change, send or spend anything.' }));
+    el('p', { class: 'hint', text: 'Ask me anything, or give me something to do. I\u2019ll always check with you before I change, send or spend anything.' }),
+    el('div', { class: 'welcome-examples', role: 'group', 'aria-label': 'Things to try' },
+      EXAMPLES.map((text) => el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'chat-example', text, onclick: () => tryIt(text) }))));
 }
 
 function addMessage(role, text = '') {
@@ -1962,12 +1989,18 @@ function choiceRow(tool, custom) {
   const id = `choice-${tool.name}`;
   const hintId = `${id}-hint`;
   const notes = [];
-  if (tool.human_only) notes.push('A core rule means Jig always asks you first.');
   if (others.length) notes.push(`An advanced rule also applies (${others.map((r) => `${r.tool} \u2192 ${r.decision}`).join(', ')}).`);
+  const name = CAN[tool.name] || `Use ${tool.name}`;
+  if (tool.human_only) { // a core rule: Jig always asks, whatever is chosen, so there is nothing to choose
+    return el('div', { class: 'choice', 'data-testid': 'tool-choice-row', dataset: { tool: tool.name, decision: 'ask' } },
+      el('div', { class: 'choice-text' },
+        el('span', { class: 'choice-name', text: name }),
+        el('p', { id: hintId, class: 'hint-quiet' }, el('code', { text: tool.name }), notes.length ? ` \u00b7 ${notes.join(' ')}` : '')),
+      el('span', { class: 'status', dataset: { s: 'ask' }, 'data-testid': 'tool-choice-fixed', text: CORE_WORDS.ask }));
+  }
   const select = el('select', { id, 'aria-describedby': hintId, 'data-testid': 'tool-choice', dataset: { tool: tool.name } },
     ['allow', 'ask', 'block'].map((d) => el('option', { value: d, selected: d === current,
       text: `${CHOICE_TEXT[d]}${d === tool.default_decision ? ' (usual)' : ''}` })));
-  const name = CAN[tool.name] || `Use ${tool.name}`;
   select.addEventListener('change', async () => {
     const done = await act(select, async () => {
       if (exact) await api(`/rules/${exact.id}`, { method: 'PATCH', body: { decision: select.value } });
@@ -2027,7 +2060,15 @@ async function loadRules() {
     return;
   }
   toolsCache = tools;
-  $('tool-choices').replaceChildren(...tools.map((t) => choiceRow(t, custom)));
+  // Tools of accounts that aren't connected appear once the account is connected (Settings > Connections).
+  const usable = tools.filter((t) => t.available !== false);
+  const hidden = tools.length - usable.length;
+  $('tool-choices').replaceChildren(...usable.map((t) => choiceRow(t, custom)));
+  if (hidden) {
+    $('tool-choices').append(el('p', { class: 'hint-quiet choices-note', 'data-testid': 'tools-hidden-note' },
+      `${hidden} more for accounts you haven\u2019t connected yet. They appear here once you connect them in `,
+      el('a', { href: '#settings/connections', text: 'Connections' }), '.'));
+  }
   $('core-rules').replaceChildren(...core.map((r) => el('li', { 'data-testid': 'core-rule', dataset: { id: r.id } },
     el('span', { class: 'status', dataset: { s: r.decision }, text: CORE_WORDS[r.decision] || r.decision }), ' ', r.description)));
   const body = $('rules').tBodies[0];
@@ -2116,7 +2157,7 @@ async function loadRemote() {
     return;
   }
   loadDevices();
-  setPairingAvailability();
+  setPairingAvailability(r);
   if (r.applicable === false) {
     box.replaceChildren(
       el('dl', { class: 'kv' }, el('dt', { text: 'Remote access' }),
@@ -2142,7 +2183,7 @@ async function loadRemote() {
   if (!r.enabled && r.steps.length) {
     parts.push(el('div', { class: 'card-soft', 'data-testid': 'remote-steps' },
       el('p', { class: 'hint', text: `${ts.error ? `${ts.error}. ` : ''}To get it ready:` }),
-      el('ol', { class: 'steps' }, r.steps.map((s) => el('li', { text: s }))),
+      el('ol', { class: 'steps' }, r.steps.map((s) => el('li', {}, ...linkify(s)))),
       el('p', { class: 'hint-quiet', text: 'Jig never installs Tailscale or signs in for you. Choose Refresh when you\u2019ve done these.' })));
   }
   if (r.enabled) {
@@ -2244,13 +2285,19 @@ async function removeDevice(button, d) {
   else await loadDevices();
 }
 
-function setPairingAvailability() {
+let remoteCache = null;
+
+function setPairingAvailability(r = remoteCache) {
+  remoteCache = r;
   const host = onHost();
-  $('pairing-new').disabled = !host;
-  $('pairing-expiry').disabled = !host;
-  $('pairing-hint').textContent = host
-    ? 'Shows a one-time code and a QR code. On the new device, scan it or open the link, then give the device a name. The code works once, for 5 minutes.'
-    : 'Adding a device only works on the computer Jig runs on: open Settings there and choose Add a device.';
+  // A paired device reaches Jig through remote access, so pairing waits until remote access is on.
+  const ready = !r || r.applicable === false || r.enabled;
+  $('pairing-new').disabled = !host || !ready;
+  $('pairing-expiry').disabled = !host || !ready;
+  $('pairing-hint').textContent = !host
+    ? 'Adding a device only works on the computer Jig runs on: open Settings there and choose Add a device.'
+    : !ready ? 'Finish the steps above and turn remote access on first.'
+      : 'Shows a one-time code and a QR code. On the new device, scan it or open the link, then give the device a name. The code works once, for 5 minutes.';
 }
 
 function stopPairing() {
@@ -2427,7 +2474,7 @@ $('model-start').addEventListener('click', () => act($('model-start'), async () 
 
 /* ---------- "Jig is off" ---------- */
 
-const OFF_GENERIC = 'To start it again, run jig serve on the computer Jig runs on. If \u2018Start with Windows\u2019 is on, it also starts by itself when you next sign in.';
+const OFF_GENERIC = 'To start Jig again, run jig serve on the computer it runs on (or restart that computer if Start with Windows is on).';
 
 /* The line under "Jig is off". `model` is what GET /power last said about the model server, or null if this
  * page never asked (Jig was turned off elsewhere before Settings was opened here). */
@@ -2460,6 +2507,8 @@ function showOff({ scope, startAgain, fromElsewhere = false }) {
   $('off-title').textContent = 'Turning Jig off\u2026';
   $('off-text').textContent = fromElsewhere ? 'Jig is being turned off from another device or window.' : 'Finishing up and saving where it got to.';
   if (!startAgain) $('off-again').textContent = OFF_GENERIC;
+  // Installed with the Windows installer: a jig:// link starts Jig's tray app, which starts Jig.
+  $('off-start').hidden = !(desktop && desktop.installed && onHost());
   $('off-watch').textContent = '';
   $('off-title').focus();
   watchOff();
