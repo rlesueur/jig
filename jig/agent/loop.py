@@ -16,6 +16,7 @@ from ..pause import RunPaused, until_paused
 from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
+from .prompts import STEP_LIMIT_PROMPT
 
 DeltaSink = Callable[[str, str], Awaitable[None]]
 
@@ -43,6 +44,9 @@ class RunResult:
     final: str
     steps: int
     messages: list[dict[str, Any]]
+    # The run used every model call it was allowed; ``final`` is its own account of what it did and what is left,
+    # from one more call with no tools offered.
+    limit_reached: bool = False
 
 
 def _steps_taken(messages: list[dict[str, Any]]) -> int:
@@ -90,13 +94,18 @@ class Agent:
         call_ctx = CallContext(run_id=run_id, task_id=spec.task_id, mode=spec.mode, intent=spec.intent,
                                on_wait=spec.on_wait, pause=spec.pause)
         steps = _steps_taken(messages)
+        limit_reached = False
         try:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
                 self.store.checkpoint_run(run_id, messages, steps)
             while True:
                 if steps >= limit:
-                    raise StepLimitExceeded(f"run stopped after reaching the step limit of {limit} model calls")
+                    final = await self._finish_at_limit(messages, spec, run_id, steps, limit)
+                    steps += 1
+                    limit_reached = True
+                    self.store.checkpoint_run(run_id, messages, steps)
+                    break
                 result = await until_paused(self._model_step(messages, spec, run_id, steps + 1), spec.pause,
                                             f"model call {steps + 1}")
                 steps += 1
@@ -129,14 +138,40 @@ class Agent:
                               error_chars=len(error))
             self.bus.publish(EventType.RUN_END, status="failed", error=error, **ids)
             raise
-        self.store.finish_run(run_id, status=RunStatus.DONE, final=final)
-        self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_chars=len(final))
-        self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
-        return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages)
+        if limit_reached:
+            note = f"stopped at the step limit of {limit} model calls; the final answer says what is left"
+            self.store.finish_run(run_id, status=RunStatus.DONE, final=final, error=note)
+            self.audit.record("run.end", f"run {note}", **ids, status="step_limit", steps=steps,
+                              final_chars=len(final))
+            self.bus.publish(EventType.RUN_END, status="step_limit", steps=steps, **ids)
+        else:
+            self.store.finish_run(run_id, status=RunStatus.DONE, final=final)
+            self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_chars=len(final))
+            self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
+        return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages,
+                         limit_reached=limit_reached)
 
-    async def _model_step(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, idx: int):
+    async def _finish_at_limit(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, steps: int,
+                               limit: int) -> str:
+        """One more model call, with no tools offered, for the run's own account of what it did and what is left.
+        The instruction is sent with that call only; the answer joins the conversation as the final answer."""
+        ask = [*messages, {"role": "user", "content": STEP_LIMIT_PROMPT.format(limit=limit)}]
+        result = await until_paused(self._model_step(ask, spec, run_id, steps + 1, offer_tools=False), spec.pause,
+                                    f"model call {steps + 1} (at the step limit)")
+        if result.tool_calls:
+            self.audit.record("run.step_limit_calls_ignored", "the model asked for tools after the step limit; "
+                              "none were run", run_id=run_id, task_id=spec.task_id,
+                              tools=[c.name for c in result.tool_calls])
+        if not result.content.strip():
+            raise StepLimitExceeded(f"run stopped after reaching the step limit of {limit} model calls, and the "
+                                    "model gave no account of what it did")
+        messages.append({"role": "assistant", "content": result.content})
+        return result.content
+
+    async def _model_step(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, idx: int, *,
+                          offer_tools: bool = True):
         ids = {"run_id": run_id, "task_id": spec.task_id}
-        tools = self.registry.schemas_for_mode(spec.mode)
+        tools = self.registry.schemas_for_mode(spec.mode) if offer_tools else []
         step_id = self.store.start_step(run_id, idx, "model_call", self.model.model_name,
                                         {"messages": len(messages), "tools": [t["function"]["name"] for t in tools]})
         self.bus.publish(EventType.MODEL_START, step=idx, **ids)
@@ -151,7 +186,7 @@ class Agent:
                 await sink(kind, text)
 
         try:
-            result = await self.model.chat(messages, tools=tools, on_delta=on_delta)
+            result = await self.model.chat(messages, tools=tools or None, on_delta=on_delta)
         except asyncio.CancelledError:
             self.store.finish_step(step_id, status="cancelled", error="interrupted")
             self.bus.publish(EventType.MODEL_END, step=idx, ok=False, **ids)

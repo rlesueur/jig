@@ -128,6 +128,8 @@ Reasoning text (`reasoning_content` or `reasoning`) is optional. When a server s
 
 **Long pages.** `web_fetch` returns at most `[tools.web_fetch] max_chars` characters of a page at a time (12,000 by default), so one page can't flood the context. When a page is longer, the result gives its total length and a note with the `next_offset` to read on from. The model can also use `find` to get only the passages that mention a word, each with its offset. Nothing is cut silently. The same goes for an earlier task's result handed to a later task in a goal: if it's longer than 4,000 characters, the prompt says where it was cut.
 
+**Step limit.** One request may use up to `[runtime] max_steps` model calls (12 by default). If it reaches the limit, Jig makes one more call with no tools offered, so nothing more can be done, and you get the model's own account of what it did and what is left instead of a bare error: in chat the `done` event has `limit_reached`, and you can ask it to carry on; a task fails with that account as its result.
+
 At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, the agent stays off (Jig serves only its set-up page, in set-up mode) and Jig explains why. Run the same checks any time with `jig health`.
 
 Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.cpp fork (`profiles/llamacpp-bonsai.toml`). That is one example setup, not a requirement.

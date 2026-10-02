@@ -484,6 +484,11 @@ class Jig:
             log.exception("task %s crashed", task_id)
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"internal error: {type(exc).__name__}: {exc}")
             return
+        if result.limit_reached:
+            self.set_task_status(task_id, TaskStatus.FAILED, result=result.final,
+                                 error=f"StepLimitExceeded: stopped at the step limit of {self.agent.max_steps} model "
+                                       "calls before finishing; the result says what it did and what is left")
+            return
         self.set_task_status(task_id, TaskStatus.DONE, result=result.final)
 
     # Goals -----------------------------------------------------------------
@@ -577,8 +582,9 @@ class Jig:
                                  "session_id": session_id})
                 return
             self.store.save_session(session_id, [m for m in result.messages if m["role"] != "system"])
+            done = {"limit_reached": True} if result.limit_reached else {}
             await queue.put({"type": "done", "final": result.final, "run_id": run_id, "session_id": session_id,
-                             "steps": result.steps})
+                             "steps": result.steps, **done})
 
         self.bus.add_listener(listener)
         runner = asyncio.create_task(drive())

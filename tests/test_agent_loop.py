@@ -58,17 +58,30 @@ def test_a_stopped_turn_keeps_only_tool_calls_that_got_a_result():
     assert kept[3]["content"] == "Looking" and len(messages[1]["tool_calls"]) == 2, "the input is not changed"
 
 
-async def test_a_chat_turn_that_fails_is_kept_and_can_be_continued(jig):
+async def test_a_turn_at_the_step_limit_says_what_it_did_and_can_be_continued(jig):
     (jig.sandbox.root / "hello.txt").write_text("Hello there", encoding="utf-8")
     ask = ("Call the current_time tool for Europe/London and the list_files tool for the workspace root, then tell "
            "me the time and the names of the files.")
     jig.agent.max_steps = 1
     items = [item async for item in jig.chat(ask)]
-    assert items[-1]["type"] == "error" and "StepLimitExceeded" in items[-1]["error"], items[-1]
-    sid = items[-1]["session_id"]
+    done = items[-1]
+    assert done["type"] == "done" and done["limit_reached"] and done["steps"] == 2, done
+    assert done["final"].strip(), "the user is given the model's own account, not a bare error"
+    run = jig.store.get_run(done["run_id"])
+    model_steps = [s for s in run["step_records"] if s["type"] == "model_call"]
+    assert model_steps[-1]["input"]["tools"] == [], "the last call offers no tools, so it can take no action"
+    tool_steps = [s for s in run["step_records"] if s["type"] == "tool_call"]
+    assert all(s["idx"] == 1 for s in tool_steps), "nothing ran after the limit"
+    assert "step limit" in run["error"] and run["status"] == "done"
+    assert "run.step_limit_calls_ignored" not in audit_kinds(jig, run_id=done["run_id"])
+
+    sid = done["session_id"]
     kept = jig.store.get_session(sid)
     assert kept[0] == {"role": "user", "content": ask}
     assert any(m["role"] == "tool" for m in kept), "what Jig did before it stopped is kept"
+    assert not any("step limit" in m["content"] and m["role"] == "user" for m in kept), \
+        "the step-limit instruction is not kept as if the user had said it"
+    assert kept[-1] == {"role": "assistant", "content": done["final"]}
     jig.agent.max_steps = 8
     more = [item async for item in jig.chat("Please carry on and finish.", session_id=sid)]
     assert more[-1]["type"] == "done" and "hello.txt" in more[-1]["final"], more[-1]
@@ -84,6 +97,17 @@ async def test_a_long_conversation_still_gets_the_whole_step_limit_each_turn(jig
     assert items[-1]["type"] == "done" and not items[-1].get("limit_reached"), items[-1]
     run = jig.store.get_run(items[-1]["run_id"])
     assert any(s["name"] == "current_time" for s in run["step_records"] if s["type"] == "tool_call")
+
+
+async def test_a_task_at_the_step_limit_fails_with_its_account_of_what_is_left(jig):
+    (jig.sandbox.root / "notes.txt").write_text("Buy milk", encoding="utf-8")
+    jig.agent.max_steps = 1
+    task = jig.create_task(title="Read and time", mode=Mode.RESEARCH,
+                           description="Call current_time and read_file on notes.txt, then report both.")
+    await jig.run_task(task["id"])
+    task = jig.store.get_task(task["id"])
+    assert task["status"] == "failed" and "step limit" in task["error"], task
+    assert task["result"] and task["result"].strip()
 
 
 async def test_streaming_chat_yields_deltas_and_done(jig):
