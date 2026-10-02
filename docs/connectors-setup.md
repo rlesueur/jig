@@ -1,46 +1,55 @@
 # Connecting Jig to your accounts
 
-Jig's connectors let it work with your own accounts: your mailbox, calendars, files, code and messages. Each one uses your own app registration or token, and talks directly from your computer to the provider. Nothing goes through a Jig server, because there isn't one.
+Jig's connectors let it work with your own accounts: your mailbox, calendars, files, code and messages. Jig talks directly from your computer to each provider. Nothing goes through a Jig server, because there isn't one.
 
-This page explains, for each provider, what you need to create, which permissions (scopes) to grant and why, and how to hand the credentials to Jig safely.
+The easiest way to connect is **Settings > Connections** in Jig's web page, on the computer Jig runs on. Each account there has plain step-by-step instructions, links to the right page on the provider's site, and a Connect button. Everything below can also be done with `jig connect` in a terminal.
+
+How much setup each one needs:
+
+- **Microsoft and GitHub: just sign in.** Jig has its own app with each, so you sign in and choose what to share. (Organisations that need their own app can still use one.)
+- **Google (Gmail, Calendar, Drive): a one-off setup first.** You make your own small, free Google app, then sign in. The steps are below and in Settings. A shared Google app, checked by Google, so that nobody has to do this, is being looked into for after launch.
+- **Slack and Discord:** you add a Jig bot to your own workspace or server, and paste its token.
+- **Matrix:** your own account, with your password (once) or a token.
+- **Signal:** signal-cli linked to your phone; linking needs one command in a terminal.
 
 ## Status
 
-Every connector below is built and tested without an account against the provider's real service: a made-up token or client gets the provider's real refusal, and the gate, limits and approvals are tested with Jig's real policy engine. Each also has a live test that runs against your own account once you have done its setup; until then it is skipped and says why.
+"Tested against the real service" means the connector has been tested without an account against the provider's real service: a made-up token, app or code gets the provider's real refusal, and the gate, limits and approvals are tested with Jig's real policy engine. Each also has a live test that runs against your own account once it is connected; until then it is skipped and says why.
 
-| Connector | `jig connect` name | What it can do |
-| --- | --- | --- |
-| Gmail | `gmail` | search and read threads, list labels, draft, send, reply, label and archive |
-| Google Calendar | `google-calendar` | list calendars, read events; create, change and cancel events |
-| Google Drive | `google-drive` | search and read files (Docs as text, Sheets as CSV); create files, change files Jig created |
-| Outlook calendar and OneDrive | `microsoft` | the same for your Outlook calendar; search, list, read and save OneDrive files |
-| GitHub | `github` | see repositories, read issues, pull requests and files; comment and open issues |
-| Slack | `slack` | list and read channels the bot is in; post and reply in threads |
-| Discord | `discord` | list and read channels the bot can see; post |
-| Matrix | `matrix` | list joined rooms, read unencrypted messages; post in unencrypted rooms |
-| Signal | `signal` | send messages (to yourself while testing); receive new messages if you allow it |
-| Paying and booking in the browser | (built in) | detects checkouts, payments and bookings; you always decide; Jig never types card details |
+| Connector | `jig connect` name | How you connect | What it can do | Status |
+| --- | --- | --- | --- | --- |
+| Gmail | `gmail` | your own Google app, then sign in | search and read threads, list labels, draft, send, reply, label and archive | built; tested against the real service; live test waiting for a connected account |
+| Google Calendar | `google-calendar` | the same Google app, then sign in | list calendars, read events; create, change and cancel events | built; tested against the real service; live test waiting for a connected account |
+| Google Drive | `google-drive` | the same Google app, then sign in | search and read files (Docs as text, Sheets as CSV); create files, change files Jig created | built; tested against the real service; live test waiting for a connected account |
+| Outlook calendar and OneDrive | `microsoft` | sign in with Jig's Microsoft app (personal, work or school account), or your organisation's own app | the same for your Outlook calendar; search, list, read and save OneDrive files | built; tested against the real service; **Jig's Microsoft app not registered yet** (see [For the Jig project owner](#for-the-jig-project-owner-registering-jigs-microsoft-app)); live test waiting for a connected account |
+| GitHub | `github` | sign in with the Jig GitHub App (a code you type in at GitHub), or a fine-grained token | see repositories, read issues, pull requests and files; comment and open issues | built; tested against the real service; **Jig GitHub App not created yet** (see [For the Jig project owner](#for-the-jig-project-owner-creating-the-jig-github-app)); live test waiting for a connected account |
+| Slack | `slack` | your own bot's token | list and read channels the bot is in; post and reply in threads | built; tested against the real service; live test waiting for a connected account |
+| Discord | `discord` | your own bot's token | list and read channels the bot can see; post | built; tested against the real service; live test waiting for a connected account |
+| Matrix | `matrix` | your account (password once, or a token) | list joined rooms, read unencrypted messages; post in unencrypted rooms | built; tested against the real service; live test waiting for a connected account |
+| Signal | `signal` | signal-cli linked to your phone | send messages (to yourself while testing); receive new messages if you allow it | built; tested with a real signal-cli where one is installed (skipped otherwise); live test waiting for a linked device |
+| Paying and booking in the browser | (built in) | nothing to connect | detects checkouts, payments and bookings; you always decide; Jig never types card details | built; tested against real public demo shops (needs Docker) |
 
-Every send, post, write, change or cancellation needs your approval (see below). None of the connectors can delete mail or files, share files, close or merge on GitHub, or ping a whole channel.
+Every connector can be connected from Settings > Connections or with `jig connect`. Every send, post, write, change or cancellation needs your approval (see below). None of the connectors can delete mail or files, share files, close or merge on GitHub, or ping a whole channel.
 
 ## How credentials are handled
 
-- **Never paste a secret into a chat, an issue, a config file or this repository.** Jig only takes credentials through its own command line, which prompts without echoing what you type (or reads them from standard input with `--stdin`), or from a file you downloaded from the provider, which you can delete afterwards.
+- **Never paste a secret into a chat, an issue, a config file or this repository.** Jig only takes credentials in two places: Settings > Connections, and its own command line (which prompts without echoing what you type, or reads from standard input with `--stdin`). A file you downloaded from a provider (Google's client file) can be chosen in Settings or passed to `jig connect`, and deleted afterwards.
+- **Settings > Connections only works on the computer Jig runs on.** Jig refuses connection requests from your other devices. What you type there goes straight to Jig and into its vault: it is never shown again, never written to Jig's logs or audit log, and never put in an error message. Jig asks your browser not to save or fill in these fields, and clears them once you choose Connect.
 - **Everything goes into Jig's vault** (Windows DPAPI on Windows, the OS keyring elsewhere, or the key-file backend in a container). That covers app client secrets, access tokens and refresh tokens. The vault entries are named `connector.<provider>.<what>`.
 - **The model never sees them.** Connector credentials are used only inside the connector code, after the policy gate has approved the action. A core rule blocks any tool from referencing a `connector.*` secret with `{{secret:...}}`, the same way model API keys are protected, and token values are redacted from every tool result, error and audit entry.
 - **Tokens only go to the provider.** Each connector has a fixed list of hosts (for example `gmail.googleapis.com`, `graph.microsoft.com`, `api.github.com`), and Jig refuses to send its token anywhere else, over anything but HTTPS.
-- **Least privilege.** Each connector asks only for the scopes of the access level you choose (`--access`).
-- **Disconnect at any time.** `jig disconnect <provider>` revokes the grant at the provider where the provider supports that (Google, Slack and Matrix do), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, Signal), it says exactly where to remove the access yourself.
+- **Least privilege.** Each connector asks only for the scopes of the access level you choose (`--access`, or "What Jig may do" in Settings).
+- **Disconnect at any time.** `jig disconnect <provider>`, or Disconnect in Settings, revokes the grant at the provider where the provider supports that (Google, Slack and Matrix do), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, Signal), it says exactly where to remove the access yourself.
 
 The commands that are the same for every connector:
 
 ```powershell
 .\.venv\Scripts\jig connections                 # every connector: connected or not, account, scopes, last error
-.\.venv\Scripts\jig connect <provider>          # connect (opens your browser for providers that use OAuth)
+.\.venv\Scripts\jig connect <provider>          # connect (opens your browser, or shows a code, for providers you sign in to)
 .\.venv\Scripts\jig disconnect <provider>       # revoke where possible and delete the tokens from the vault
 ```
 
-Run them with the same `--config` (and so the same data directory) as the Jig you use, for example `.\.venv\Scripts\jig --config jig.local.toml connect gmail`. They work whether or not Jig is running; a running Jig picks up a new connection on its next tool call. Settings > Connections in the web UI shows the same status, and has Connect and Disconnect buttons for the browser sign-in connectors once the app credentials are in the vault. Connectors that use a token you type (GitHub, Slack, Discord, Matrix, Signal) are connected in a terminal only, so the token never passes through the browser.
+Run them with the same `--config` (and so the same data directory) as the Jig you use, for example `.\.venv\Scripts\jig --config jig.local.toml connect gmail`. They work whether or not Jig is running; a running Jig picks up a new connection on its next tool call.
 
 ## What Jig does with a connected account
 
@@ -67,60 +76,36 @@ Use these in the config you test with. Each connector's section below gives the 
 
 ## Google: Gmail, Google Calendar and Google Drive
 
-Gmail, Google Calendar and Google Drive share one Google Cloud project and one OAuth client, so you do this setup once. Each connector gets its own grant with only its own scopes, so you can connect and disconnect them separately.
+Google doesn't have a shared Jig app yet, so the first time you connect a Google account you make your **own small Google app**. It's free, only you use it, and you do it once for Gmail, Calendar and Drive together. Settings > Connections shows the same steps with a link to each page. (A shared Google app, checked by Google, so that nobody has to do this, is being looked into for after launch.)
 
-Official documentation used for these steps: [Create a Google Cloud project](https://developers.google.com/workspace/guides/create-project), [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis), [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent), [Create access credentials](https://developers.google.com/workspace/guides/create-credentials), [OAuth 2.0 for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app), [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Calendar API scopes](https://developers.google.com/workspace/calendar/api/auth), [Drive API scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+Sign in to Google with the account you want Jig to use, then:
 
-### 1. Create a project and turn on the APIs
+1. **Create a project.** Open [Create a project](https://console.cloud.google.com/projectcreate), call it `Jig`, and choose **Create**. Make sure it's the selected project at the top of the page.
+2. **Switch on the parts of Google Jig uses.** Open each link and choose **Enable** (only the ones you want): [Gmail](https://console.cloud.google.com/apis/library/gmail.googleapis.com), [Google Calendar](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com), [Google Drive](https://console.cloud.google.com/apis/library/drive.googleapis.com).
+3. **Set up the sign-in page.** Open [Google Auth Platform](https://console.cloud.google.com/auth/overview) and choose **Get started**. App name: `Jig`. User support email: your address. Audience: **External**. Contact information: your address. Agree to the policy, then **Create**.
+4. **Publish it.** Open [Audience](https://console.cloud.google.com/auth/audience), choose **Publish app**, then **Confirm**. The publishing status should now say **In production**. This matters: while an app is in "Testing", Google disconnects it every 7 days. You don't need to send it to Google for verification: it's your own app.
+5. **Make the key Jig signs in with.** Open [Clients](https://console.cloud.google.com/auth/clients), choose **Create client**, pick **Desktop app** as the application type, call it `Jig`, and choose **Create**. In the box that appears, choose **Download JSON**.
+6. **Give the file to Jig.** In Settings > Connections, under Gmail, choose **Choose the downloaded file**, pick the file, and choose **Use this file**. (Or run `jig connect gmail --client-json <the file>`.) Jig keeps it in its vault; you can delete the download afterwards.
+7. **Connect.** Choose **Connect** next to Gmail, Google Calendar or Google Drive, and sign in. Google shows a warning that it **"hasn't verified this app"**: that's expected, because it's your own app and you haven't asked Google to check it. Choose **Advanced**, then **Go to Jig (unsafe)**. You only see this the first time. Then tick what Jig may do and choose **Continue**.
 
-1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in with the Google account whose mailbox, calendar and Drive Jig should use.
-2. Create a project: the project picker at the top > **New project**, name it (for example "Jig"), **Create**, and make sure it is selected.
-3. Go to **Menu > APIs & Services > Library** and **Enable** each of these three: **Gmail API**, **Google Calendar API** and **Google Drive API**.
+Once your app is "In production", Google doesn't end Jig's access after 7 days: it stays connected until you disconnect it, remove its access in your Google account, change your Google password (for Gmail), or leave it unused for six months. An unverified app can be used by up to 100 Google accounts, which is plenty for your own.
 
-### 2. Set up the consent screen (Google Auth platform)
+### What each Google permission lets Jig do
 
-1. Go to **Menu > Google Auth platform > Branding**. If it says "Google Auth platform not configured yet", click **Get started**.
-2. **App information:** App name "Jig (personal)", User support email: your address. **Next**.
-3. **Audience:** choose **External** (for a personal @gmail.com account; with a Google Workspace account you can choose **Internal** instead). **Next**.
-4. **Contact information:** your address. **Next**, agree to the Google API Services User Data Policy, **Continue**, **Create**.
-5. Go to **Audience** > **Test users** > **Add users**, add your own Google address, **Save**. Leave the app in **Testing**: it is for you only and does not need Google's verification.
-6. Go to **Data access** > **Add or remove scopes** and add all of the scopes below (paste them into "Manually add scopes", one per line), then **Update** and **Save**:
+You don't need to add these anywhere in Google's console: Jig asks for only the ones of the connector and access level you choose, and Google lists each one on its sign-in page.
 
-   | Scope | Used by | Lets Jig |
-   | --- | --- | --- |
-   | `https://www.googleapis.com/auth/gmail.readonly` | Gmail `read`, `send` | read mail and labels |
-   | `https://www.googleapis.com/auth/gmail.compose` | Gmail `send` | create drafts and send (each send needs your approval) |
-   | `https://www.googleapis.com/auth/gmail.modify` | Gmail `manage` | read, send, label and archive; never permanent deletion |
-   | `https://www.googleapis.com/auth/calendar.calendarlist.readonly` | Calendar | see which calendars you have (not change them) |
-   | `https://www.googleapis.com/auth/calendar.events.readonly` | Calendar `read` | read events |
-   | `https://www.googleapis.com/auth/calendar.events` | Calendar `write` | also create, change and cancel events (each needs your approval) |
-   | `https://www.googleapis.com/auth/drive.readonly` | Drive `read`, `write` | search and read your files |
-   | `https://www.googleapis.com/auth/drive.file` | Drive `write` | create files, and change only files Jig created (each needs your approval) |
+| Scope | Used by | Lets Jig |
+| --- | --- | --- |
+| `https://www.googleapis.com/auth/gmail.readonly` | Gmail `read`, `send` | read mail and labels |
+| `https://www.googleapis.com/auth/gmail.compose` | Gmail `send` | create drafts and send (each send needs your approval) |
+| `https://www.googleapis.com/auth/gmail.modify` | Gmail `manage` | read, send, label and archive; never permanent deletion |
+| `https://www.googleapis.com/auth/calendar.calendarlist.readonly` | Calendar | see which calendars you have (not change them) |
+| `https://www.googleapis.com/auth/calendar.events.readonly` | Calendar `read` | read events |
+| `https://www.googleapis.com/auth/calendar.events` | Calendar `write` | also create, change and cancel events (each needs your approval) |
+| `https://www.googleapis.com/auth/drive.readonly` | Drive `read`, `write` | search and read your files |
+| `https://www.googleapis.com/auth/drive.file` | Drive `write` | create files, and change only files Jig created (each needs your approval) |
 
-   Listing a scope here does not grant it. Jig asks for only the scopes of the connector and access level you choose, and Google shows you each one on the consent page. None of these lets Jig delete calendars or Drive files permanently, and Jig has no tool that does.
-7. In [Google Calendar](https://calendar.google.com/), create a separate calendar for testing: **Other calendars > + > Create new calendar**, name it exactly `[Jig test]`. The live Calendar tests use only that calendar.
-
-**Important: in Testing, Google's refresh tokens expire after 7 days** for these scopes ([Google's documentation](https://developers.google.com/identity/protocols/oauth2#expiration)). After that, the Google tools fail with a clear "reconnect" message and you run `jig connect <name>` again. Publishing the app to "In production" removes that limit but, for Gmail's restricted scopes, needs Google's verification, which a personal project does not need.
-
-### 3. Create the OAuth client
-
-1. Go to **Menu > Google Auth platform > Clients** > **Create client**.
-2. **Application type: Desktop app**. Name: "Jig desktop". **Create**.
-3. In the dialogue that appears, click **Download JSON** and save the file somewhere private, for example your Downloads folder. (For a desktop app Google calls the second value a "client secret", but it is not truly secret: Google's documentation says installed apps cannot keep it confidential. Jig still keeps it in the vault.)
-
-Jig uses the desktop "loopback" flow with PKCE: it opens Google's sign-in page in your browser and listens on `http://127.0.0.1:<random port>` for the answer, which only works on this computer. You do not need to add a redirect URI for a desktop client.
-
-### 4. Give the client to Jig and connect
-
-```powershell
-.\.venv\Scripts\jig --config jig.local.toml connect gmail --client-json "$env:USERPROFILE\Downloads\client_secret_XXXX.json"
-.\.venv\Scripts\jig --config jig.local.toml connect google-calendar --access write
-.\.venv\Scripts\jig --config jig.local.toml connect google-drive --access write
-```
-
-The first command stores the client ID and client secret in the vault as `connector.google.client` (shared by the Google connectors) and tells you when it is safe to delete the downloaded file. Each command opens your browser at Google's consent page. Sign in, check the permissions listed, and allow them. The browser shows "Jig is connected" and the command prints the account it connected and the scopes Google granted. Jig then makes one real call to that API, so if you forgot to enable it in step 1 you find out straight away (and the new grant is revoked again).
-
-If you'd rather not use the file, run `jig connect gmail` without `--client-json`: it prompts for the client ID and the client secret, without echoing the secret.
+None of these lets Jig delete calendars or Drive files permanently, and Jig has no tool that does.
 
 ### Gmail
 
@@ -172,41 +157,46 @@ Live test: connect with `--access write`, add the section above, set `JIG_LIVE_G
 
 `jig disconnect <gmail|google-calendar|google-drive>` revokes the grant at Google (`https://oauth2.googleapis.com/revoke`) and deletes the tokens from the vault. Google removes the app's access for your whole account, so the other Google connectors need connecting again afterwards. `jig disconnect google-client` also removes the stored client. You can check or remove the app's access yourself at [myaccount.google.com/connections](https://myaccount.google.com/connections).
 
+### Technical details
+
+Official documentation: [Create a Google Cloud project](https://developers.google.com/workspace/guides/create-project), [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis), [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent), [Create access credentials](https://developers.google.com/workspace/guides/create-credentials), [OAuth 2.0 for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app), [Refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration), [Unverified apps](https://support.google.com/cloud/answer/7454865).
+
+- Jig uses the desktop "loopback" flow with PKCE: it opens Google's sign-in page and listens on `http://127.0.0.1:<random port>` for the answer, which only works on this computer. A Desktop app client needs no redirect URI.
+- Google calls the second value in the client file a "client secret", but its own documentation says installed apps can't keep it confidential. Jig still keeps it in the vault as `connector.google.client` (shared by the three Google connectors).
+- With a Google Workspace account you can choose **Internal** as the audience in step 3 instead; then there is no warning and no publishing step.
+- If your app is still in **Testing**, Google's refresh tokens expire after 7 days. The Google tools then fail with a message that says so, and you reconnect after publishing the app (step 4).
+- After signing in, Jig makes one real call to that API, so if you forgot to enable it in step 2 you find out straight away (and the new grant is revoked again).
+- From a terminal: `jig connect gmail --client-json "$env:USERPROFILE\Downloads\client_secret_XXXX.json"`, then `jig connect google-calendar --access write` and `jig connect google-drive --access write`. Without `--client-json`, `jig connect gmail` asks for the client ID and secret, without echoing the secret.
+- For the live Calendar tests, create a separate calendar in [Google Calendar](https://calendar.google.com/): **Other calendars > + > Create new calendar**, named exactly `[Jig test]`.
+
 ---
 
 ## Microsoft: Outlook calendar and OneDrive
 
-One Microsoft Entra app registration and one Microsoft sign-in cover both your Outlook calendar and your OneDrive, through Microsoft Graph.
+One Microsoft sign-in covers both your Outlook calendar and your OneDrive, through Microsoft Graph. It works with a **personal** Microsoft account (Outlook.com, Hotmail, Live) and with a **work or school** account.
 
-Official documentation: [Register an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [Redirect URIs and the localhost exception](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url), [Add a redirect URI](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri), [Public client apps](https://learn.microsoft.com/en-us/entra/identity-platform/msal-client-applications), [Authorisation code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), [Microsoft Graph permissions](https://learn.microsoft.com/en-us/graph/permissions-reference).
+1. In Settings > Connections, choose what Jig may do next to Microsoft, and choose **Connect**. (Or run `jig connect microsoft`, with `--access write` to let Jig change events and save files.)
+2. Microsoft's sign-in page opens. Sign in, check what Jig asks for, and choose **Accept**.
+3. Come back to Jig: it connects by itself, and shows the account it connected.
 
-1. You need a Microsoft Entra tenant to register an app. Microsoft's quickstart asks for an Azure account (a [free one](https://azure.microsoft.com/free/) works) and you can use its **Default Directory**. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com/).
-2. **Entra ID > App registrations > New registration.** Name: "Jig (personal)".
-3. **Supported account types: Personal Microsoft accounts only** (for an Outlook.com, Hotmail or Live account). Jig signs in through Microsoft's `consumers` endpoint, so it works with personal accounts only.
-4. Leave Redirect URI empty for now and click **Register**. Copy the **Application (client) ID** from the Overview page. It is an identifier, not a secret.
-5. **Authentication > Add a platform (or Add redirect URI) > Mobile and desktop applications**, enter `http://localhost` and save. Microsoft ignores the port for `localhost`, so Jig's random loopback port works. Do **not** create a client secret or certificate: Jig is a public client and uses PKCE instead.
-6. **API permissions > Add a permission > Microsoft Graph > Delegated permissions**, add:
+**Work or school accounts.** Your organisation decides which apps its people may use. Microsoft shows the Jig app as **unverified** until its publisher is verified (see below). Depending on your organisation's settings you may see:
 
-   | Permission | Lets Jig |
-   | --- | --- |
-   | `User.Read` | see your name and address, to show which account is connected |
-   | `offline_access` | get a refresh token, so you don't sign in every hour |
-   | `Calendars.Read` | read your Outlook calendar (`read` access) |
-   | `Calendars.ReadWrite` | also create, change and cancel events, each with your approval (`write` access) |
-   | `Files.Read` | search and read your OneDrive files (`read` access) |
-   | `Files.ReadWrite` | also save files, each with your approval (`write` access) |
+- the normal consent page: choose **Accept** and you're connected;
+- **"Need admin approval"**: your organisation lets only its IT team approve apps, or only apps from verified publishers. You can send a request from that page; once an administrator approves Jig, connect again;
+- a message that you can't use the app at all: ask your IT team. If they would rather use their own app registration, see "Your organisation's own app" below.
 
-   None of these needs admin consent. Jig asks only for the ones of the access level you choose.
-7. In [Outlook calendar](https://outlook.live.com/calendar/), create a calendar for testing: **Add calendar > Create blank calendar**, name it exactly `[Jig test]`. In [OneDrive](https://onedrive.live.com/), create a folder named `Jig test` at the top level. The live tests use only those.
-8. Connect:
+**Access levels:** `read` (default) and `write`:
 
-   ```powershell
-   .\.venv\Scripts\jig --config jig.local.toml connect microsoft --access write --client-id <Application (client) ID>
-   ```
+| Permission | Lets Jig |
+| --- | --- |
+| `User.Read` | see your name and address, to show which account is connected |
+| `offline_access` | stay connected without signing in again every hour |
+| `Calendars.Read` | read your Outlook calendar (`read` access) |
+| `Calendars.ReadWrite` | also create, change and cancel events, each with your approval (`write` access) |
+| `Files.Read` | search and read your OneDrive files (`read` access) |
+| `Files.ReadWrite` | also save files, each with your approval (`write` access) |
 
-   Jig stores the client ID in the vault as `connector.microsoft.client` (or asks for it if you leave out `--client-id`) and opens Microsoft's sign-in page in your browser. The command prints the account it connected and the permissions granted.
-
-**Access levels:** `read` (default) and `write`, as in the table. Creating, changing and cancelling events are human-only; if you organised an event with guests, Outlook emails them about changes and cancellations. Saving a file asks by default and never replaces an existing file unless the call says so; the approval card says whether it would. Jig has no delete-file or share tool. OneDrive text files are read as text; Word, PDF and other files return their details and link only.
+None of these needs an administrator's consent by Microsoft's rules (an organisation can still require it). Creating, changing and cancelling events are human-only; if you organised an event with guests, Outlook emails them about changes and cancellations. Saving a file asks by default and never replaces an existing file unless the call says so; the approval card says whether it would. Jig has no delete-file or share tool. OneDrive text files are read as text; Word, PDF and other files return their details and link only.
 
 ```toml
 [connectors.microsoft]
@@ -214,32 +204,90 @@ allowed_targets = ["[Jig test]", "Jig test"]   # calendars (exact name or id) an
 required_prefix = "[Jig test]"                 # every event title and file name must start with this
 ```
 
-Live test: connect with `--access write`, add the section above, set `JIG_LIVE_MICROSOFT_CONFIG` and run `tests\test_connector_microsoft_live.py`. It creates, reads, changes and cancels one `[Jig test]` event with no guests in the `[Jig test]` calendar, and saves, reads, replaces and deletes one `[Jig test]` file in the `Jig test` folder. It checks that a rename without the prefix, your main calendar, the top of OneDrive and a denied approval are all stopped.
+Live test: in [Outlook calendar](https://outlook.live.com/calendar/), create a calendar named exactly `[Jig test]` (**Add calendar > Create blank calendar**), and in [OneDrive](https://onedrive.live.com/) a top-level folder named `Jig test`. Connect with `--access write`, add the section above, set `JIG_LIVE_MICROSOFT_CONFIG` and run `tests\test_connector_microsoft_live.py`. It creates, reads, changes and cancels one `[Jig test]` event with no guests in the `[Jig test]` calendar, and saves, reads, replaces and deletes one `[Jig test]` file in the `Jig test` folder. It checks that a rename without the prefix, your main calendar, the top of OneDrive and a denied approval are all stopped.
 
-Microsoft has no endpoint to revoke a single app's refresh token, so `jig disconnect microsoft` deletes the tokens from the vault and tells you to remove the app's access at [account.live.com/consent/Manage](https://account.live.com/consent/Manage).
+Microsoft has no endpoint to revoke a single app's refresh token, so disconnecting deletes the tokens from the vault and tells you where to remove Jig's access: [account.live.com/consent/Manage](https://account.live.com/consent/Manage) for a personal account, [myapplications.microsoft.com](https://myapplications.microsoft.com) for a work or school account.
+
+### Your organisation's own app
+
+Some organisations require every app to use a registration in their own directory. Then Jig signs in with that instead of its own app:
+
+- in Settings > Connections, under Microsoft, open **Advanced: your organisation's own app**, paste the **Application (client) ID**, and the tenant if the app only works for your organisation; or
+- `jig connect microsoft --client-id <Application (client) ID> [--tenant <tenant ID or domain>]` (stored in the vault; `jig disconnect microsoft-client` goes back to Jig's app); or
+- in the config:
+
+  ```toml
+  [connectors.microsoft]
+  client_id = "00000000-0000-0000-0000-000000000000"
+  tenant = "contoso.onmicrosoft.com"   # optional: default "common" (personal and work or school accounts)
+  ```
+
+If more than one is set, Jig uses the one stored in the vault, then the config, then its own app. Each connection remembers which app and tenant it signed in with, and always renews its access with that one. The registration needs the same settings as Jig's own (below): the `http://localhost` redirect on the **Mobile and desktop applications** platform, no client secret, and the delegated permissions above.
+
+If Jig's own Microsoft app isn't set up in your copy of Jig (its client ID is empty), connecting says so plainly, and only your organisation's own app can be used.
+
+### For the Jig project owner: registering Jig's Microsoft app
+
+This is done once, by the Jig project owner, not by people using Jig. It creates the one public app registration that every copy of Jig signs in with. Its Application (client) ID is an identifier, not a secret, and ships in `jig/connectors/apps.py`.
+
+Official documentation: [Register an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [Supported account types](https://learn.microsoft.com/en-us/entra/identity-platform/supported-accounts-validation), [Redirect URIs and the localhost exception](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url), [Public client apps](https://learn.microsoft.com/en-us/entra/identity-platform/msal-client-applications), [Publisher domain](https://learn.microsoft.com/en-us/entra/identity-platform/howto-configure-publisher-domain), [Publisher verification](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview), [User consent settings](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent).
+
+1. **Get a Microsoft Entra directory (tenant).** App registrations live in a directory. If you don't have one, create a free one: sign up for a [free Azure account](https://azure.microsoft.com/free/) with your Microsoft account; it comes with a **Default Directory**.
+2. **Register the app as a work account in that directory, not as your personal Microsoft account.** Microsoft can only verify the publisher of an app that was registered by a work or school account. In the [Microsoft Entra admin center](https://entra.microsoft.com/), go to **Entra ID > Users > New user > Create new user**, make one such as `jig-admin@<your directory>.onmicrosoft.com`, and give it the **Application Administrator** role (**Roles and administrators**). Sign out, and sign in to the admin center as that user. (You can register as your personal account instead, but the app then can never be publisher verified, and work and school users are more likely to see "Need admin approval".)
+3. **Entra ID > App registrations > New registration:**
+   - **Name:** `Jig`. This is what people see on Microsoft's sign-in and consent pages.
+   - **Supported account types:** **Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)**.
+   - **Redirect URI:** platform **Public client/native (mobile & desktop)**, value `http://localhost`.
+   - Choose **Register**.
+4. **Copy the Application (client) ID** from the app's **Overview** page.
+5. **Authentication:** check that **Mobile and desktop applications** lists `http://localhost` (exactly that: no port, no path; Microsoft ignores the port for `localhost`, so Jig's random loopback port works). This platform is what makes Jig a public client that uses PKCE instead of a secret. Leave **Allow public client flows** at **No**: it only enables the device code and password flows, which Jig doesn't use.
+6. **Certificates & secrets:** add nothing. Jig must never have a client secret or certificate.
+7. **API permissions > Add a permission > Microsoft Graph > Delegated permissions:** add `offline_access`, `Calendars.Read`, `Calendars.ReadWrite`, `Files.Read` and `Files.ReadWrite` (`User.Read` is there already). Don't choose "Grant admin consent": that only covers your own directory, and each person consents for themselves when they sign in.
+8. **Branding & properties:** set the name, a logo, the home page URL (for example the Jig site), and the terms of service and privacy statement URLs. People see these on the consent page, and verification needs them.
+9. **Publisher domain** (Branding & properties > Publisher domain > **Verify a new domain**): enter a domain you control, such as the Jig site's domain. Microsoft asks you to publish a file at `https://<domain>/.well-known/microsoft-identity-association.json` containing `{"associatedApplications": [{"applicationId": "<the Application (client) ID>"}]}`, then choose **Verify and save domain**. For apps registered since November 2020 this alone doesn't remove the "unverified" label, but it is needed for publisher verification, and the domain can't be `*.onmicrosoft.com` for that.
+10. **Publisher verification** (optional, and can be done after launch). It replaces "unverified" with a blue "verified" badge, and lets organisations that allow only verified publishers' apps approve Jig without an administrator. It needs:
+    - a [Microsoft AI Cloud Partner Program](https://partner.microsoft.com/) account (its Partner One ID, the "partner global account", not a location ID) that has completed Microsoft's verification of your organisation;
+    - the directory where the app is registered associated with that partner account;
+    - an email domain on the partner account that matches the app's publisher domain (step 9);
+    - the person verifying signed in with multi-factor authentication and holding Application Administrator (or Cloud Application Administrator) in Entra and Partner Admin (or Account Admin) in Partner Center.
+
+    Then: **App registration > Branding & properties > Publisher verification**, enter the Partner One ID and choose **Verify and save**.
+11. **Put the ID in Jig:** set `MICROSOFT_CLIENT_ID = "<the Application (client) ID>"` in `jig/connectors/apps.py`, and run:
+
+    ```powershell
+    .\.venv\Scripts\python -m pytest -q tests\test_connector_microsoft.py -k built_in_app_is_registered
+    ```
+
+    It asks Microsoft's real sign-in service about the app with a made-up code. It passes only when Microsoft accepts the app as a public client for both personal and work or school accounts at the `common` authority, and fails with Microsoft's own error otherwise. Then connect your own account once (`jig connect microsoft --access write`) and run the live test above.
+
+**What people see until the publisher is verified.** Personal accounts: Microsoft's consent page lists the permissions and the app name, and they choose Accept. Work and school accounts: the consent page says the app is **unverified**. If their organisation allows people to consent to apps, they choose Accept. Many organisations follow Microsoft's recommendation of allowing consent only for apps from verified publishers, and where Microsoft's risk-based step-up consent is turned on, people can't consent to unverified multi-tenant apps registered since November 2020 that ask for more than sign-in and their basic profile (Jig asks for calendar and file access). In those cases they see **"Need admin approval"** and must ask an administrator, or use their organisation's own app registration.
 
 ---
 
 ## GitHub
 
-Jig uses a **fine-grained personal access token** that you make on GitHub and type into `jig connect github`. It can see your repositories, read issues, pull requests and files, and (with `write` access) comment and open issues. Every comment and new issue is reviewed by the Sentinel and **always needs your approval**, whatever your rules say. Jig has no tool to close, merge, delete or push.
+Jig signs in to GitHub with the **Jig GitHub App**. You choose exactly which repositories it may use, and you can change that at any time on GitHub. It can see those repositories, read issues, pull requests and files, and (with `write` access) comment and open issues. Every comment and new issue is reviewed by the Sentinel and **always needs your approval**, whatever your rules say. Jig has no tool to close, merge, delete or push.
 
-Official documentation: [Managing your personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+1. **Choose the repositories.** In Settings > Connections, under GitHub, open **Choose repositories** (the Jig GitHub App's page on GitHub). Choose **Install** (or **Configure** if you've installed it before), pick your account, choose **Only select repositories**, tick the ones Jig may use, and choose **Install** or **Save**.
+2. **Sign in.** Choose **Connect** in Settings (or run `jig connect github`, with `--access write` to let Jig comment and open issues). Jig shows a short code like `WDJB-MJHT` and opens [github.com/login/device](https://github.com/login/device).
+3. **Type the code** on that page, check it says "Jig", and choose **Authorize**. Come back to Jig: it connects by itself. The code works for 15 minutes.
 
-1. Create a throwaway repository for testing, for example `jig-connector-test` (private is fine). Jig's tests only write to that repository.
-2. Go to **GitHub > Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token** ([github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens)).
-3. Name "Jig", an expiry (the shortest you are comfortable with), **Resource owner:** you, **Repository access: Only select repositories**, and pick the repositories Jig may use (start with just the test repository).
-4. **Repository permissions:** Metadata: **Read-only** (GitHub requires it); Contents: **Read-only**; Issues: **Read-only** for `read` access, **Read and write** for `write` access; Pull requests: **Read-only**. Nothing else. (Commenting on a pull request goes through its issue, so Issues: Read and write covers it.)
-5. **Generate token**, then connect:
+If you skip step 1, connecting stops and says so, with the link to choose repositories: without it, Jig couldn't see any of them. Jig can only ever reach repositories that you can reach and that you chose for the app, and only with the app's permissions (below). GitHub's sign-in tokens last 8 hours, and Jig renews them by itself; if Jig isn't used for six months, you sign in again.
 
-   ```powershell
-   .\.venv\Scripts\jig connect github                  # read access
-   .\.venv\Scripts\jig connect github --access write   # also comment and open issues (each needs your approval)
-   ```
+`jig disconnect github`, or Disconnect in Settings, deletes Jig's tokens from the vault. GitHub only lets an app revoke its tokens with a secret the app's owner holds, which Jig doesn't have, so also remove Jig at [Authorized GitHub Apps](https://github.com/settings/apps/authorizations), and the app from your repositories at [Installed GitHub Apps](https://github.com/settings/installations).
 
-   Jig asks for the token without showing it (or reads it from standard input with `--stdin`), checks it with GitHub, and stores it only in the vault. Jig only accepts fine-grained tokens (`github_pat_`); classic tokens (`ghp_`) reach every repository you can, so Jig refuses them. If the token has an expiry, Jig marks the connection as needing reconnecting just before it expires.
+### Advanced: a fine-grained personal access token
 
-GitHub doesn't let Jig see which permissions a fine-grained token has, so `write` access in Jig means "Jig may try". If the token lacks Issues: Read and write for a repository, GitHub refuses the comment and Jig tells you which permission to add.
+If you'd rather not use the app (or it isn't set up in your copy of Jig), you can give Jig a **fine-grained personal access token** instead: in Settings, open **Advanced: use a personal access token**, or run `jig connect github --token`. Official documentation: [Managing your personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
+1. Go to [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
+2. Name "Jig", an expiry (the shortest you are comfortable with), **Resource owner:** you, **Repository access: Only select repositories**, and pick the repositories Jig may use.
+3. **Repository permissions:** Metadata: **Read-only** (GitHub requires it); Contents: **Read-only**; Issues: **Read-only** for `read` access, **Read and write** for `write` access; Pull requests: **Read-only**. Nothing else. (Commenting on a pull request goes through its issue, so Issues: Read and write covers it.)
+4. **Generate token**, and paste it into Settings, or into the hidden prompt of `jig connect github --token` (or standard input with `--stdin`).
+
+Jig checks the token with GitHub and stores it only in the vault. It only accepts fine-grained tokens (`github_pat_`); classic tokens (`ghp_`) reach every repository you can, so Jig refuses them. If the token has an expiry, Jig marks the connection as needing reconnecting just before it expires. GitHub doesn't let Jig see which permissions a fine-grained token has, so `write` access in Jig means "Jig may try"; if the token lacks a permission, GitHub refuses and Jig says which. GitHub has no way for Jig to revoke a personal access token, so after disconnecting also delete it at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens).
+
+### Limits and the live test
 
 ```toml
 [connectors.github]
@@ -250,9 +298,55 @@ allowed_recipients = ["@<your-login>"]                 # optional: the only peop
 
 A repository that has been renamed or transferred is refused (Jig doesn't follow the move), and both the name asked for and the name GitHub reports must be on the list.
 
-Live test: set `JIG_LIVE_GITHUB_CONFIG` and `JIG_LIVE_GITHUB_REPO` (`<your-login>/jig-connector-test`) and run `tests\test_connector_github_live.py`. It opens one `[Jig test]` issue in the test repository, comments on it, reads both back, checks that a write to another repository is blocked and that a denied approval stops a comment, then closes the issue.
+Live test: create a throwaway repository such as `jig-connector-test` (private is fine) and include it when you choose repositories (or in the token). Connect with `--access write`, set `JIG_LIVE_GITHUB_CONFIG` and `JIG_LIVE_GITHUB_REPO` (`<your-login>/jig-connector-test`) and run `tests\test_connector_github_live.py`. It opens one `[Jig test]` issue in the test repository, comments on it, reads both back, checks that a write to another repository is blocked and that a denied approval stops a comment, then closes the issue.
 
-`jig disconnect github` deletes the token from the vault. GitHub has no way for Jig to revoke a personal access token, so also delete it at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens).
+### Your own GitHub App
+
+To sign in with a GitHub App of your own instead of Jig's (for example one owned by your organisation, created with the steps below), name it in the config:
+
+```toml
+[connectors.github]
+client_id = "Iv23li..."    # the app's Client ID
+app_slug = "your-app"      # its URL name, as in https://github.com/apps/your-app
+```
+
+### For the Jig project owner: creating the Jig GitHub App
+
+This is done once, by the Jig project owner. The app belongs to the personal GitHub account **rlesueur** (not an organisation). Its Client ID and URL name ship in `jig/connectors/apps.py`; the Client ID is an identifier, not a secret, and the device flow needs no client secret.
+
+Official documentation: [Registering a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app), [Generating a user access token (device flow)](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token), [Refreshing user access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens), [Choosing permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
+
+1. Sign in to GitHub as **rlesueur**, and open **Settings > Developer settings > GitHub Apps > New GitHub App** ([github.com/settings/apps/new](https://github.com/settings/apps/new)). Check the page says it's for your personal account, not an organisation.
+2. **GitHub App name:** `Jig` (names are unique across GitHub; if it's taken, pick another, such as `Jig Assistant`). People see this name when they install the app and when they type their code. **Description:** what Jig does with it. **Homepage URL:** the Jig site or repository (required).
+3. **Identifying and authorizing users:**
+   - **Callback URL:** leave empty. Jig doesn't use a browser redirect with GitHub.
+   - **Expire user authorization tokens:** leave **ticked**. Tokens then last 8 hours and are renewed with a refresh token, which Jig keeps in the vault.
+   - **Request user authorization (OAuth) during installation:** leave unticked.
+   - **Enable Device Flow:** **tick it**. Without it, GitHub refuses Jig's sign-in.
+4. **Post installation:** leave **Setup URL** empty.
+5. **Webhook:** **untick Active**. Jig never receives webhooks.
+6. **Permissions > Repository permissions:**
+   - **Contents: Read-only** (read files);
+   - **Issues: Read and write** (read issues, comment, open issues);
+   - **Pull requests: Read and write** (read pull requests and comment on them; Jig has no tool that merges or closes);
+   - **Metadata: Read-only** (GitHub sets this itself);
+   - everything else: **No access**. **Organization permissions** and **Account permissions:** none.
+7. **Subscribe to events:** none.
+8. **Where can this GitHub App be installed?** **Any account**, so anyone using Jig can install it on their own repositories. ("Only on this account" would let only rlesueur use it.)
+9. Choose **Create GitHub App**. On the app's **General** page:
+   - copy the **Client ID** (it starts with `Iv`; not the numeric App ID);
+   - note the app's URL name: the public page is `https://github.com/apps/<slug>`;
+   - **don't** generate a client secret or a private key. Jig needs neither, and an unused secret is only something that could leak.
+   - optionally upload a logo (**Display information**), which people see when they install the app.
+10. **Put the IDs in Jig:** set `GITHUB_APP_CLIENT_ID = "<Client ID>"` and `GITHUB_APP_SLUG = "<slug>"` in `jig/connectors/apps.py`, and run:
+
+    ```powershell
+    .\.venv\Scripts\python -m pytest -q tests\test_connector_github.py -k built_in_app_gets_a_real_device_code
+    ```
+
+    It asks GitHub's real device sign-in for a code with the app's Client ID, and checks GitHub answers with a code for github.com/login/device. If device flow isn't enabled, it fails with GitHub's own `device_flow_disabled`. Then install the app on a test repository, connect once (`jig connect github --access write`) and run the live test above.
+
+If you later change the app's permissions, everyone who installed it is asked by GitHub to accept the change; until they do, the app keeps the old permissions.
 
 ---
 
@@ -266,7 +360,7 @@ Official documentation: [Create an app](https://api.slack.com/quickstart), [Toke
 2. **OAuth & Permissions > Scopes > Bot Token Scopes**, add `channels:read` (list public channels), `channels:history` (read channels the bot is in) and `chat:write` (post as the bot; for `write` access). Optionally `users:read`, to show names instead of user ids. If a required scope is missing, `jig connect slack` refuses and lists what is missing.
 3. **Install to Workspace** and allow. The token you need is the **Bot User OAuth Token** (it starts with `xoxb-`; Jig refuses user tokens, `xoxp-`). If you add scopes later, reinstall the app.
 4. Create a channel for testing, for example `#jig-test`, and type `/invite @Jig` in it. Copy its **Channel ID** (click the channel name; it is at the bottom, like `C0123456789`).
-5. Connect: `.\.venv\Scripts\jig connect slack --access write` (or `--access read`). Jig asks for the token without showing it, or reads it with `--stdin`.
+5. Connect: in Settings > Connections, under Slack, choose the access level, paste the token and choose **Connect**. Or run `.\.venv\Scripts\jig connect slack --access write` (or `--access read`), which asks for the token without showing it, or reads it with `--stdin`. Either way the token goes straight into the vault and is never shown again.
 
 ```toml
 [connectors.slack]
@@ -288,9 +382,9 @@ Official documentation: [Building your first Discord app](https://discord.com/de
 
 1. [discord.com/developers/applications](https://discord.com/developers/applications) > **New Application**, name it "Jig".
 2. **Bot** > **Reset Token** and keep the token for the next step but one (Discord shows it once). On the same page, under **Privileged Gateway Intents**, turn on **Message Content Intent**; without it, Discord hides the text of other people's messages. Optionally turn off **Public Bot**.
-3. Copy the **Application ID** from **General Information** and open `https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot&permissions=68608`, then pick your server. `68608` is View Channels + Send Messages + Read Message History; nothing else is needed.
+3. Copy the **Application ID** from **General Information**. In Settings > Connections, paste it into the Discord steps and Jig makes the link for you; or open `https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot&permissions=68608`, then pick your server. `68608` is View Channels + Send Messages + Read Message History; nothing else is needed.
 4. Create a channel for testing, for example `#jig-test`. Turn on **User Settings > Advanced > Developer Mode**, right-click the channel and **Copy Channel ID**.
-5. Connect: `.\.venv\Scripts\jig connect discord --access write` (or `--access read`). Jig asks for the bot token without showing it, or reads it with `--stdin`.
+5. Connect: in Settings > Connections, under Discord, paste the bot token and choose **Connect**. Or run `.\.venv\Scripts\jig connect discord --access write` (or `--access read`), which asks for the token without showing it, or reads it with `--stdin`.
 
 ```toml
 [connectors.discord]
@@ -316,7 +410,7 @@ Official documentation: [Client-server API](https://spec.matrix.org/latest/clien
 
 The homeserver must be an `https://` address on the public internet. Jig follows the domain's `/.well-known/matrix/client` delegation (`https://matrix.org` becomes `https://matrix-client.matrix.org`), checks that it answers, and only ever sends your access token to that host.
 
-Choose one way to sign in:
+Choose one way to sign in. Both work in Settings > Connections (type the homeserver, your Matrix ID or `token`, and the password or token) as well as in a terminal:
 
 - **Recommended: log in once as a new device called "Jig".** Jig asks for your password (hidden), logs in, keeps only the access token it gets back and forgets the password. Disconnecting later signs out only this session.
 
@@ -358,7 +452,7 @@ Jig sends (and, if you allow it, receives) Signal messages through [signal-cli](
 1. Install Java 21 or newer (for example the Microsoft Build of OpenJDK or Eclipse Temurin) for your user only, and check that `java -version` works in a new PowerShell window.
 2. Download the latest `signal-cli-<version>.tar.gz` from [its releases](https://github.com/AsamK/signal-cli/releases) and unpack it into a folder in your profile, for example `C:\Users\you\signal-cli`. The program is `bin\signal-cli.bat`.
 3. Link it to your phone: run `C:\Users\you\signal-cli\bin\signal-cli.bat link -n Jig`. It prints a `sgnl://linkdevice?...` link; turn it into a QR code (signal-cli's [linking guide](https://github.com/AsamK/signal-cli/wiki/Linking-other-devices-(Provisioning)) shows how) and scan it in Signal on your phone: **Settings > Linked devices > Link new device**. Check it with `signal-cli.bat listAccounts`.
-4. Connect:
+4. Connect: in Settings > Connections, under Signal, type your number and where `signal-cli.bat` is, and choose **Connect**. Or:
 
    ```powershell
    .\.venv\Scripts\jig connect signal --option number=+447700900123 --option signal_cli=C:\Users\you\signal-cli\bin\signal-cli.bat

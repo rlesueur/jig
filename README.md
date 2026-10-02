@@ -474,17 +474,17 @@ Inside the browser, a click or the Enter key cannot submit a form. Every non-GET
 
 ## Connectors
 
-Connectors let Jig work with your own accounts. Each uses your own app registration or token, talks straight from your computer to the provider, and keeps its tokens only in the vault. Setup for each provider, with the scopes and why, is in [docs/connectors-setup.md](docs/connectors-setup.md).
+Connectors let Jig work with your own accounts. Microsoft and GitHub sign in with Jig's own public apps (no setup, no secret; an organisation can use its own app instead); Google needs your own small Google app for now; Slack, Discord, Matrix and Signal use your own bot, account or device. Each talks straight from your computer to the provider, and keeps its tokens only in the vault. Everything can be connected from Settings > Connections, with plain step-by-step instructions. Setup for each provider, with the scopes and why, is in [docs/connectors-setup.md](docs/connectors-setup.md).
 
 Every connector is built and tested against the provider's real service without an account (a made-up token or client gets the provider's real refusal; the gate, limits and approvals run for real). Each also has an opt-in live end-to-end test (`tests/test_connector_<name>_live.py`) that needs your own account's setup and is skipped, with the reason, until then.
 
 | Connector (`jig connect` name) | Sign-in | Tools |
 | --- | --- | --- |
-| Gmail (`gmail`) | Google OAuth | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
+| Gmail (`gmail`) | Google OAuth, your own Google app | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
 | Google Calendar (`google-calendar`) | Google OAuth | `gcal_list_calendars`, `gcal_list_events`, `gcal_get_event` (read); `gcal_create_event`, `gcal_update_event`, `gcal_cancel_event` (human-only) |
 | Google Drive (`google-drive`) | Google OAuth | `gdrive_search`, `gdrive_read_file` (read); `gdrive_create_file`, `gdrive_update_file` (actions; only files Jig created) |
-| Outlook calendar and OneDrive (`microsoft`) | Microsoft OAuth, one sign-in | `outlook_list_calendars`, `outlook_list_events`, `outlook_get_event`, `onedrive_search`, `onedrive_list_folder`, `onedrive_read_file` (read); `outlook_create_event`, `outlook_update_event`, `outlook_cancel_event` (human-only), `onedrive_upload_file` (action) |
-| GitHub (`github`) | fine-grained token | `github_list_repos`, `github_list_issues`, `github_read_issue`, `github_read_file` (read); `github_comment`, `github_create_issue` (human-only) |
+| Outlook calendar and OneDrive (`microsoft`) | Microsoft OAuth with Jig's app (personal, work or school), one sign-in | `outlook_list_calendars`, `outlook_list_events`, `outlook_get_event`, `onedrive_search`, `onedrive_list_folder`, `onedrive_read_file` (read); `outlook_create_event`, `outlook_update_event`, `outlook_cancel_event` (human-only), `onedrive_upload_file` (action) |
+| GitHub (`github`) | the Jig GitHub App (device code), or a fine-grained token | `github_list_repos`, `github_list_issues`, `github_read_issue`, `github_read_file` (read); `github_comment`, `github_create_issue` (human-only) |
 | Slack (`slack`) | bot token | `slack_list_channels`, `slack_read_channel` (read); `slack_post_message`, `slack_reply_in_thread` (human-only) |
 | Discord (`discord`) | bot token | `discord_list_channels`, `discord_read_channel` (read); `discord_post_message` (human-only) |
 | Matrix (`matrix`) | password login as a new device, or a token | `matrix_list_rooms`, `matrix_read_room` (read); `matrix_send_message` (human-only; unencrypted rooms only) |
@@ -492,17 +492,18 @@ Every connector is built and tested against the provider's real service without 
 
 ```powershell
 .\.venv\Scripts\jig connect gmail --client-json <downloaded Desktop app client JSON>   # opens Google's consent page
-.\.venv\Scripts\jig connect microsoft --client-id <Entra app's client ID>              # opens Microsoft's sign-in page
-.\.venv\Scripts\jig connect github --access write                                     # asks for the token without echoing it
+.\.venv\Scripts\jig connect microsoft --access write                                  # opens Microsoft's sign-in page
+.\.venv\Scripts\jig connect github --access write                                     # shows a code to type at github.com/login/device
+.\.venv\Scripts\jig connect slack                                                     # asks for the token without echoing it
 .\.venv\Scripts\jig connections                                                       # status, account, scopes
 .\.venv\Scripts\jig disconnect gmail                                                  # revokes where the provider can, deletes the tokens
 ```
 
-Settings > Connections in the web UI shows the same and has Connect and Disconnect buttons for the browser sign-ins; token connectors are connected in a terminal, so the token never passes through the browser. The API is `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only; returns the sign-in link) and `POST /connections/{provider}/disconnect` `{confirm: true}`.
+Settings > Connections in the web UI shows the same, with each provider's steps and links, and connects every connector: sign-in links, GitHub's device code, token and password forms, and Google's client file. It only accepts these from the computer Jig runs on; typed values go straight to the vault and are never echoed back, logged or put in an error. The API is `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access, method, values}` (host only; returns the sign-in link or device code, or connects a token), `POST /connections/{provider}/disconnect` `{confirm: true}`, and `POST /connections/{google|microsoft}/client` `{confirm: true, ...}` and `DELETE /connections/{google|microsoft}/client` (host only) for your own app's client.
 
 **How connectors are kept safe.**
 
-- **Sign-in:** OAuth 2.0 with PKCE and a one-shot loopback listener on `127.0.0.1` that checks the `state` value (Google and Microsoft; Microsoft as a public client with no secret). Each asks only for the scopes of the access level you choose (`--access`). Token connectors take the token at a hidden prompt or on standard input, and check it with the provider before storing anything.
+- **Sign-in:** OAuth 2.0 with PKCE and a one-shot loopback listener on `127.0.0.1` that checks the `state` value (Google and Microsoft; Microsoft as a public client with no secret). GitHub uses the GitHub App device flow: no secret, expiring user tokens renewed with a refresh token, and only the repositories you chose when installing the app. Each asks only for the scopes of the access level you choose (`--access`). Token connectors take the token at a hidden prompt, on standard input or in Settings, and check it with the provider before storing anything. If Jig's own Microsoft or GitHub app isn't configured, connecting says so; it never quietly switches to another app.
 - **Tokens:** access and refresh tokens and the app client are in the vault as `connector.<provider>.*`. The model never sees them; a core rule stops any tool from naming them with `{{secret:...}}`; the generic `/vault` API refuses to write or delete them; and every token value used is redacted from tool results, errors and the audit log. A connector sends its token only to its provider's own API hosts.
 - **Reads and actions:** reading is a `read` tool, so it works in read-only mode and is not reviewed. Every draft, send, post, comment, calendar change, file save and label change is an outbound side effect: the Sentinel reviews it, and it needs your approval. Sending mail and messages, posting, commenting and changing a calendar are human-only, so no rule can make them automatic. Drafts, label changes and file saves ask by default. Read-only mode refuses all of them. There are no tools to delete mail or files, share files, or close, merge or push on GitHub; adding `TRASH` or `SPAM` is refused; posts never ping a whole channel.
 - **What it refers to:** before review, Jig looks up what an action refers to (the thread, the calendar and event, the folder or file, the repository and issue, the channel or room) and shows it on the approval card and to the Sentinel, marked as text written by other people.
@@ -589,7 +590,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - **A VM sandbox** (for example Firecracker or Hyper-V) as a stronger alternative to the container backend, and per-task egress leases.
 - **A mobile app** that connects to Jig running on your own computer, over the same paired-device, Tailscale-only connection the web UI uses, so you can take Jig with you while the model stays at home.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
-- **Encrypted Matrix rooms**, and work or school Microsoft 365 accounts, for the connectors.
+- **Encrypted Matrix rooms**, and a shared, Google-verified Google app so nobody has to make their own, for the connectors.
 - **Smaller-GPU support**: measured setups for 8 GB cards, with one model as both agent and safety checker (a different safety checker model stays optional via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
