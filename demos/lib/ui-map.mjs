@@ -36,8 +36,14 @@ export const ui = {
   problem: (scope) => scope.getByTestId('chat-problem'),
   readOnlyNote: (p) => tid(p, 'read-only-note'),
 
-  /* approval cards, inline in the conversation */
-  approvalCard: (p, tool, status = 'pending') => ui.chatLog(p).locator(`[data-testid="approval"][data-tool="${tool}"][data-status="${status}"]`),
+  /* approval cards: Jig holds a pending one in its corner (or its sheet, on a narrow window);
+   * once answered, it moves into the conversation */
+  approvalCard: (p, tool, status = 'pending') => p.locator(`[data-testid="approval"][data-tool="${tool}"][data-status="${status}"]`),
+  heldCards: (p) => tid(p, 'corner-held'),
+  workLine: (p) => tid(p, 'work-line'),
+  workMeter: (p) => tid(p, 'work-meter'),
+  workStepsToggle: (p) => tid(p, 'work-steps-toggle'),
+  steps: (p) => tid(p, 'steps').getByTestId('step'),
   approve: (scope, tool) => scope.getByRole('button', { name: `Yes, approve ${tool}`, exact: true }),
   deny: (scope, tool) => scope.getByRole('button', { name: `No, deny ${tool}`, exact: true }),
   approvalWill: (card) => card.getByTestId('approval-will'),
