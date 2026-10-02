@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..config import MODEL_KEY_PREFIX
 from ..constants import Decision, ToolCategory
 from ..errors import SecretNotFound
 from ..tools.registry import ToolSpec
@@ -31,7 +32,8 @@ CORE_RULES: tuple[CoreRule, ...] = (
     CoreRule("no-credential-changes", Decision.BLOCK,
              "The agent may never create, change or reveal credentials or passwords; those steps stay with the human."),
     CoreRule("secret-allowlist", Decision.BLOCK,
-             "A vault secret may only be used by the tools listed on that secret."),
+             "A vault secret may only be used by the tools listed on that secret. Model API keys can't be "
+             "used by any tool."),
     CoreRule("secret-outbound-needs-human", Decision.ASK,
              "Sending a vault secret to the internet always needs the user's approval."),
     CoreRule("no-local-network", Decision.BLOCK,
@@ -72,6 +74,9 @@ async def evaluate_core(spec: ToolSpec, args: dict[str, Any], vault: Vault) -> l
 
     refs = Vault.references(args)
     for name in sorted(refs):
+        if name.startswith(MODEL_KEY_PREFIX):
+            findings.append(_finding("secret-allowlist", f"secret {name!r} is a model API key, which no tool may use"))
+            continue
         try:
             allowed = vault.describe(name)["allowed_tools"]
         except SecretNotFound:

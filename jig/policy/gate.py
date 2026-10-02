@@ -70,8 +70,11 @@ class ToolOutcome:
 
 class ToolExecutor:
     def __init__(self, *, registry: ToolRegistry, rules: RuleStore, sentinel: Sentinel, approvals: ApprovalQueue,
-                 vault: Vault, audit: AuditLog, bus: EventBus, context_factory: Callable[[CallContext], ToolContext]):
+                 vault: Vault, audit: AuditLog, bus: EventBus, context_factory: Callable[[CallContext], ToolContext],
+                 always_redact: dict[str, str] | None = None):
         self.registry = registry
+        # Values redacted from every tool result and error even when no secret was referenced (model API keys).
+        self.always_redact = always_redact or {}
         self.rules = rules
         self.sentinel = sentinel
         self.approvals = approvals
@@ -191,6 +194,7 @@ class ToolExecutor:
         self.bus.publish(EventType.TOOL_START, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                          category=spec.category.value, variant=spec.avatar_variant.value, effect=spec.effect.value,
                          call_id=call.id)
+        redact = {**self.always_redact, **used}
         ok = False
         try:
             async with asyncio.timeout(TOOL_TIMEOUT_S):
@@ -199,12 +203,13 @@ class ToolExecutor:
         except TimeoutError as exc:
             raise ToolError(f"{spec.name} timed out after {TOOL_TIMEOUT_S:.0f}s") from exc
         except (JigError, OSError):
-            if not used:
+            message = str(sys.exc_info()[1])
+            if not used and Vault.redact(message, redact) == message:
                 raise
-            raise ToolError(Vault.redact(str(sys.exc_info()[1]), used)) from None
+            raise ToolError(Vault.redact(message, redact)) from None
         except Exception as exc:
-            raise ToolError(Vault.redact(f"{type(exc).__name__}: {exc}", used)) from None
+            raise ToolError(Vault.redact(f"{type(exc).__name__}: {exc}", redact)) from None
         finally:
             self.bus.publish(EventType.TOOL_END, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                              call_id=call.id, ok=ok)
-        return Vault.redact(result, used)
+        return Vault.redact(result, redact)

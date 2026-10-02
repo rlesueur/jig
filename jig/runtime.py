@@ -11,6 +11,7 @@ from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
 from .agent.prompts import agent_system_prompt
 from .audit import AuditLog
+from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
 from .constants import EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
@@ -61,9 +62,15 @@ class Jig:
         self.store = Store(self.db)
         self.memory = MemoryStore(self.db)
         self.vault = Vault(self.db, config.vault)
+        # Before any client exists, so nothing is sent to a cloud endpoint without consent.
+        self.cloud = require_consent(config, self.audit)
         self.sandbox = Sandbox(config.sandbox_dir, config.runtime.agent_id)
-        self.model = ModelClient(config.model, label="agent model")
-        self.sentinel_model = ModelClient(config.sentinel, label="Sentinel model")
+        agent_key = resolve_api_key(config.model, self.vault, role="agent")
+        sentinel_key = resolve_api_key(config.sentinel, self.vault, role="sentinel")
+        self.model = ModelClient(config.model, label="agent model", api_key=agent_key)
+        self.sentinel_model = ModelClient(config.sentinel, label="Sentinel model", api_key=sentinel_key)
+        model_keys = {name: key for name, key in (("model API key", agent_key), ("Sentinel API key", sentinel_key))
+                      if key}
         self.http = http_client()
         self.registry = build_registry()
         self.vision = VisionService(self.model, config.vision)
@@ -73,7 +80,7 @@ class Jig:
         self.approvals = ApprovalQueue(self.db, self.bus, self.audit)
         self.executor = ToolExecutor(registry=self.registry, rules=self.rules, sentinel=self.sentinel,
                                      approvals=self.approvals, vault=self.vault, audit=self.audit, bus=self.bus,
-                                     context_factory=self._tool_context)
+                                     context_factory=self._tool_context, always_redact=model_keys)
         self.agent = Agent(model=self.model, registry=self.registry, executor=self.executor, store=self.store,
                            bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps)
         self.planner = Planner(model=self.model, registry=self.registry, store=self.store, bus=self.bus,
@@ -86,6 +93,10 @@ class Jig:
             config.model_launch, config.data_dir / "logs", state_dir=config.data_dir,
             audit=lambda kind, summary, **data: self.audit.record(kind, summary, actor="runtime", **data))
         self._closed = False
+
+    def connection(self) -> dict[str, Any]:
+        """Where the agent and the safety checker run (local or cloud), for /status and the audit log."""
+        return connection_summary(self.config, self.audit)
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -154,6 +165,7 @@ class Jig:
                                   actor="runtime", base_url=self.config.model.base_url, **model_server)
         self.audit.record("runtime.start", "Jig started", actor="runtime", model=self.model.server_info,
                           sentinel=self.sentinel_model.server_info, capabilities=self.capabilities,
+                          connection=self.connection(),
                           vault_backend=self.vault.backend, sandbox=str(self.sandbox.root),
                           start_reason=self.start_reason, model_server=model_server)
         self._recover()

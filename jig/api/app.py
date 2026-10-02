@@ -23,7 +23,7 @@ from .. import __version__
 from ..auth import (Auth, AuthMiddleware, Principal, TokenStore, clear_cookie_headers, device_cookie_header,
                     session_cookie_header)
 from ..autostart.api import autostart_router
-from ..config import Config
+from ..config import MODEL_KEY_PREFIX, Config
 from ..constants import EventType, Mode
 from ..devices import DeviceStore, PairingError
 from ..errors import ConfigError
@@ -354,8 +354,10 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         return JSONResponse({"error": str(exc)}, status_code=409)
 
     @app.exception_handler(ModelServerUnavailable)
-    async def model_down(_: Request, exc: Exception) -> JSONResponse:
-        return JSONResponse({"error": str(exc)}, status_code=503)
+    async def model_down(request: Request, exc: Exception) -> JSONResponse:
+        jig = getattr(request.app.state, "jig", None)
+        # Where the model is (local or cloud), so the UI can say what to check.
+        return JSONResponse({"error": str(exc), **({"connection": jig.connection()} if jig else {})}, status_code=503)
 
     # Health and state ------------------------------------------------------
     @app.get("/health")
@@ -373,6 +375,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             "version": __version__,
             "model_endpoint": config.model.base_url,
             "sentinel_endpoint": config.sentinel.base_url,
+            # Local or cloud, for the agent and for the safety checker (and what a cloud endpoint receives).
+            "connection": jig.connection(),
             "agent": jig.agent_status(),
             "model": model,
             "sentinel_model": sentinel,
@@ -659,6 +663,9 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.put("/vault/{name}")
     async def vault_set(request: Request, name: str, body: SecretIn) -> dict[str, Any]:
         jig = J(request)
+        if name.startswith(MODEL_KEY_PREFIX) and body.allowed_tools:
+            raise HTTPException(400, f"{name!r} is a model API key: it is only for Jig's connection to the model, "
+                                     "so no tool may use it. Store it without allowed_tools.")
         s = jig.vault.set(name, body.value, allowed_tools=body.allowed_tools)
         jig.audit.record("vault.set", f"secret {name!r} stored", actor="user", secret=name,
                          allowed_tools=body.allowed_tools)

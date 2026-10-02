@@ -41,8 +41,18 @@ def _serve(args: argparse.Namespace) -> int:
               f"{holder.get('started_at')} by {holder.get('start_reason')}) already uses {config.data_dir} and "
               "holds its lock; stop it first with 'jig stop'.", file=sys.stderr)
         return EXIT_INSTANCE_LOCKED
+    from .cloud import require_consent
+
+    db, audit, _vault = _open_vault(config)
+    try:
+        cloud = require_consent(config, audit)  # refuse here, with the explanation, before the server starts
+    finally:
+        db.close()
     print(f"Jig serving on http://{host}:{port}  (model {config.model.name or '(auto-discover)'} "
           f"at {config.model.base_url}; config {config.source})")
+    for use in cloud:
+        who = "Agent" if use.role == "agent" else "Safety checker"
+        print(f"{who}: CLOUD model at {use.location.host} (confirmed). What it is sent leaves this machine.")
     print(f"Data: {config.data_dir}   Sandbox: {config.sandbox_dir}")
     app = create_app(config, start_reason=args.start_reason)
     print(f"Web UI: run 'jig ui' to open it signed in. API token: {config.data_dir / 'api-token'} "
@@ -50,14 +60,36 @@ def _serve(args: argparse.Namespace) -> int:
     return run_server(app, host=host, port=port, data_dir=config.data_dir, log_to_file=args.log_file)
 
 
+def _open_vault(config):
+    from .audit import AuditLog
+    from .db import Database
+    from .vault import Vault
+
+    db = Database(config.db_path)
+    try:
+        return db, AuditLog(db), Vault(db, config.vault)
+    except BaseException:
+        db.close()
+        raise
+
+
 async def _health(args: argparse.Namespace) -> int:
     """Check the configured endpoints and run the real capability probes."""
+    from .cloud import require_consent, resolve_api_key
+
     config = load_config(args.config)
+    db, audit, vault = _open_vault(config)
+    try:
+        require_consent(config, audit)  # the probes send test prompts, so a cloud endpoint needs consent too
+        keys = {label: resolve_api_key(ep, vault, role=label)
+                for label, ep in (("agent", config.model), ("sentinel", config.sentinel))}
+    finally:
+        db.close()
     report: dict = {}
     for label, endpoint in (("agent", config.model), ("sentinel", config.sentinel)):
-        client = ModelClient(endpoint, label=f"{label} model")
+        client = ModelClient(endpoint, label=f"{label} model", api_key=keys[label])
         try:
-            report[label] = await client.health()
+            report[label] = {**await client.health(), "location": endpoint.location.as_dict()}
             if not args.quick:
                 report[label] |= await client.probe_structured_output()
                 if label == "agent":
@@ -154,9 +186,156 @@ def _api_result(r: httpx.Response, ok: tuple[int, ...] = (200,)) -> dict | None:
     return None
 
 
+def _model_key(args: argparse.Namespace, config) -> int:
+    """``jig model key set|delete <name>`` and ``jig model key status``: model API keys in the vault."""
+    import getpass
+
+    from .cloud import key_secret_name
+
+    action, name = args.sub, args.target
+    if action not in ("set", "delete", "status"):
+        print("Usage: jig model key set <name> | jig model key delete <name> | jig model key status "
+              "(<name> is the provider, for example openai, openrouter, anthropic or gemini)", file=sys.stderr)
+        return 2
+    if action != "status" and not name:
+        print(f"Usage: jig model key {action} <name>, for example: jig model key {action} openai", file=sys.stderr)
+        return 2
+    db, audit, vault = _open_vault(config)
+    try:
+        if action == "status":
+            return _model_key_status(config, vault)
+        secret = key_secret_name(name)
+        if action == "delete":
+            if not _confirmed(args, f"Delete the model API key {secret!r} from the vault?"):
+                return 1
+            vault.delete(secret)
+            audit.record("vault.deleted", f"model API key {secret!r} deleted", actor="user", secret=secret, via="cli")
+            print(f"Deleted {secret!r}. Restart Jig if it was using it.")
+            return 0
+        if args.stdin:
+            value = sys.stdin.readline().strip()
+        elif sys.stdin and sys.stdin.isatty():
+            value = getpass.getpass(f"Paste the API key for {name} (it won't be shown): ").strip()
+        else:
+            print("No key given: there is no terminal to type it into. Pipe it in with --stdin.", file=sys.stderr)
+            return 1
+        if not value or any(c.isspace() for c in value):
+            print("Nothing stored: the key is empty or contains spaces.", file=sys.stderr)
+            return 1
+        stored = vault.set(secret, value, allowed_tools=[])
+        audit.record("vault.set", f"model API key {secret!r} stored", actor="user", secret=secret, via="cli",
+                     allowed_tools=[])
+    finally:
+        db.close()
+    print(f"Stored the API key as {secret!r} in the vault ({stored['backend']}). It is never shown again, and no tool "
+          "can use it.")
+    used_by = [s for s, ep in (("[model]", config.model), ("[sentinel]", config.sentinel)) if ep.api_key_secret == secret]
+    if used_by:
+        print(f"{' and '.join(used_by)} in {config.source} use it. Restart Jig to pick it up.")
+    else:
+        print(f'To use it, set api_key_secret = "{secret}" under [model] in {config.source} (the cloud profiles in '
+              "profiles/ already do).")
+    return 0
+
+
+def _model_key_status(config, vault) -> int:
+    import os
+
+    from .config import MODEL_KEY_PREFIX
+    from .errors import SecretNotFound
+
+    stored = {s["name"]: s for s in vault.list() if s["name"].startswith(MODEL_KEY_PREFIX)}
+    for label, ep in (("Agent", config.model), ("Safety checker", config.sentinel)):
+        if ep.api_key_secret:
+            try:
+                vault.reveal(ep.api_key_secret)
+                state = f"in the vault as {ep.api_key_secret!r} (set {stored[ep.api_key_secret]['updated_at']})"
+            except SecretNotFound:
+                short = ep.api_key_secret.removeprefix(MODEL_KEY_PREFIX)
+                state = (f"MISSING: {ep.api_key_secret!r} is not in the vault; store it with "
+                         f"'jig model key set {short}'")
+        elif ep.api_key_env:
+            state = (f"from the environment variable {ep.api_key_env} "
+                     f"({'set' if os.environ.get(ep.api_key_env) else 'NOT set'})")
+        else:
+            state = "none (no key is sent)"
+        print(f"{label} ({ep.location.host}): API key {state}")
+    others = sorted(set(stored) - {config.model.api_key_secret, config.sentinel.api_key_secret})
+    if others:
+        print("Also in the vault, not used by this config: " + ", ".join(others))
+    return 0
+
+
+def _model_cloud(args: argparse.Namespace, config) -> int:
+    """``jig model cloud status|confirm|revoke``: consent to sending data to a cloud model."""
+    from .cloud import GIVEN, ROLES, cloud_uses, consent_state, disclosure, record_consent, record_revocation
+
+    action = args.sub or "status"
+    if action not in ("status", "confirm", "revoke"):
+        print("Usage: jig model cloud status | confirm | revoke", file=sys.stderr)
+        return 2
+    uses = cloud_uses(config)
+    db, audit, _vault = _open_vault(config)
+    try:
+        if action == "status":
+            for role, ep in (("agent", config.model), ("sentinel", config.sentinel)):
+                loc = ep.location
+                if not loc.is_cloud:
+                    print(f"{ROLES[role][0].upper() + ROLES[role][1:]}: local ({loc.host}, {loc.reason})")
+                    continue
+                state = consent_state(audit, role, next(u.origin for u in uses if u.role == role))
+                confirmed = state and state["kind"] == GIVEN
+                print(f"{ROLES[role][0].upper() + ROLES[role][1:]}: CLOUD ({loc.host}); allow_cloud "
+                      f"{'set' if ep.allow_cloud else 'NOT set'}; "
+                      f"{'confirmed ' + state['ts'] if confirmed else 'not confirmed'}")
+            return 0
+        if action == "revoke":
+            given = [r for r in audit.query(kind="model.cloud_consent", newest_first=True, limit=5000)]
+            latest: dict[tuple[str, str], str] = {}
+            for row in given:
+                data = json.loads(row["data_json"])
+                latest.setdefault((data["role"], data["origin"]), row["kind"])
+            active = [key for key, kind in latest.items() if kind == GIVEN]
+            if not active:
+                print("There is no cloud model consent to withdraw.")
+                return 0
+            for role, endpoint_origin in active:
+                record_revocation(audit, role, endpoint_origin, via="cli")
+                print(f"Withdrawn: {ROLES[role]} at {endpoint_origin}")
+            print("Jig will refuse to start with a cloud model until you confirm again.")
+            return 0
+        if not uses:
+            print("Nothing to confirm: the agent and the safety checker both use local models.")
+            return 0
+        missing = [u for u in uses if not u.endpoint.allow_cloud]
+        if missing:
+            for u in missing:
+                section = "model" if u.role == "agent" else "sentinel"
+                print(f"Not confirmed: {ROLES[u.role]} would use {u.location.host}, but [{section}] allow_cloud is not "
+                      f"set in {config.source}. Add allow_cloud = true under [{section}] first"
+                      + (", or point [sentinel] at a local model (recommended)." if u.role == "sentinel" else "."),
+                      file=sys.stderr)
+            return 1
+        print(disclosure(uses))
+        print()
+        if not _confirmed(args, "Send this to the cloud model(s) above?"):
+            return 1
+        for u in uses:
+            record_consent(audit, u, via="cli")
+        print("Confirmed and recorded in the audit log. Withdraw it any time with 'jig model cloud revoke'.")
+        return 0
+    finally:
+        db.close()
+
+
 def _model(args: argparse.Namespace) -> int:
-    """``jig model status|start|stop``: the model server that the running Jig launched and supervises."""
+    """``jig model status|start|stop``: the model server that the running Jig launched and supervises.
+    ``jig model key ...`` and ``jig model cloud ...`` work without a running Jig."""
     config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
+    if args.action == "key":
+        return _model_key(args, config)
+    if args.action == "cloud":
+        return _model_cloud(args, config)
     base, headers = running_api(config)
     if args.action == "status":
         body = _api_result(httpx.get(f"{base}/model", headers=headers, timeout=30))
@@ -332,7 +511,8 @@ async def _ask_approval(client: httpx.AsyncClient, base: str, data: dict) -> Non
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jig", description="Jig: a local, always-on personal AI agent.")
+    parser = argparse.ArgumentParser(prog="jig", description="Jig: an always-on personal AI agent, built for local "
+                                                             "models.")
     parser.add_argument("--config", help="path to jig.toml")
     sub = parser.add_subparsers(dest="command", required=True)
     s = sub.add_parser("serve", help="run the always-on agent and HTTP API")
@@ -356,11 +536,17 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--print-url", action="store_true", help="print the one-time sign-in link instead of opening it")
     sb = sub.add_parser("sandbox", help="manage the container sandbox")
     sb.add_argument("action", choices=["build"], help="build: build the sandbox Docker image")
-    m = sub.add_parser("model", help="the model server that the running Jig launched ([model.launch])")
-    m.add_argument("action", choices=["status", "start", "stop"],
+    m = sub.add_parser("model", help="the model server Jig launched ([model.launch]), model API keys, and cloud "
+                                     "model consent")
+    m.add_argument("action", choices=["status", "start", "stop", "key", "cloud"],
                    help="status: what Jig manages and its GPU memory; start: launch it again; stop: stop it "
-                        "(only one Jig launched) while Jig keeps running")
-    m.add_argument("--yes", action="store_true", help="confirm 'stop' without the y/N prompt")
+                        "(only one Jig launched) while Jig keeps running; key set|delete <name> / key status: "
+                        "a cloud model's API key in the vault; cloud status|confirm|revoke: consent to a cloud model")
+    m.add_argument("sub", nargs="?", help="for 'key': set, delete or status; for 'cloud': status, confirm or revoke")
+    m.add_argument("target", nargs="?", help="for 'key set' and 'key delete': the key's name, usually the provider "
+                                             "(openai, openrouter, anthropic, gemini)")
+    m.add_argument("--stdin", action="store_true", help="'key set': read the key from standard input")
+    m.add_argument("--yes", action="store_true", help="confirm without the y/N prompt")
     m.add_argument("--json", action="store_true", help="machine-readable output")
     m.add_argument("--data-dir", help="data directory (default: from the config)")
     r = sub.add_parser("remote", help="use Jig from your other devices through Tailscale (tailscale serve)")
