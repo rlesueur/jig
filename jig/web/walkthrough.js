@@ -9,8 +9,10 @@
  * what a check found) is kept in this tab's sessionStorage, and the Google project ID in localStorage.
  */
 
-let h = null; // helpers from app.js: el, api, act, showError, reload
-const view = { provider: null, key: '', avatar: null, node: null };
+// Helpers from app.js: el, api, act, showError, reload, and Jig's corner: pose(state, words) for the one
+// avatar on the page, guide({...}) for the steps beside it.
+let h = null;
+const view = { provider: null, key: '', node: null };
 const PROJECT_KEY = 'jig.google.project';
 // Signal: GET /connections/signal/setup (what's installed, the download, the link and its QR code), polled
 // while a download or a link is under way. Kept in memory only: the link's QR code is never stored.
@@ -56,22 +58,11 @@ function visibleSteps(row, s) {
   return row.walkthrough.filter((step) => !(step.shared && row.client_configured && !s.showShared));
 }
 
-function setAvatar(state) {
-  if (!view.avatar) return;
-  try {
-    view.avatar.setState(state);
-  } catch {
-    /* the avatar keeps its last state */
-  }
-}
+const POSE_WORDS = { working: 'Checking\u2026', success: 'That worked!', error: 'Not quite yet.' };
 
-function avatar() {
-  if (!view.avatar) {
-    view.avatar = h.el('jig-avatar', { framing: 'full', shape: 'none', 'data-testid': 'walkthrough-avatar' });
-    view.avatar.theme = document.documentElement.dataset.theme;
-    document.addEventListener('jig-themechange', () => { view.avatar.theme = document.documentElement.dataset.theme; });
-  }
-  return view.avatar;
+/** Jig, in its corner, acts out the step: talking it through, checking, and how the check went. */
+function setAvatar(state, words) {
+  h.pose(state, words || POSE_WORDS[state] || null, state === 'working' ? 120000 : 4000);
 }
 
 function apiMessage(err) {
@@ -471,7 +462,7 @@ function move(row, by) {
   const steps = visibleSteps(row, s);
   s.index = Math.max(0, Math.min(steps.length - 1, s.index + by));
   save(row.provider, s);
-  setAvatar('talking');
+  setAvatar('talking', steps[s.index].title);
   render(row, true);
   const says = document.querySelector('[data-testid="walkthrough-says"]');
   if (says) says.focus({ preventScroll: false });
@@ -492,6 +483,7 @@ export function render(row, force = false) {
   if (!force && view.node && view.provider === row.provider && view.key === key) return view.node;
   view.provider = row.provider;
   view.key = key;
+  h.guide({ provider: row.provider, label: row.label, index: s.index, steps: steps.map((x) => x.title) });
   const skipped = row.walkthrough.length - steps.length;
   const links = step.links.map((l) => {
     const url = linkUrl(l, s);
@@ -512,7 +504,7 @@ export function render(row, force = false) {
       el('span', { class: 'walk-count', 'data-testid': 'walkthrough-count', text: `${row.label} \u00b7 step ${s.index + 1} of ${steps.length}` }),
       s.index > 0 ? el('button', { type: 'button', class: 'btn-link', 'data-testid': 'walkthrough-restart', text: 'Start again', onclick: () => { restart(row.provider); render(row, true); } }) : null),
     progress,
-    el('div', { class: 'walk-stage' }, avatar(),
+    el('div', { class: 'walk-stage' },
       el('div', { class: 'walk-words' },
         el('h4', { class: 'walk-says', tabindex: '-1', 'data-testid': 'walkthrough-says', text: step.title }),
         el('p', { class: 'walk-say', 'data-testid': 'walkthrough-say', text: step.say }))),

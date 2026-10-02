@@ -1,10 +1,39 @@
 /* Jig's set-up page (first run, and changing the model from Settings). Uses style.css's tokens. */
 
-.setup { width: min(760px, 100%); margin: 0 auto; padding: 8px 20px 56px; display: flex; flex-direction: column; gap: 18px; }
-.setup-stage { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
-.setup-stage jig-avatar { width: 168px; height: 168px; display: block; }
-.setup-says { margin: 0; font-size: 22px; font-weight: 900; color: var(--text); max-width: 560px; }
-.setup-sub { margin: 0; color: var(--muted); font-size: 16px; max-width: 560px; }
+/* Side by side, like the main screen: Jig in its corner, saying where you are; the step beside it. */
+.setup {
+  width: min(1180px, 100%); margin: 0 auto; padding: 0 24px 56px; display: grid; align-items: start;
+  grid-template-columns: clamp(280px, 26vw, 340px) minmax(0, 1fr); column-gap: 20px; row-gap: 18px;
+}
+.setup > * { grid-column: 2; min-width: 0; }
+.setup > .setup-stage {
+  grid-column: 1; grid-row: 1 / span 40; position: sticky; top: 8px; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 6px 16px 18px; border-radius: 28px; border: 1px solid var(--line); box-shadow: var(--shadow);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--surface-2) 85%, transparent));
+}
+.setup-stage jig-avatar { width: clamp(230px, 21vw, 260px); height: clamp(230px, 21vw, 260px); display: block; margin-bottom: -6px; }
+.setup-says {
+  position: relative; margin: 0; padding: 10px 16px; border-radius: 18px; background: var(--jig-bubble); border: 1px solid var(--jig-line);
+  box-shadow: var(--shadow); font-size: 19px; font-weight: 900; line-height: 1.3; color: var(--text); text-align: center; align-self: stretch;
+}
+.setup-says::before {
+  content: ""; position: absolute; top: -8px; left: calc(50% - 7px); width: 14px; height: 14px; background: var(--jig-bubble);
+  border: 1px solid var(--jig-line); border-right: 0; border-bottom: 0; transform: rotate(45deg);
+}
+.setup-says:focus { outline: none; }
+.setup-sub { margin: 0; color: var(--muted); font-size: 15.5px; text-align: center; }
+@media (max-width: 899px) {
+  .setup { grid-template-columns: minmax(0, 1fr); padding: 0 12px 40px; row-gap: 14px; }
+  .setup > * { grid-column: 1; }
+  .setup > .setup-stage {
+    grid-column: 1; grid-row: auto; position: static; display: grid; grid-template-columns: 124px minmax(0, 1fr);
+    align-items: center; column-gap: 8px; row-gap: 6px; padding: 2px 12px 10px 0; border-radius: 22px;
+  }
+  .setup-stage jig-avatar { width: 124px; height: 124px; margin: -4px -4px -8px; grid-row: 1 / span 2; }
+  .setup-says { font-size: 17px; text-align: left; margin-top: 8px; }
+  .setup-says::before { top: 14px; left: -8px; transform: rotate(-45deg); }
+  .setup-sub { text-align: left; font-size: 14.5px; }
+}
 .setup-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 .setup-card h3 { margin: 0; font-size: 18px; }
 .setup-card p { margin: 0; }

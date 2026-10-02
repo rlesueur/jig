@@ -238,23 +238,174 @@ textarea { resize: vertical; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); font-weight: 700; }
 input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; accent-color: var(--queued); flex: none; }
 
-/* Main screen: Jig and the conversation ---------------------------------------------------------- */
-#app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.chat-view {
-  flex: 1; width: min(820px, 100%); margin: 0 auto; padding: 0 16px 16px;
-  display: flex; flex-direction: column; gap: 12px; min-height: 0; height: calc(100dvh - 68px);
+/* The page: the header, then Jig's corner beside whatever you're looking at ----------------------
+ * The page itself never scrolls while the app is showing: the conversation, the steps and Settings each
+ * scroll in their own column, so a long conversation can't push the message box off the screen. */
+body:has(#app:not([hidden])) { height: 100vh; height: 100dvh; overflow: hidden; }
+#app.shell {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(280px, 26vw, 340px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr); gap: 20px; padding: 0 24px 18px;
 }
-.stage { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 4px; transition: gap 0.3s; }
-.stage jig-avatar { width: 220px; height: 220px; display: block; transition: width 0.35s ease, height 0.35s ease; }
-.avatar-says { margin: 0; font-weight: 800; font-size: 17px; color: var(--text); text-align: center; }
-.chat-view:has(.msg, .notice) .stage { flex-direction: row; justify-content: center; gap: 10px; padding-top: 0; }
-.chat-view:has(.msg, .notice) .stage jig-avatar { width: 76px; height: 76px; }
-.chat-view:has(.msg, .notice) .avatar-says { font-size: 15px; text-align: left; }
-html[data-jig-state="error"] .avatar-says { color: var(--bad); }
+.stage-main { min-height: 0; display: flex; flex-direction: column; }
 
-.chat-log { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 4px 8px; scroll-padding-bottom: 12px; }
-.welcome { align-self: center; text-align: center; max-width: 520px; padding: 4px 8px; }
-.welcome-title { margin: 0 0 4px; font-weight: 900; font-size: 22px; }
+/* Jig's corner ------------------------------------------------------------------------------------- */
+.corner {
+  min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 6px 16px 12px; border-radius: 28px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--surface-2) 85%, transparent));
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.corner-stage { display: grid; place-items: center; position: relative; flex: none; }
+.corner-stage::after {
+  content: ""; position: absolute; bottom: 10px; width: 52%; height: 18px; border-radius: 50%; z-index: -1;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--heading) 16%, transparent), transparent);
+}
+.corner-stage jig-avatar { display: block; width: clamp(230px, 21vw, 280px); height: clamp(230px, 21vw, 280px); margin-bottom: -6px; transition: width 0.35s ease, height 0.35s ease; }
+.corner-words { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.corner-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+.corner-held:empty, .corner-note:empty { display: none; }
+.corner-held { display: flex; flex-direction: column; gap: 12px; }
+.corner-tip { margin: 0; color: var(--muted); font-size: 14.5px; font-weight: 700; }
+/* While Jig holds a question it steps back a little, so the whole card and its buttons fit. */
+.corner[data-holding="ask"] .corner-stage jig-avatar { width: 196px; height: 196px; }
+.corner[data-holding="ask"] .doing { display: none; }
+
+/* Jig's caption: a speech bubble, and the avatar's text equivalent for screen readers. */
+.say {
+  position: relative; margin: 0; padding: 10px 16px; border-radius: 18px; background: var(--jig-bubble); text-align: center;
+  border: 1px solid var(--jig-line); box-shadow: var(--shadow); font-weight: 800; font-size: 17px; line-height: 1.35; color: var(--text);
+}
+.say::before {
+  content: ""; position: absolute; top: -8px; left: calc(50% - 7px); width: 14px; height: 14px; background: var(--jig-bubble);
+  border: 1px solid var(--jig-line); border-right: 0; border-bottom: 0; transform: rotate(45deg);
+}
+html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad); }
+
+/* The questions Jig holds for you. */
+.held { display: flex; flex-direction: column; gap: 6px; }
+.held-lead { margin: 0 4px; color: var(--muted); font-weight: 700; font-style: italic; font-size: 14.5px; }
+.held .ask { margin-top: 0; }
+.held .ask.is-pending { box-shadow: 0 0 0 4px var(--warn-soft), var(--shadow); }
+.held .preview { max-height: 140px; }
+.held .decide .btn { flex: 1; min-width: 0; padding: 8px 14px; }
+.held-later { align-self: flex-end; }
+.waiting-pill {
+  align-self: flex-start; margin: 10px 0 0; padding: 6px 14px; border-radius: 999px; background: var(--warn-soft); color: var(--warn);
+  border: 1px solid var(--warn); font: inherit; font-weight: 800; font-size: 14px; cursor: pointer;
+}
+
+/* A finished job, and the steps of a set-up guide. */
+.done-card { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--ok-soft); border: 2px solid var(--ok); }
+.done-mark { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: var(--surface); font-weight: 900; }
+.done-t { margin: 0; font-weight: 900; overflow-wrap: anywhere; }
+.guide-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; counter-reset: s; }
+.guide-steps li { counter-increment: s; display: flex; gap: 10px; align-items: center; font-weight: 700; color: var(--muted); font-size: 14.5px; }
+.guide-steps li::before {
+  content: counter(s); flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  border: 2px solid var(--line-strong); font-size: 13px; font-weight: 900;
+}
+.guide-steps li.done::before { content: "\2713"; border-color: var(--ok); color: var(--ok); }
+.guide-steps li.on { color: var(--text); font-weight: 900; }
+.guide-steps li.on::before { background: var(--queued); border-color: var(--queued); color: var(--surface); }
+
+/* The work view: one line and a meter in the corner; the steps beside it ---------------------------- */
+.work {
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.work-line { margin: 0; display: flex; gap: 10px; align-items: baseline; font-weight: 800; font-size: 16.5px; line-height: 1.35; }
+.pulse { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dot-ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot-ok) 22%, transparent); transform: translateY(-1px); animation: breathe 2s ease-in-out infinite; }
+.work-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; font-weight: 900; transform: translateY(2px); }
+.work-mark.ok { background: var(--ok); color: var(--surface); }
+.work-mark.bad { background: var(--bad); color: var(--surface); }
+.work[data-status="done"] { border-color: var(--ok); }
+.meter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.meter { flex: 1 1 110px; display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--sunk); border: 1px solid var(--line-strong); gap: 2px; }
+.m-ok { background: var(--ok); }
+.m-bad { background: repeating-linear-gradient(135deg, var(--bad) 0 4px, color-mix(in srgb, var(--bad) 70%, var(--surface)) 4px 7px); }
+.m-skip { background: var(--line-strong); }
+.meter-text { margin: 0; font-size: 14px; font-weight: 800; white-space: nowrap; }
+.meter-text .pass { color: var(--ok); }
+.meter-text .fail { color: var(--bad); }
+.work-more { align-self: flex-start; }
+.count { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 12.5px; font-weight: 800; color: var(--muted); margin-left: 4px; }
+.count:empty { display: none; }
+.steps-link { align-self: flex-start; margin-top: 6px; padding-left: 0; }
+
+.view-tabs { display: flex; gap: 6px; padding: 4px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); align-self: flex-start; }
+.tab { font: inherit; font-weight: 800; font-size: 15px; color: var(--muted); background: none; border: 0; border-radius: 999px; padding: 6px 16px; cursor: pointer; min-height: 36px; }
+.tab:hover { color: var(--text); }
+.tab[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+.steps-pane { position: relative; flex: 1; min-height: 0; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 20px; box-shadow: var(--shadow); }
+.steps-pane:focus { outline: none; }
+.steps-head { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.steps-title { font-size: 19px; }
+.steps-ask { overflow-wrap: anywhere; }
+.steps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.step { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; padding: 10px 0; }
+.step + .step { border-top: 1px solid var(--line); }
+.step-mark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 14px; border: 2px solid var(--line-strong); color: var(--muted); }
+.step.done .step-mark { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.step.failed .step-mark { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.step.now .step-mark, .step.asking .step-mark, .step.approved .step-mark { border-color: var(--queued); color: var(--queued); }
+.step.asking .step-mark { border-color: var(--warn); color: var(--warn); background: var(--warn-soft); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--queued); border-right-color: transparent; animation: setup-spin 0.9s linear infinite; }
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+.step-body { min-width: 0; }
+.step-top { display: flex; align-items: center; gap: 10px; }
+.step-title { margin: 0; font-weight: 800; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.step.now .step-title { color: var(--queued); }
+.step-sub { margin: 2px 0 0; color: var(--muted); font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+.step-sub.error-text { color: var(--bad); }
+.step-toggle {
+  font: inherit; font-size: 14px; font-weight: 800; color: var(--link); background: none; border: 0; padding: 6px 8px; min-height: 32px;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap;
+}
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.pill { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 13px; font-weight: 800; border: 1px solid currentColor; color: var(--muted); }
+.pill.ok { color: var(--ok); background: var(--ok-soft); }
+.pill.bad { color: var(--bad); background: var(--bad-soft); }
+.step-detail { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.step-cmd { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.step-cmd-label { margin: 0; font-size: 12.5px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.step-cmd-line { display: block; font-size: 13.5px; color: var(--text); background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.output summary { cursor: pointer; font-weight: 800; color: var(--link); font-size: 14px; width: fit-content; }
+.output-text { margin-top: 6px; padding: 8px 10px; background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; max-height: 280px; overflow: auto; font-size: 13px; }
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 360px; overflow: auto; }
+.r { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; padding: 4px 8px; border-radius: 8px; font-size: 14.5px; }
+.r-mark { font-weight: 900; }
+.r.ok .r-mark { color: var(--ok); }
+.r.skip .r-mark { color: var(--muted); }
+.r.bad { background: var(--bad-soft); }
+.r.bad .r-mark, .r.bad .r-name { color: var(--bad); font-weight: 800; }
+.r-name { overflow-wrap: anywhere; }
+.r-id { font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; text-align: right; }
+.looked { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; font-size: 14.5px; }
+
+.diff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.diff.single { grid-template-columns: 1fr; }
+.diff-col { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--sunk); min-width: 0; }
+.diff-head { margin: 0; padding: 6px 12px; font-size: 13px; font-weight: 900; display: flex; align-items: center; gap: 8px; background: var(--surface-2); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.dh-dot { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.before .dh-dot { background: var(--bad); }
+.after .dh-dot { background: var(--ok); }
+.diff-lines { padding: 6px 0; font-size: 13px; line-height: 1.6; max-height: 420px; overflow: auto; white-space: pre-wrap; }
+.dl { display: grid; grid-template-columns: 38px 16px minmax(0, 1fr); padding-right: 12px; }
+.dn { color: var(--muted); text-align: right; padding-right: 8px; }
+.dm { font-weight: 900; }
+.dt { overflow-wrap: anywhere; }
+.dl.del { background: var(--bad-soft); }
+.dl.del .dm, .dl.del .dt { color: var(--bad); }
+.dl.del .dt { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+.dl.add { background: var(--ok-soft); }
+.dl.add .dm, .dl.add .dt { color: var(--ok); }
+.dl.gap .dt { color: var(--muted); }
+
+/* The conversation -------------------------------------------------------------------------------- */
+.chat-view { flex: 1; min-height: 0; width: min(800px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.chat-log { position: relative; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 4px 8px; scroll-padding-bottom: 12px; }
+.welcome { margin: auto; text-align: center; max-width: 560px; padding: 4px 8px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.welcome-title { margin: 0; font-weight: 900; font-size: 24px; }
 .welcome .hint { margin: 0; }
 
 .msg { max-width: 86%; padding: 11px 16px; border-radius: 22px; border: 1px solid var(--jig-line); background: var(--jig-bubble); box-shadow: var(--shadow); }
@@ -296,19 +447,16 @@ html[data-jig-state="error"] .avatar-says { color: var(--bad); }
 .working { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13.5px; color: var(--muted); }
 .working li::before { content: "\203A  "; color: var(--queued); font-weight: 900; }
 
-/* What Jig's up to: one glanceable line. */
-.doing {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 8px 6px 16px;
-  border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--surface) 80%, transparent);
-}
-.doing-text { flex: 1 1 220px; margin: 0; font-size: 14.5px; color: var(--muted); font-weight: 700; min-width: 0; }
+/* What Jig's up to: one glanceable line at the foot of Jig's corner. */
+.doing { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); flex: none; }
+.doing-text { margin: 0; font-size: 14.5px; color: var(--muted); font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
 .doing[data-busy="true"] .doing-text { color: var(--text); }
 .doing[data-busy="true"] .doing-text::before {
   content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dot-ok);
   margin-right: 8px; vertical-align: 1px; animation: breathe 2s ease-in-out infinite;
 }
 @keyframes breathe { 50% { opacity: 0.3; } }
-.doing-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.doing-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 
 .chat-form { display: flex; flex-direction: column; gap: 4px; }
 .composer {
@@ -385,10 +533,10 @@ html[data-jig-state="error"] .avatar-says { color: var(--bad); }
 .note-field { max-width: 420px; }
 
 /* Settings: a separate, quiet area ---------------------------------------------------------------- */
-.settings { width: min(1080px, 100%); margin: 0 auto; padding: 4px 24px 48px; }
-.settings-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.settings { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 40px 2px; }
+.settings-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .settings-head h2 { flex: 1; }
-.settings-grid { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
 .settings-grid > * { min-width: 0; }
 .settings-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 12px; }
 .settings-nav a {
@@ -568,17 +716,76 @@ dialog::backdrop { background: var(--backdrop); }
 .warn-text { color: var(--warn); font-weight: 700; }
 
 /* Jig is off ----------------------------------------------------------------------------------------- */
-.off-state { max-width: 560px; margin: 12vh auto 0; padding: 0 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+/* Jig stays in its corner, asleep; this is beside it. */
+.off-state { max-width: 560px; margin: auto; padding: 0 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 .off-state h2 { font-size: 30px; }
 .off-state h2:focus { outline: none; }
 .off-state p { margin: 0; }
-.off-face { width: 96px; height: 96px; opacity: 0.85; }
-/* Both faces stay in the page, so the one for either theme is already loaded when the server goes away. */
+#app.is-off .doing, #app.is-off .corner-body { display: none; }
 html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { display: none; }
 
 /* Responsive -------------------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .settings-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .settings-nav ul { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; scrollbar-width: thin; }
+  .settings-nav a { white-space: nowrap; background: var(--surface-2); }
+  .diff { grid-template-columns: 1fr; }
+}
+
+/* A narrow window: Jig's corner is a band across the top. When Jig has a question, or shows its steps,
+ * the band becomes a sheet from the bottom with Jig peeking over its edge: still one Jig, still in reach. */
+@media (max-width: 899px) {
+  #app.shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; padding: 0 12px 10px; }
+  .corner {
+    display: grid; grid-template-columns: 124px minmax(0, 1fr); grid-template-rows: auto auto; align-items: center;
+    column-gap: 8px; row-gap: 4px; padding: 2px 12px 8px 0; border-radius: 22px;
+  }
+  .corner-stage { grid-row: 1 / span 2; align-self: center; }
+  .corner-stage::after { bottom: 6px; height: 12px; }
+  .corner-stage jig-avatar, .corner[data-holding="ask"] .corner-stage jig-avatar { width: 124px; height: 124px; margin: -4px -4px -8px; }
+  .corner-words { gap: 8px; padding-top: 8px; }
+  .say { font-size: 16px; text-align: left; padding: 8px 14px; }
+  .say::before { top: 14px; left: -8px; transform: rotate(-45deg); }
+  .corner-body { overflow: visible; padding: 0; }
+  .corner:not(.is-sheet) .corner-note { display: none; }
+  .corner .work { padding: 0; border: 0; background: none; box-shadow: none; gap: 8px; }
+  .work-line { font-size: 15px; }
+  .doing { grid-column: 2; padding-top: 6px; gap: 6px; }
+  .doing-actions { justify-content: flex-start; }
+  .doing-actions > * { white-space: nowrap; }
+  .doing-text { font-size: 14px; }
+  .doing[data-busy="false"] .doing-text { display: none; }
+  .doing[data-busy="false"] { border-top: 0; padding-top: 0; }
+  /* A finished run: Jig grows a little for its celebration, then settles back. */
+  html[data-jig-state="success"] .corner:not(.is-sheet) { grid-template-columns: 152px minmax(0, 1fr); }
+  html[data-jig-state="success"] .corner:not(.is-sheet) .corner-stage jig-avatar { width: 152px; height: 152px; margin: -8px -4px -10px; }
+
+  .corner.is-sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; display: flex; flex-direction: column; gap: 10px;
+    max-height: calc(100dvh - 96px); padding: 14px 14px 16px; border-radius: 26px 26px 0 0; background: var(--surface);
+    border: 0; border-top: 1px solid var(--line-strong); box-shadow: var(--shadow-lift);
+  }
+  .corner.is-sheet .corner-stage { position: absolute; top: -66px; left: 4px; z-index: 1; }
+  .corner.is-sheet .corner-stage::after { display: none; }
+  .corner.is-sheet .corner-stage jig-avatar { width: 128px; height: 128px; margin: 0; }
+  .corner.is-sheet .corner-words { min-height: 0; overflow-y: auto; padding: 0 2px 2px; }
+  .corner.is-sheet .say { align-self: flex-start; margin-left: 120px; min-height: 44px; }
+  .corner.is-sheet .doing { display: none; }
+  .corner.is-sheet .corner-body { overflow: visible; }
+  .corner.is-sheet .work { padding: 12px 14px; border: 1px solid var(--line); background: var(--surface-2); }
+  .corner-steps .steps-pane { padding: 4px 2px 8px; border: 0; box-shadow: none; background: none; overflow: visible; }
+  .steps-close { align-self: flex-start; margin-top: 8px; }
+  #app.sheet-open .stage-main { opacity: 0.5; }
+  .r { grid-template-columns: 22px minmax(0, 1fr); }
+  .r-id { grid-column: 2; text-align: left; }
+}
+@media (max-width: 899px) and (prefers-reduced-motion: reduce) {
+  html[data-jig-state="success"] .corner:not(.is-sheet) { grid-template-columns: 124px minmax(0, 1fr); }
+  html[data-jig-state="success"] .corner:not(.is-sheet) .corner-stage jig-avatar { width: 124px; height: 124px; margin: -4px -4px -8px; }
+}
+
 @media (max-width: 860px) {
-  .settings { padding: 4px 14px 40px; }
+  .settings { padding: 0 2px 40px; }
   .settings-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .settings-nav ul { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; scrollbar-width: thin; }
   .settings-nav a { white-space: nowrap; background: var(--surface-2); }
@@ -587,12 +794,8 @@ html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { 
 @media (max-width: 640px) {
   .top { padding: 8px 14px; }
   .wordmark { font-size: 24px; }
-  .chat-view { padding: 0 10px 10px; gap: 8px; height: calc(100dvh - 60px); }
-  .stage jig-avatar { width: 150px; height: 150px; }
-  .chat-view:has(.msg, .notice) .stage jig-avatar { width: 56px; height: 56px; }
+  .chat-view { gap: 8px; }
   .msg { max-width: 94%; }
-  .doing { border-radius: 18px; padding: 6px 8px 6px 12px; }
-  .doing-text { flex-basis: 100%; }
   .chat-under .hint-quiet { display: none; }
   .ask { padding: 12px; }
   .decide .btn { flex: 1; min-width: 0; }

@@ -6,7 +6,6 @@
 .walk-progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .walk-progress > span { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width 0.3s ease; }
 .walk-stage { display: flex; align-items: flex-start; gap: 16px; }
-.walk-stage jig-avatar { width: 96px; height: 96px; flex: none; display: block; }
 .walk-words { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .walk-says { margin: 0; font-size: 20px; font-weight: 900; color: var(--text); }
 .walk-say { margin: 0; font-size: 16px; line-height: 1.5; color: var(--text); }
@@ -39,6 +38,5 @@
 .walk-qr-title { font-weight: 900; font-size: 17px; }
 .walk-nav { display: flex; justify-content: space-between; gap: 12px; }
 @media (max-width: 560px) {
-  .walk-stage { flex-direction: column; align-items: center; text-align: center; }
   .walk-code-big { font-size: 34px; }
 }

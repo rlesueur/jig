@@ -42,24 +42,41 @@
     <button type="button" class="btn btn-small" id="health-retry" data-testid="health-retry">Check again</button>
   </div>
 
-  <div id="app" hidden>
-    <main class="chat-view" id="main" aria-label="Chat" data-testid="chat-view">
-      <section class="stage" aria-label="Live avatar" data-testid="avatar-card">
-        <jig-avatar id="avatar" framing="full" shape="none"></jig-avatar>
-        <p class="avatar-says" id="avatar-says" aria-live="polite" data-testid="avatar-says">Getting ready…</p>
-      </section>
-
-      <div class="chat-log" id="chat-log" role="log" aria-label="Conversation" data-testid="chat-log"></div>
-
+  <div id="app" class="shell" hidden>
+    <!-- Jig's own corner, on every screen: the one avatar, its caption, and whatever Jig is holding for you
+         (a question, the work it is doing, a result). On a narrow window it is a band across the top, and
+         becomes a sheet from the bottom, with Jig peeking over it, when Jig has a question or shows its steps. -->
+    <section class="corner" id="corner" aria-label="Live avatar" data-testid="avatar-card" data-holding="none">
+      <div class="corner-stage"><jig-avatar id="avatar" framing="full" shape="none"></jig-avatar></div>
+      <div class="corner-words">
+        <p class="say" id="avatar-says" role="status" aria-live="polite" data-testid="avatar-says">Getting ready…</p>
+        <div class="corner-body" id="corner-body">
+          <div class="corner-held" id="corner-held" data-testid="corner-held"></div>
+          <section class="work" id="corner-work" aria-label="What Jig is working on" data-testid="work" hidden></section>
+          <div class="corner-steps" id="corner-steps" hidden></div>
+          <div class="corner-note" id="corner-note" data-testid="corner-note" hidden></div>
+        </div>
+      </div>
       <section class="doing" id="doing" aria-label="What Jig's up to" data-testid="doing" data-busy="false">
         <p class="doing-text" id="doing-text" aria-live="polite" data-testid="doing-text">Looking…</p>
         <div class="doing-actions">
           <button type="button" class="btn btn-small btn-warn" id="approvals-badge" data-testid="approvals-badge" hidden></button>
           <button type="button" class="btn btn-small" id="agent-toggle" data-testid="agent-toggle" disabled>Pause</button>
           <button type="button" class="btn btn-small btn-danger" id="doing-stop" data-testid="doing-stop" hidden>Stop</button>
-          <button type="button" class="btn btn-small btn-quiet" id="doing-open" aria-haspopup="dialog" data-testid="doing-open">Details</button>
+          <button type="button" class="btn btn-small btn-quiet" id="doing-open" aria-haspopup="dialog" data-testid="doing-open">What Jig's up to</button>
         </div>
       </section>
+    </section>
+
+    <div class="stage-main" id="stage-main">
+    <main class="chat-view" id="main" aria-label="Chat" data-testid="chat-view">
+      <div class="view-tabs" role="group" aria-label="Show" id="view-tabs" data-testid="view-tabs" hidden>
+        <button type="button" class="tab" id="tab-chat" aria-pressed="true" aria-controls="chat-log" data-testid="tab-chat">Conversation</button>
+        <button type="button" class="tab" id="tab-steps" aria-pressed="false" aria-controls="steps-pane" data-testid="tab-steps">Steps <span class="count" id="steps-count"></span></button>
+      </div>
+
+      <div class="chat-log" id="chat-log" role="log" aria-label="Conversation" data-testid="chat-log"></div>
+      <section class="steps-pane" id="steps-pane" aria-label="Jig's steps" tabindex="-1" data-testid="steps" hidden></section>
 
       <form class="chat-form" id="chat-form">
         <p class="readonly-note" id="readonly-note" data-testid="read-only-note" hidden>Just looking: Jig won't change, send or save anything of yours. It can still keep its own private notes. <a href="#settings/chat">Change this</a></p>
@@ -442,6 +459,15 @@
         </div>
       </div>
     </section>
+
+    <section class="off-state" id="off-state" aria-labelledby="off-title" data-testid="off-state" hidden>
+      <h2 id="off-title" tabindex="-1" data-testid="off-title">Turning Jig off…</h2>
+      <p id="off-text" data-testid="off-text">Finishing up and saving where it got to.</p>
+      <p class="hint" id="off-again" data-testid="off-again"></p>
+      <a class="btn btn-primary" id="off-start" href="jig://start" data-testid="off-start" hidden>Turn Jig on</a>
+      <p class="hint-quiet" id="off-watch" aria-live="polite" data-testid="off-watch"></p>
+    </section>
+    </div>
   </div>
 
   <dialog class="drawer" id="activity" aria-labelledby="activity-heading" data-testid="activity">
@@ -498,16 +524,6 @@
       </div>
     </details>
   </dialog>
-
-  <section class="off-state" id="off-state" aria-labelledby="off-title" data-testid="off-state" hidden>
-    <img class="off-face face-light" src="/web/jig-face-light.png" alt="" width="96" height="96">
-    <img class="off-face face-dark" src="/web/jig-face-dark.png" alt="" width="96" height="96">
-    <h2 id="off-title" tabindex="-1" data-testid="off-title">Turning Jig off…</h2>
-    <p id="off-text" data-testid="off-text">Finishing up and saving where it got to.</p>
-    <p class="hint" id="off-again" data-testid="off-again"></p>
-    <a class="btn btn-primary" id="off-start" href="jig://start" data-testid="off-start" hidden>Turn Jig on</a>
-    <p class="hint-quiet" id="off-watch" aria-live="polite" data-testid="off-watch"></p>
-  </section>
 
   <section class="setup" id="setup" aria-label="Set up Jig" data-testid="setup" hidden></section>
 

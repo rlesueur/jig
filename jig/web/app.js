@@ -4,13 +4,16 @@
  * Model output and web-derived text are never parsed as HTML: replies are shown with markdown.js, which builds
  * elements and text nodes itself, and everything else is inserted as text.
  *
- * The main screen is Jig and the conversation. Approvals appear in the conversation, background work is one
- * line ("What Jig's up to") with the detail a tap away, and everything else lives in Settings (#settings/...).
+ * Jig has its own corner beside the conversation on every screen (a band across the top on a narrow window):
+ * the one avatar, its caption, and whatever Jig is holding for you — a question that needs your OK, the work
+ * it is doing (work.js), a result. Background work is one line ("What Jig's up to") with the detail a tap
+ * away, and everything else lives in Settings (#settings/...), with Jig still in its corner.
  */
 import { STATES } from '/avatar/jig-avatar.js';
 import { renderMarkdown } from './markdown.js';
 import { linkify, showSetupIfNeeded } from './setup.js';
 import { initWalkthrough, render as renderWalkthrough } from './walkthrough.js';
+import { initWork, Work } from './work.js';
 
 const $ = (id) => document.getElementById(id);
 const TERMINAL_TASK = new Set(['done', 'failed', 'cancelled', 'blocked']);
@@ -48,6 +51,11 @@ const q = (v) => `\u201c${v}\u201d`;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const empty = (text, more) => el('div', { class: 'empty-state' },
   el('p', { class: 'empty', text }), more ? el('p', { class: 'hint', text: more }) : null);
+
+/* What Jig's corner shows: the work it is showing (a Work from work.js, or null), whether its steps are open,
+ * whether you put its question aside for now on a narrow window, and the note for the screen you're on. */
+const view = { work: null, stepsOpen: false, sheetLater: false, note: null, finished: null };
+const narrow = matchMedia('(max-width: 899px)');
 
 /* ---------- errors: always visible ---------- */
 
@@ -425,6 +433,7 @@ function currentSection() {
 const walkthroughProvider = () => (location.hash.match(/^#settings\/connections\/([a-z-]+)$/) || [])[1] || null;
 
 function route(moveFocus = true) {
+  if (offState) return;
   const section = currentSection();
   if (section && !SECTIONS.includes(section)) {
     showError(`There\u2019s no Settings section called ${q(section)}.`);
@@ -459,6 +468,7 @@ function route(moveFocus = true) {
   } else if (moveFocus && location.hash !== '#chat-input') {
     $('open-settings').focus();
   }
+  renderCorner();
 }
 window.addEventListener('hashchange', () => route(true));
 
@@ -574,17 +584,44 @@ function stopEvents() {
   }
 }
 
+let lastAvatar = { state: 'idle', variant: null, background: false };
+let posed = null; // { state, words, until }: a pose of Jig's own on this page (a set-up step), while nothing else is going on
+
 function applyAvatar(d) {
-  const background = Boolean(d.background);
-  const opts = d.state === 'working' ? { task: d.variant, background } : { background };
+  lastAvatar = d;
+  let shown = d;
+  let words = null;
+  const quiet = ['idle', 'monitoring', 'paused'].includes(d.state);
+  if (posed && posed.until > Date.now() && quiet) {
+    shown = { state: posed.state, variant: null, background: false };
+    words = posed.words;
+  }
+  const background = Boolean(shown.background);
+  const opts = shown.state === 'working' ? { task: shown.variant, background } : { background };
   try {
-    avatar.setState(d.state, opts);
+    avatar.setState(shown.state, opts);
   } catch (err) {
-    showError(`The avatar could not show state ${q(d.state)}: ${err.message}`);
+    showError(`The avatar could not show state ${q(shown.state)}: ${err.message}`);
     return;
   }
-  $('avatar-says').textContent = avatarWords(d.state, d.variant, background);
-  document.documentElement.dataset.jigState = d.state;
+  $('avatar-says').textContent = words || avatarWords(shown.state, shown.variant, background);
+  document.documentElement.dataset.jigState = shown.state;
+}
+
+/** Jig shows `state` (and says `words`) for `ms`, unless real work, a question or a result takes over. */
+function pose(state, words, ms = 4000) {
+  clearTimeout(pose.timer);
+  posed = { state, words, until: Date.now() + ms };
+  applyAvatar(lastAvatar);
+  pose.timer = setTimeout(() => {
+    posed = null;
+    applyAvatar(lastAvatar);
+  }, ms + 20);
+}
+
+/** Re-say the caption, for when the work behind it changed but the avatar's state did not. */
+function refreshCaption() {
+  if (!offState) applyAvatar(lastAvatar);
 }
 
 const WORKING_WORDS = {
@@ -599,6 +636,10 @@ const STATE_WORDS = {
 
 /** The avatar's one short caption, also announced to screen readers. */
 function avatarWords(state, variant, background) {
+  if (!background && (state === 'working' || state === 'thinking') && view.work && view.work.status === 'running') {
+    const now = view.work.nowWords();
+    if (now) return now;
+  }
   const words = state === 'working' ? WORKING_WORDS[variant] : STATE_WORDS[state];
   if (!words) return `Jig is ${state}${variant ? `: ${variant}` : ''}.`;
   return background ? `${words.replace(/(\u2026|\.)$/, '')} quietly in the background\u2026` : words;
@@ -625,6 +666,7 @@ function handleEvent(event) {
     renderDoing();
   }
   if (t === 'run.end' && d.task_id) currentTool.delete(d.task_id);
+  if (t === 'task.status' && d.status === 'done' && !d.goal_id) view.finished = { taskId: d.task_id, at: Date.now() };
   if (t === 'task.status' || t === 'goal.status' || t === 'run.start' || t === 'run.end') refreshSoon('activity');
   if (t === 'approval.requested' || t === 'approval.resolved') {
     refreshSoon('approvals');
@@ -813,6 +855,8 @@ const TOOL_DOING = {
   matrix_read_room: 'reading a Matrix room', matrix_send_message: 'posting to a Matrix room',
   signal_send_message: 'sending a Signal message', signal_receive: 'checking for new Signal messages',
 };
+const doingWords = (tool) => TOOL_DOING[tool] || `using ${tool}`;
+initWork({ el, plural, doing: doingWords });
 
 function setAgentPaused(paused) {
   agentPaused = paused;
@@ -852,7 +896,13 @@ function renderDoing() {
   const queued = live.filter((t) => t.status === 'queued');
   const planning = goalsCache.filter((g) => g.status === 'planning');
   let text;
-  if (agentPaused) {
+  // A reply Jig is working on in the conversation counts too: it is what Jig is up to right now.
+  const chatNow = chatBusy ? (view.work && view.work.status === 'running' && view.work.nowWords()) : null;
+  const chatLine = chatBusy ? `Replying to you${chatNow ? `: ${chatNow[0].toLowerCase()}${chatNow.slice(1)}` : '\u2026'}` : null;
+  if (chatLine && !agentPaused) {
+    const others = active.length + queued.length + planning.length;
+    text = others ? `${chatLine} And ${plural(others, 'job')} in the background.` : chatLine;
+  } else if (agentPaused) {
     const n = active.length + queued.length;
     text = n ? `Jig is paused. ${plural(n, 'job')} will carry on when you resume.` : 'Jig is paused. Nothing new starts until you resume.';
   } else if (active.length) {
@@ -870,9 +920,9 @@ function renderDoing() {
     text = 'Nothing on the go in the background.';
   }
   $('doing-text').textContent = text;
-  const busy = active.length + queued.length + planning.length > 0;
-  $('doing').dataset.busy = String(busy);
-  $('doing-stop').hidden = !busy && !live.length;
+  const background = active.length + queued.length + planning.length > 0;
+  $('doing').dataset.busy = String(background || chatBusy);
+  $('doing-stop').hidden = !background && !live.length;
   renderDoingList(live, planning);
 }
 
@@ -993,6 +1043,8 @@ function describeWorking(ev) {
   }
 }
 
+const WORK_EVENTS = new Set(['approval.requested', 'approval.resolved', 'tool.start', 'tool.summary', 'tool.end']);
+
 async function sendChat(message) {
   chatBusy = true;
   $('chat-send').disabled = true;
@@ -1005,6 +1057,20 @@ async function sendChat(message) {
   let working = null;
   let finished = false;
   let runId = null;
+  let work = null; // what Jig did for this reply, once it uses a tool
+  if (view.work && view.work.status !== 'running') showWork(null);
+  renderDoing();
+
+  const feed = (ev) => {
+    if (!WORK_EVENTS.has(ev.type)) return;
+    if (!work) {
+      if (ev.type !== 'tool.start' && ev.type !== 'approval.requested') return;
+      work = new Work({ runId, ask: message });
+      stepsLink(work, msg);
+      showWork(work);
+    }
+    if (work.handle(ev)) workChanged(work);
+  };
 
   const fail = (text) => {
     msg.classList.add('error');
@@ -1037,6 +1103,7 @@ async function sendChat(message) {
       showReply();
     } else if (item.type === 'event') {
       const ev = item.event;
+      feed(ev);
       if (ev.type === 'approval.requested') {
         if (!ev.data.resumed) placeApproval(ev.data.approval_id, msg);
         content.classList.remove('typing');
@@ -1050,6 +1117,8 @@ async function sendChat(message) {
           msg.append(el('p', { class: 'reply-problem', 'data-testid': 'chat-problem',
             text: `Something went wrong while ${TOOL_DOING[ev.data.tool] || `using ${ev.data.tool}`} (${ev.data.tool}), so Jig carried on without it.` }));
         }
+      } else if (ev.type === 'tool.summary') {
+        /* shown in the work view */
       } else {
         const text = describeWorking(ev);
         if (text) note(text);
@@ -1116,6 +1185,11 @@ async function sendChat(message) {
     if (runId) liveChatRuns.delete(runId);
     chatBusy = false;
     $('chat-send').disabled = false;
+    if (work) {
+      work.finish(msg.classList.contains('error') ? 'failed' : 'done');
+      workChanged(work);
+    }
+    renderDoing();
     loadApprovals();
   }
 }
@@ -1141,8 +1215,8 @@ chatInput.addEventListener('keydown', (e) => {
 });
 function clearChat() {
   sessionId = null;
-  const keep = [...chatLog.querySelectorAll('.notice')].filter((n) => n.querySelector('[data-status="pending"]'));
-  chatLog.replaceChildren(welcome(), ...keep);
+  chatLog.replaceChildren(welcome());
+  if (!chatBusy) showWork(null);
 }
 $('chat-new').addEventListener('click', () => {
   clearChat();
@@ -1150,7 +1224,163 @@ $('chat-new').addEventListener('click', () => {
 });
 chatLog.append(welcome());
 
-/* ---------- approvals, inline in the conversation ---------- */
+/* ---------- Jig's corner: what Jig holds, and the steps ---------- */
+
+const corner = $('corner');
+
+/** Show `work` in Jig's corner (null: nothing). */
+function showWork(work) {
+  view.work = work;
+  if (!work) view.stepsOpen = false;
+  renderCorner();
+}
+
+const stepLinks = new WeakMap(); // work -> its button under the reply
+
+/** Under the reply: the way back to that reply's steps, later on. */
+function stepsLink(work, msg) {
+  const button = el('button', { type: 'button', class: 'btn-link steps-link', 'data-testid': 'chat-steps',
+    onclick: () => {
+      view.work = work;
+      openSteps(true);
+    } });
+  stepLinks.set(work, button);
+  msg.append(button);
+  labelStepsLink(work);
+}
+
+function labelStepsLink(work) {
+  const button = stepLinks.get(work);
+  if (button) button.textContent = work.status === 'running' ? `Watch the steps (${work.size} so far)` : `See the ${plural(work.size, 'step')}`;
+}
+
+function workChanged(work) {
+  labelStepsLink(work);
+  if (view.work === work) renderCorner();
+  refreshCaption();
+  renderDoing();
+}
+
+function openSteps(open) {
+  view.stepsOpen = Boolean(open && view.work && view.work.size);
+  renderCorner();
+  if (view.stepsOpen) {
+    if (currentSection()) location.hash = '';
+    $('steps-pane').focus({ preventScroll: true });
+  } else if (corner.contains(document.activeElement) || !document.activeElement || document.activeElement === document.body) {
+    corner.querySelector('[data-testid="work-steps-toggle"]')?.focus();
+  }
+}
+
+$('tab-chat').addEventListener('click', () => openSteps(false));
+$('tab-steps').addEventListener('click', () => openSteps(true));
+
+const SECTION_NOTES = {
+  model: 'This is the model I think with, and where it runs.',
+  rules: 'Here you choose what I can do without asking you first.',
+  connections: 'Your own accounts I can work with. I\u2019ll walk you through connecting each one.',
+  memory: 'What I remember about you, and the notes I keep. You can change or delete any of it.',
+  conversations: 'Our conversations and my finished jobs. Delete any of them whenever you like.',
+  schedules: 'Jobs I do by myself, at times you choose.',
+  history: 'A record of everything I did, without what was said.',
+  startup: 'I can start by myself when you sign in to Windows.',
+  devices: 'Use me from your phone or laptop, through Tailscale.',
+  power: 'When you turn me off, I finish what I\u2019m doing first.',
+  appearance: 'Light or dark: I look good in both.',
+  chat: 'How I behave in our conversations.',
+};
+
+/** Settings > Connections > an account: Jig's corner follows the walkthrough's steps. */
+function guide(g) {
+  view.guide = g;
+  renderCorner();
+}
+
+function noteNode() {
+  const section = currentSection();
+  if (section === 'connections' && view.guide && view.guide.provider === walkthroughProvider()) {
+    const g = view.guide;
+    return [el('p', { class: 'corner-tip', text: `Connecting ${g.label}: step ${g.index + 1} of ${g.steps.length}` }),
+      el('ol', { class: 'guide-steps', 'aria-label': `The steps for ${g.label}` }, g.steps.map((title, i) => el('li', {
+        class: i < g.index ? 'done' : i === g.index ? 'on' : '', 'aria-current': i === g.index ? 'step' : null, text: title })))];
+  }
+  if (section) return [el('p', { class: 'corner-tip', 'data-testid': 'corner-tip', text: SECTION_NOTES[section] })];
+  const f = view.finished;
+  if (f && Date.now() - f.at < 15 * 60 * 1000) {
+    const t = tasksCache.find((x) => x.id === f.taskId);
+    if (t && t.status === 'done') {
+      return [el('div', { class: 'done-card', 'data-testid': 'corner-done' },
+        el('span', { class: 'done-mark', 'aria-hidden': 'true', text: '\u2713' }),
+        el('div', {}, el('p', { class: 'done-t', text: `Finished ${q(t.title)}` }),
+          el('button', { type: 'button', class: 'btn-link', text: 'See the result', onclick: () => $('activity').showModal() })))];
+    }
+  }
+  return null;
+}
+
+/** Lay out Jig's corner for what it is holding, and the steps for the work it shows. */
+function renderCorner() {
+  const asking = Boolean($('corner-held').querySelector('.ask.is-pending, .ask-loading'));
+  const w = view.work;
+  if (w && !w.size) view.stepsOpen = false;
+  const small = narrow.matches;
+  const sheet = small && !offState && ((asking && !view.sheetLater) || view.stepsOpen);
+  corner.dataset.holding = asking ? 'ask' : view.stepsOpen ? 'steps' : w ? 'work' : 'none';
+  corner.classList.toggle('is-sheet', sheet);
+  $('app').classList.toggle('sheet-open', sheet);
+
+  const later = $('corner-held').querySelector('.held-later');
+  if (small && asking && !later) {
+    $('corner-held').prepend(el('button', { type: 'button', class: 'btn btn-small btn-quiet held-later', 'data-testid': 'held-later', text: 'Not now',
+      onclick: () => { view.sheetLater = true; renderCorner(); $('approvals-badge').focus(); } }));
+  } else if ((!small || !asking) && later) {
+    later.remove();
+  }
+
+  const box = $('corner-work');
+  box.hidden = !w || (asking && small);
+  if (w) {
+    box.replaceChildren(...w.summaryNode({ stepsOpen: view.stepsOpen, onToggle: () => openSteps(!view.stepsOpen) }));
+    box.dataset.status = w.status;
+  }
+
+  const note = noteNode();
+  $('corner-note').hidden = !note;
+  if (note) $('corner-note').replaceChildren(...note);
+  renderSteps();
+}
+
+function renderSteps(focusStep = null) {
+  const pane = $('steps-pane');
+  const w = view.work;
+  const has = Boolean(w && w.size);
+  const small = narrow.matches;
+  const home = small ? $('corner-steps') : $('main');
+  if (pane.parentElement !== home) {
+    if (small) home.append(pane);
+    else chatLog.after(pane);
+  }
+  $('corner-steps').hidden = !(small && view.stepsOpen);
+  $('view-tabs').hidden = small || !has;
+  pane.hidden = !view.stepsOpen;
+  chatLog.hidden = !small && view.stepsOpen;
+  $('tab-chat').setAttribute('aria-pressed', String(!view.stepsOpen));
+  $('tab-steps').setAttribute('aria-pressed', String(view.stepsOpen));
+  $('steps-count').textContent = has ? String(w.size) : '';
+  if (!view.stepsOpen || !w) {
+    pane.replaceChildren();
+    return;
+  }
+  const active = document.activeElement;
+  const keep = focusStep || (pane.contains(active) && active.getAttribute('aria-controls')) || null;
+  pane.replaceChildren(...w.stepsNodes({ onRender: (id) => renderSteps(`step-detail-${id}`) }));
+  if (small) pane.append(el('button', { type: 'button', class: 'btn btn-small steps-close', 'data-testid': 'steps-close', text: 'Back to the conversation', onclick: () => openSteps(false) }));
+  if (keep) pane.querySelector(`[aria-controls="${keep}"]`)?.focus();
+}
+
+narrow.addEventListener('change', () => renderCorner());
+
+/* ---------- approvals, held in Jig's corner ---------- */
 
 const base = (p) => String(p ?? '').split(/[\\/]/).pop();
 const host = (u) => {
@@ -1277,7 +1507,9 @@ function argValue(v) {
   return s.length > 80 || s.includes('\n') ? el('pre', { class: 'args', text: s }) : el('code', { text: s });
 }
 
-const cards = new Map(); // approval id -> { node, where } for cards in the conversation
+/* Approval id -> { node, where, home, lead }. A pending card is held in Jig's corner; once answered it moves
+ * to `home`: the reply that asked (a chat run), or a notice in the conversation (background work). */
+const cards = new Map();
 
 function approvalCard(a, where) {
   const s = a.sentinel;
@@ -1368,9 +1600,36 @@ function swapCard(id, a, focus = false) {
   if (!entry) return;
   const hadFocus = focus || entry.node.contains(document.activeElement);
   const fresh = approvalCard(a, entry.where);
-  entry.node.replaceWith(fresh);
+  const held = entry.node.closest('.held');
+  if (a.status !== 'pending' && held) {
+    // Answered: out of Jig's corner and into the conversation, where it was asked.
+    held.remove();
+    if (entry.home) {
+      entry.home.querySelector('.waiting-pill')?.remove();
+      entry.home.append(fresh);
+    } else {
+      const follow = nearBottom();
+      chatLog.append(el('div', { class: 'notice', 'data-testid': 'background-approval', dataset: { id: a.id } },
+        el('p', { class: 'notice-lead', text: entry.lead }), fresh));
+      if (follow) chatLog.scrollTop = chatLog.scrollHeight;
+    }
+  } else {
+    entry.node.replaceWith(fresh);
+  }
   entry.node = fresh;
+  renderCorner();
   if (hadFocus) fresh.focus();
+}
+
+/** Jig holds a question in its corner until you answer it. */
+function holdCard(id, node, { home = null, lead = null } = {}) {
+  cards.set(id, { node, where: 'chat', home, lead });
+  view.sheetLater = false;
+  $('corner-held').append(el('div', { class: 'held', dataset: { id } }, lead ? el('p', { class: 'held-lead', text: lead }) : null, node));
+  if (home) {
+    home.append(el('button', { type: 'button', class: 'waiting-pill', 'data-testid': 'chat-waiting', text: 'Waiting for your answer', onclick: showFirstPending }));
+  }
+  renderCorner();
 }
 
 async function refreshCard(id, focus = false) {
@@ -1382,11 +1641,10 @@ async function refreshCard(id, focus = false) {
   }
 }
 
-/** Put a chat run's approval inside the reply that asked for it. */
+/** A chat run's question: Jig holds it in its corner; answered, it goes into the reply that asked. */
 async function placeApproval(id, msg) {
   if (cards.has(id)) return;
-  cards.set(id, { node: el('div', { class: 'ask-loading', text: 'Jig has a question\u2026' }), where: 'chat' });
-  msg.append(cards.get(id).node);
+  holdCard(id, el('div', { class: 'ask-loading', text: 'Jig has a question\u2026' }), { home: msg });
   try {
     swapCard(id, await api(`/approvals/${id}`));
   } catch (err) {
@@ -1395,25 +1653,21 @@ async function placeApproval(id, msg) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
-/** A gentle notice in the conversation for a question raised by background work (or an earlier conversation). */
+/** A question raised by background work (or an earlier conversation), held in Jig's corner too. */
 function addNotice(a) {
   const task = a.task_id ? tasksCache.find((t) => t.id === a.task_id) : null;
   const lead = a.task_id
     ? `While working on ${task ? q(task.title) : 'a background job'}, I have a question.`
     : 'From another conversation, I\u2019m still waiting for your answer.';
-  const card = approvalCard(a, 'chat');
-  const follow = nearBottom();
-  chatLog.append(el('div', { class: 'notice', 'data-testid': 'background-approval', dataset: { id: a.id } },
-    el('p', { class: 'notice-lead', text: lead }), card));
-  cards.set(a.id, { node: card, where: 'chat' });
-  if (follow) chatLog.scrollTop = chatLog.scrollHeight;
+  holdCard(a.id, approvalCard(a, 'chat'), { lead });
 }
 
 function showFirstPending() {
   for (const { node } of cards.values()) {
     if (node.dataset.status === 'pending' && node.isConnected) {
-      if (currentSection()) location.hash = '';
-      node.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      view.sheetLater = false;
+      renderCorner();
+      node.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       node.focus({ preventScroll: true });
       return;
     }
@@ -1481,6 +1735,7 @@ async function loadActivity() {
     if (!tasks.some((t) => t.id === id && t.status === 'running')) currentTool.delete(id);
   }
   renderDoing();
+  if (view.finished) renderCorner();
 
   const byGoal = new Map();
   for (const t of [...tasks].reverse()) {
@@ -2581,8 +2836,19 @@ function showOff({ scope, startAgain, fromElsewhere = false }) {
   stopEvents();
   stopPairing();
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
-  $('app').hidden = true;
+  // Jig stays in its corner, asleep, beside "Jig is off".
+  $('app').classList.add('is-off');
+  $('main').hidden = true;
+  $('settings').hidden = true;
   $('open-settings').hidden = true;
+  renderCorner();
+  try {
+    avatar.setState('paused');
+  } catch (err) {
+    showError(`The avatar could not show state ${q('paused')}: ${err.message}`);
+  }
+  document.documentElement.dataset.jigState = 'paused';
+  $('avatar-says').textContent = 'Saving where I got to\u2026';
   renderHealth();
   $('off-state').hidden = false;
   $('off-title').textContent = 'Turning Jig off\u2026';
@@ -2609,6 +2875,7 @@ async function watchOff() {
   if (offState.phase === 'stopping') {
     if (!up) {
       offState.phase = 'off';
+      $('avatar-says').textContent = 'Zzz\u2026 I\u2019m switched off.';
       $('off-title').textContent = 'Jig is off';
       $('off-text').textContent = offText(offState);
       $('off-watch').textContent = 'This page reconnects by itself when Jig is running again.';
@@ -2932,6 +3199,6 @@ async function disconnectAccount(button, c) {
 }
 
 $('connections-refresh').addEventListener('click', loadConnections);
-initWalkthrough({ el, api, act, showError, reload: loadConnections });
+initWalkthrough({ el, api, act, showError, reload: loadConnections, pose, guide });
 
 boot();
