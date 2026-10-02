@@ -119,11 +119,12 @@ class Agent:
         except (JigError, OSError) as exc:
             error = f"{type(exc).__name__}: {exc}"
             self.store.finish_run(run_id, status=RunStatus.FAILED, error=error)
-            self.audit.record("run.end", "run failed", **ids, status="failed", error=error)
+            self.audit.record("run.end", "run failed", **ids, status="failed", error_type=type(exc).__name__,
+                              error_chars=len(error))
             self.bus.publish(EventType.RUN_END, status="failed", error=error, **ids)
             raise
         self.store.finish_run(run_id, status=RunStatus.DONE, final=final)
-        self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_preview=final[:300])
+        self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_chars=len(final))
         self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
         return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages)
 
@@ -152,7 +153,7 @@ class Agent:
         except JigError as exc:
             self.store.finish_step(step_id, status="error", error=str(exc))
             self.audit.record("model.call", f"model call failed: {type(exc).__name__}", **ids, step=idx,
-                              error=str(exc))
+                              error_type=type(exc).__name__, error_chars=len(str(exc)))
             self.bus.publish(EventType.MODEL_END, step=idx, ok=False, **ids)
             raise
         self.store.finish_step(step_id, status="ok", output={

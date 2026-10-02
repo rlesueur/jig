@@ -10,14 +10,14 @@ from typing import Any
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
 from .agent.prompts import MEMORY_PROMPT_LIMIT, agent_system_prompt, memory_prompt
-from .audit import AuditLog
+from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
 from .connectors import ConnectionStore, Connectors
 from .connectors import register_tools as register_connector_tools
-from .constants import EventType, GoalStatus, Mode, RunStatus, TaskStatus
+from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
-from .errors import JigError, NotFound
+from .errors import CannotDelete, JigError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .instance import InstanceLock
@@ -67,7 +67,8 @@ class Jig:
         self.store = Store(self.db, on_schedule_change=lambda schedule_id, action: self.bus.publish(
             EventType.SCHEDULE_CHANGED, schedule_id=schedule_id, action=action),
             on_note_change=lambda note_id, action: self.bus.publish(EventType.NOTE_CHANGED, note_id=note_id,
-                                                                    action=action))
+                                                                    action=action),
+            on_history_change=self._history_changed)
         self.memory = MemoryStore(self.db, on_change=lambda memory_id, action: self.bus.publish(
             EventType.MEMORY_CHANGED, memory_id=memory_id, action=action))
         self.vault = Vault(self.db, config.vault)
@@ -295,7 +296,7 @@ class Jig:
         task = self.store.update_task(task_id, status=status, **fields)
         if before != status:
             self.audit.record("task.status", f"{before} -> {status}", actor="runtime", task_id=task_id,
-                              before=before, after=status.value, error=fields.get("error"))
+                              before=before, after=status.value, error_chars=text_size(fields.get("error")))
             self.publish_task(task)
             if TaskStatus.PAUSED in (before, status):
                 self._refresh_paused()
@@ -363,8 +364,8 @@ class Jig:
 
     def create_task(self, *, title: str, description: str, mode: Mode, delay_s: float = 0.0) -> dict[str, Any]:
         task = self.store.create_task(title=title, description=description, mode=mode, delay_s=delay_s)
-        self.audit.record("task.created", f"task {title!r} created", actor="user", task_id=task["id"],
-                          mode=task["mode"])
+        self.audit.record("task.created", "task created", actor="user", task_id=task["id"], mode=task["mode"],
+                          title_chars=len(title), description_chars=len(task["description"]))
         self.publish_task(task)
         self.scheduler.wake()
         return task
@@ -441,7 +442,8 @@ class Jig:
     # Goals -----------------------------------------------------------------
     def create_goal(self, *, description: str, title: str | None = None) -> dict[str, Any]:
         goal = self.store.create_goal(title=title or description[:80], description=description)
-        self.audit.record("goal.created", f"goal {goal['title']!r} created", actor="user", goal_id=goal["id"])
+        self.audit.record("goal.created", "goal created", actor="user", goal_id=goal["id"],
+                          description_chars=len(goal["description"]))
         self.bus.publish(EventType.GOAL_STATUS, goal_id=goal["id"], status=goal["status"])
         self._spawn(self._plan_goal(goal["id"]))
         return goal
@@ -465,6 +467,30 @@ class Jig:
         self.audit.record("goal.status", "goal cancelled", actor="user", goal_id=goal_id, status="cancelled")
         self.bus.publish(EventType.GOAL_STATUS, goal_id=goal_id, status="cancelled")
         return goal
+
+    # Deleting job results ----------------------------------------------------
+    def _still_stopping(self, task_ids: list[str]) -> None:
+        """Refuse while a task marked finished (just stopped, say) still has its runner winding down."""
+        running = set(self.scheduler.running_task_ids)
+        if busy := sorted(t for t in task_ids if t in running
+                          and self.store.get_task(t)["status"] in TERMINAL_TASK_STATUSES):
+            raise CannotDelete(f"Jig is still stopping {', '.join(busy)}; try again in a moment")
+
+    def delete_task(self, task_id: str) -> dict[str, Any]:
+        self._still_stopping([task_id])
+        return self.store.delete_task(task_id)
+
+    def delete_goal(self, goal_id: str) -> dict[str, Any]:
+        self._still_stopping([t["id"] for t in self.store.list_tasks(goal_id=goal_id, limit=10_000)])
+        return self.store.delete_goal(goal_id)
+
+    def wipe_jobs(self, *, vacuum: bool = True) -> dict[str, Any]:
+        self._still_stopping(list(self.scheduler.running_task_ids))
+        return self.store.wipe_jobs(vacuum=vacuum)
+
+    def _history_changed(self, action: str, ids: set[str]) -> None:
+        self.bus.forget(ids)
+        self.bus.publish(EventType.HISTORY_CHANGED, action=action)
 
     # Chat ------------------------------------------------------------------
     async def chat(self, message: str, *, session_id: str | None = None,

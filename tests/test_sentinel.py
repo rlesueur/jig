@@ -34,7 +34,9 @@ async def test_sentinel_verdict_on_real_web_fetch(jig):
     assert len(verdicts) == 1
     data = json.loads(verdicts[0]["data_json"])
     assert data["verdict"] in ("allow", "ask_user"), data
-    assert data["reason"].strip()
+    # The audit log keeps the decision; the reason (which can quote the arguments) stays with the run.
+    assert data["reason_chars"] > 0 and "reason" not in data and "args" not in data
+    assert outcome.policy["sentinel"]["reason"].strip()
     assert data["risk"] in ("low", "medium", "high")
     assert verdicts[0]["actor"] == "sentinel"
 

@@ -174,11 +174,11 @@ def test_agent_note_appears_live_and_forget_everything_clears_notes(server, brow
     page.get_by_test_id("memory-wipe").click()
     page.get_by_test_id("confirm-dialog").wait_for(state="visible")
     body = page.get_by_test_id("confirm-body").inner_text()
-    assert "every note Jig has written are deleted from this computer" in body
-    assert "whatever Jig read or said in them stays there" in body
+    assert ("Every memory and note, every conversation, and every finished job with its results are deleted from "
+            "this computer") in body
     page.screenshot(path=str(shots / "forget-everything-confirm-light.png"))
     page.get_by_test_id("confirm-ok").click()
-    page.wait_for_selector("#memory-saved:text-matches('^Jig forgot .* and 1 note.$')")
+    page.wait_for_selector("#memory-saved:text-matches('^Jig deleted .*1 note and 1 task.$')")
     page.wait_for_selector('#notes-heading:text-is("Jig\u2019s notes (0)")')
     assert call(data, "GET", "/notes").json() == [] and call(data, "GET", "/memory").json() == []
     context.close()

@@ -214,7 +214,9 @@ _ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),
                   ("schedules", "repeat_json", "TEXT"),
                   ("schedules", "timezone", "TEXT"),
                   ("schedules", "created_by", "TEXT"),
-                  ("notes", "updated_at", "TEXT"))
+                  ("notes", "updated_at", "TEXT"),
+                  # The goal a planning run planned; NULL for chat and task runs.
+                  ("runs", "goal_id", "TEXT"))
 
 
 def now() -> datetime:
@@ -297,3 +299,10 @@ class Database:
         log. False only if another connection (a CLI command, say) was reading; the next checkpoint clears it."""
         busy, _log, _done = self.one("PRAGMA wal_checkpoint(TRUNCATE)").values()  # type: ignore[union-attr]
         return busy == 0
+
+    def vacuum(self) -> bool:
+        """Rebuild the database file without its free pages, which can still hold text deleted before
+        secure_delete was switched on, then clear the write-ahead log. Returns what checkpoint() returns."""
+        with self._lock:
+            self._conn.execute("VACUUM")
+        return self.checkpoint()

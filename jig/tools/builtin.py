@@ -155,7 +155,6 @@ def build_registry() -> ToolRegistry:
         effect=Effect.PRIVATE_WRITE,
         category=ToolCategory.NOTES,
         args={"title": "Short title.", "body": "Note text."},
-        private=True,
     )
     async def note_write(ctx: ToolContext, title: str, body: str) -> dict[str, Any]:
         return ctx.store.add_note(title=title, body=body, task_id=ctx.task_id)
@@ -166,7 +165,6 @@ def build_registry() -> ToolRegistry:
         category=ToolCategory.NOTES,
         variant=TaskVariant.BROWSING,
         args={"limit": "How many notes to return."},
-        private=True,
     )
     async def note_list(ctx: ToolContext, limit: int = 20) -> dict[str, Any]:
         return {"notes": ctx.store.list_notes(limit=limit)}
@@ -177,7 +175,6 @@ def build_registry() -> ToolRegistry:
         category=ToolCategory.MEMORY,
         variant=TaskVariant.BROWSING,
         args={"query": "Words to search for.", "limit": "Maximum results."},
-        private=True,
     )
     async def memory_search(ctx: ToolContext, query: str, limit: int = 8) -> dict[str, Any]:
         return {"results": ctx.memory.search(query, limit=limit)}
@@ -187,7 +184,6 @@ def build_registry() -> ToolRegistry:
         effect=Effect.PRIVATE_WRITE,
         category=ToolCategory.MEMORY,
         args={"content": "The fact to remember, as one sentence.", "tags": "Optional tags."},
-        private=True,
     )
     async def memory_add(ctx: ToolContext, content: str, tags: list | None = None) -> dict[str, Any]:
         source = f"task:{ctx.task_id}" if ctx.task_id else f"run:{ctx.run_id}"

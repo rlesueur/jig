@@ -35,7 +35,7 @@ from ..connectors.guide import guide as connector_guide
 from ..constants import EventType, Mode
 from ..db import now_iso
 from ..devices import DeviceStore, PairingError
-from ..errors import ConfigError, ConnectorError, JigError
+from ..errors import CannotDelete, ConfigError, ConnectorError, JigError
 from ..errors import ModelServerUnavailable, NotFound, SecretNotFound, ToolArgumentError
 from ..events import SubscriberOverflow
 from ..instance import take_stop_request
@@ -400,6 +400,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         return JSONResponse({"error": "; ".join(problems) or "invalid request"}, status_code=422)
 
     @app.exception_handler(ApprovalConflict)
+    @app.exception_handler(CannotDelete)
     async def conflict(_: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=409)
 
@@ -515,6 +516,74 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.get("/sessions/{session_id}")
     async def session(request: Request, session_id: str) -> dict[str, Any]:
         return {"id": session_id, "messages": J(request).store.get_session(session_id)}
+
+    # Deleting conversations and job results: the audit entries have ids and counts, never content -----------
+    @app.get("/sessions")
+    async def list_sessions(request: Request, limit: int = Query(100, le=1000)) -> list[dict[str, Any]]:
+        return J(request).store.list_conversations(limit=limit)
+
+    @app.post("/sessions/wipe")
+    async def wipe_sessions(request: Request, body: ConfirmIn) -> dict[str, Any]:
+        _require_confirm(body, "No conversation was deleted")
+        jig = J(request)
+        out = jig.store.wipe_conversations()
+        jig.audit.record("conversation.wiped", f"all conversations deleted ({out['conversations']})", actor="user",
+                         **out, **_who(request))
+        return out
+
+    @app.get("/sessions/{session_id}/transcript")
+    async def session_transcript(request: Request, session_id: str) -> dict[str, Any]:
+        """What you and Jig said, without the tool calls in between."""
+        return J(request).store.get_conversation(session_id, with_messages=True)
+
+    @app.delete("/sessions/{session_id}", status_code=204)
+    async def delete_session(request: Request, session_id: str) -> None:
+        jig = J(request)
+        out = jig.store.delete_conversation(session_id)
+        jig.audit.record("conversation.deleted", f"conversation {session_id} deleted", actor="user",
+                         session_id=session_id, **out, **_who(request))
+
+    @app.delete("/tasks/{task_id}", status_code=204)
+    async def delete_task(request: Request, task_id: str) -> None:
+        jig = J(request)
+        out = jig.delete_task(task_id)
+        jig.audit.record("task.deleted", f"task {task_id} and its results deleted", actor="user", task_id=task_id,
+                         **out, **_who(request))
+
+    @app.delete("/goals/{goal_id}", status_code=204)
+    async def delete_goal(request: Request, goal_id: str) -> None:
+        jig = J(request)
+        out = jig.delete_goal(goal_id)
+        jig.audit.record("goal.deleted", f"goal {goal_id}, its tasks and their results deleted", actor="user",
+                         goal_id=goal_id, **out, **_who(request))
+
+    @app.post("/jobs/wipe")
+    async def wipe_jobs(request: Request, body: ConfirmIn) -> dict[str, Any]:
+        """Delete every finished goal and task with its results; unfinished ones are kept (``kept_unfinished``)."""
+        _require_confirm(body, "No job was deleted")
+        jig = J(request)
+        out = jig.wipe_jobs()
+        jig.audit.record("job.wiped", f"all finished jobs deleted ({out['goals']} goals, {out['tasks']} tasks)",
+                         actor="user", **out, **_who(request))
+        return out
+
+    @app.post("/forget")
+    async def forget_everything(request: Request, body: ConfirmIn) -> dict[str, Any]:
+        """Settings > Forget everything: every memory and note, every conversation and every finished job with its
+        results. Then the database file is rebuilt, so no deleted text is left in its free space."""
+        _require_confirm(body, "Nothing was deleted")
+        jig = J(request)
+        jobs = jig.wipe_jobs(vacuum=False)  # first: it is the one that can refuse (a task still stopping)
+        conversations = jig.store.wipe_conversations(vacuum=False)
+        memories = jig.memory.wipe()
+        notes = jig.store.wipe_notes()
+        out = {"memories": memories["forgotten"], "notes": notes["deleted"],
+               "conversations": conversations["conversations"], "goals": jobs["goals"], "tasks": jobs["tasks"],
+               "kept_replying": conversations["kept_replying"], "kept_unfinished": jobs["kept_unfinished"],
+               "wal_cleared": jig.db.vacuum()}
+        jig.audit.record("everything.forgotten", "memories, notes, conversations and finished jobs deleted",
+                         actor="user", **out, **_who(request))
+        return out
 
     # Goals -----------------------------------------------------------------
     @app.post("/goals", status_code=201)
@@ -767,6 +836,11 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         for r in rows:
             r["data"] = json.loads(r.pop("data_json"))
         return rows
+
+    @app.get("/audit/older-with-content")
+    async def audit_older_with_content(request: Request) -> dict[str, Any]:
+        """History entries written by older Jig versions that can still quote conversations or jobs."""
+        return J(request).audit.older_entries_with_content()
 
     # Vault (names and metadata only; values can be written but never read back) ----------
     @app.get("/vault")

@@ -63,8 +63,10 @@ async def test_core_rule_sees_the_completed_url(jig):
     assert outcome.error.startswith("core rule no-local-network") and "127.0.0.1" in outcome.error, outcome.error
     rows = jig.audit.query(kind="policy.url_normalised", run_id="r_bare_local")
     assert len(rows) == 1
-    data = json.loads(rows[0]["data_json"])
-    assert data["normalised"] == [{"arg": "url", "original": "127.0.0.1/admin", "normalised": "https://127.0.0.1/admin"}]
+    assert outcome.policy["url_normalised"] == [
+        {"arg": "url", "original": "127.0.0.1/admin", "normalised": "https://127.0.0.1/admin"}]
+    # The audit log says which argument was completed, not the address (it is kept with the run, which can be deleted).
+    assert json.loads(rows[0]["data_json"])["args"] == ["url"] and "127.0.0.1" not in rows[0]["data_json"] + rows[0]["summary"]
 
 
 async def test_single_label_and_other_schemes_stay_refused(jig):

@@ -70,13 +70,11 @@ async def test_the_agents_note_text_is_never_copied_into_the_audit_log(jig):
     for word in ("heronlantern", "Spare key", "egretmosaic"):
         assert word not in dump, f"{word!r} was copied into the audit log"
     calls = {a["data"]["tool"]: a["data"] for a in audit if a["kind"] == "tool.call"}
-    assert calls["note_write"]["args"] == {"title": "[private, 9 characters]", "body": f"[private, {len(secret)} characters]"}
-    results = {a["data"]["tool"]: a["data"]["result_preview"] for a in audit if a["kind"] == "tool.result"}
+    assert calls["note_write"]["args"] == {"title": "[9 characters]", "body": f"[{len(secret)} characters]"}
+    results = {a["data"]["tool"]: a["data"]["result"] for a in audit if a["kind"] == "tool.result"}
     note_id = jig.store.list_notes()[0]["id"]
-    assert results["note_write"] == f"[private: id {note_id}]"
-    assert results["note_list"] == f"[private: 1 found, ids [{note_id}]]"
-    tools = {t.name: t.describe() for t in jig.registry.all()}
-    assert tools["note_write"]["private"] and tools["memory_search"]["private"] and not tools["web_fetch"]["private"]
+    assert results["note_write"]["id"] == note_id and results["note_write"]["chars"] > len(secret)
+    assert results["note_list"]["items"] == 1 and results["note_list"]["ids"] == [note_id]
 
     # So once the note and the memory are deleted, their text is nowhere in the database files.
     jig.store.delete_note(note_id)

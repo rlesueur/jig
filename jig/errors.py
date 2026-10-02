@@ -80,6 +80,10 @@ class NotFound(JigError):
     pass
 
 
+class CannotDelete(JigError):
+    """A conversation or job can't be deleted yet: it is still running, or unfinished work needs it."""
+
+
 class StepLimitExceeded(JigError):
     pass
 

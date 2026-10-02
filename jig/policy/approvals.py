@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any
 
-from ..audit import AuditLog
+from ..audit import AuditLog, sizes, text_size
 from ..constants import ApprovalStatus, EventType
 from ..db import Database, dumps, new_id, now_iso
 from ..errors import NotFound
@@ -62,7 +62,9 @@ class ApprovalQueue:
              dumps(resolved) if resolved else None),
         )
         self.audit.record("approval.requested", f"approval needed for {tool}", task_id=task_id, run_id=run_id,
-                          approval_id=aid, tool=tool, args=args, reasons=reasons, sentinel=sentinel, resolved=resolved)
+                          approval_id=aid, tool=tool, args=sizes(args),
+                          reasons=[{"rule": r["rule"], "decision": r["decision"]} for r in reasons],
+                          sentinel={"verdict": sentinel["verdict"], "risk": sentinel["risk"]} if sentinel else None)
         self.bus.publish(EventType.APPROVAL_REQUESTED, approval_id=aid, run_id=run_id, task_id=task_id, tool=tool,
                          args=args, reasons=reasons, sentinel=sentinel, resolved=resolved)
         return self.get(aid)
@@ -103,7 +105,7 @@ class ApprovalQueue:
             raise ApprovalConflict(f"approval {approval_id} was answered concurrently")
         self.audit.record("approval.resolved", f"{approval['tool']} {status}", actor=actor,
                           task_id=approval["task_id"], run_id=approval["run_id"], approval_id=approval_id,
-                          status=status.value, note=note)
+                          status=status.value, note_chars=text_size(note))
         self.bus.publish(EventType.APPROVAL_RESOLVED, approval_id=approval_id, run_id=approval["run_id"],
                          task_id=approval["task_id"], tool=approval["tool"], status=status.value)
         if event := self._waiters.get(approval_id):

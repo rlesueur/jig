@@ -204,7 +204,7 @@ def test_forget_everything_in_settings(server, browser, shots):
     page.locator('[data-testid="memory-wipe-details"] > summary').click()
     page.get_by_test_id("memory-wipe").click()
     page.get_by_test_id("confirm-dialog").wait_for(state="visible")
-    assert page.get_by_test_id("confirm-title").inner_text() == "Forget everything Jig remembers?"
+    assert page.get_by_test_id("confirm-title").inner_text() == "Forget everything Jig keeps about you?"
     assert "can\u2019t be undone" in page.get_by_test_id("confirm-body").inner_text()
     assert "btn-danger" in page.get_by_test_id("confirm-ok").get_attribute("class")
     page.screenshot(path=str(shots / "memory-wipe-confirm-light.png"))
@@ -213,12 +213,13 @@ def test_forget_everything_in_settings(server, browser, shots):
 
     page.get_by_test_id("memory-wipe").click()
     page.get_by_test_id("confirm-ok").click()
-    page.wait_for_selector('#memory-saved:text-is("Jig forgot 3 memories.")')
+    # The finished jobs the schedule tests left behind go too.
+    page.wait_for_selector("#memory-saved:text-matches('^Jig deleted 3 memories')")
     page.wait_for_selector('#memory-heading:text-is("Memories (0)")')
     assert page.locator('[data-testid="memories"] .empty').inner_text() == "Jig hasn\u2019t remembered anything yet."
     page.screenshot(path=str(shots / "memory-after-wipe-light.png"), full_page=True)
     assert call(data, "GET", "/memory").json() == []
-    assert audit(data, "memory.wiped")[-1]["data"]["count"] == 3
+    assert audit(data, "everything.forgotten")[-1]["data"]["memories"] == 3
     context.close()
 
 

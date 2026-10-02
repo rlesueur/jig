@@ -368,12 +368,13 @@ function refreshAll() {
   loadRules();
   loadSandbox();
   if (currentSection() === 'history') loadAudit(true);
+  if (currentSection() === 'conversations') loadConversations();
   if (currentSection() === 'schedules') loadSchedules();
 }
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'connections', 'memory', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?$/);
@@ -402,6 +403,7 @@ function route(moveFocus = true) {
       }
     }
     if (section === 'history') loadAudit(true);
+    if (section === 'conversations') loadConversations();
     if (section === 'connections') loadConnections();
     if (section === 'schedules') loadSchedules();
     if (section === 'devices') loadRemote();
@@ -556,7 +558,8 @@ function avatarWords(state, variant, background) {
 }
 
 const refreshers = { activity: loadActivity, approvals: loadApprovals, memory: loadMemory, rules: loadRules,
-  status: loadStatus, audit: () => loadAudit(true), schedules: () => loadSchedules(), notes: () => loadNotes() };
+  status: loadStatus, audit: () => loadAudit(true), schedules: () => loadSchedules(), notes: () => loadNotes(),
+  conversations: () => loadConversations() };
 const pendingRefresh = {};
 function refreshSoon(area, delay = 300) {
   clearTimeout(pendingRefresh[area]);
@@ -582,6 +585,10 @@ function handleEvent(event) {
   }
   if (t === 'memory.changed') refreshSoon('memory');
   if (t === 'note.changed') refreshSoon('notes');
+  if (t === 'history.changed') {
+    for (const area of ['conversations', 'activity', 'approvals']) refreshSoon(area);
+  }
+  if (currentSection() === 'conversations' && (t === 'run.end' || t === 'task.status' || t === 'goal.status')) refreshSoon('conversations', 1000);
   if (currentSection() === 'schedules' && (t === 'schedule.changed' || t === 'task.status' || t === 'agent.status')) refreshSoon('schedules');
   if (t === 'rule.changed') refreshSoon('rules');
   if (t === 'agent.status') {
@@ -876,6 +883,7 @@ function renderDoingList(live, planning) {
 
 $('doing-open').addEventListener('click', () => $('activity').showModal());
 $('goal-to-schedules').addEventListener('click', () => $('activity').close());
+$('activity-to-conversations').addEventListener('click', () => $('activity').close());
 $('activity-close').addEventListener('click', () => $('activity').close());
 $('activity').addEventListener('click', (e) => { if (e.target === $('activity')) $('activity').close(); });
 
@@ -1065,10 +1073,13 @@ chatInput.addEventListener('keydown', (e) => {
     $('chat-form').requestSubmit();
   }
 });
-$('chat-new').addEventListener('click', () => {
+function clearChat() {
   sessionId = null;
   const keep = [...chatLog.querySelectorAll('.notice')].filter((n) => n.querySelector('[data-status="pending"]'));
   chatLog.replaceChildren(welcome(), ...keep);
+}
+$('chat-new').addEventListener('click', () => {
+  clearChat();
   chatInput.focus();
 });
 chatLog.append(welcome());
@@ -1381,7 +1392,8 @@ function taskItem(t) {
   const outcome = t.error || t.result;
   return el('div', { class: 'item', 'data-testid': 'task', dataset: { id: t.id, status: t.status } },
     el('div', { class: 'item-head' }, statusBadge(t.status), el('span', { class: 'title', text: t.title }),
-      el('span', { class: 'status', dataset: { s: 'mode' }, text: t.mode })),
+      el('span', { class: 'status', dataset: { s: 'mode' }, text: t.mode }),
+      !t.goal_id && TERMINAL_TASK.has(t.status) ? el('div', { class: 'item-actions' }, deleteJobButton('task', t)) : null),
     el('div', { class: 'meta', text: `${t.id} · created ${when(t.created_at)}${t.finished_at ? ` · finished ${when(t.finished_at)}` : ''}` }),
     outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'Error' : 'Result' }), resultBody(outcome, Boolean(t.error))) : null);
 }
@@ -1418,6 +1430,7 @@ async function loadActivity() {
         }) }));
     }
     const subtasks = byGoal.get(g.id) || [];
+    if (TERMINAL_GOAL.has(g.status) && subtasks.every((t) => TERMINAL_TASK.has(t.status))) actions.append(deleteJobButton('goal', g));
     return el('div', { class: 'item', 'data-testid': 'goal', dataset: { id: g.id, status: g.status } },
       el('div', { class: 'item-head' }, statusBadge(g.status), el('span', { class: 'title', text: g.title }), actions),
       el('div', { class: 'meta', text: `${g.id} · created ${when(g.created_at)}` }),
@@ -1548,26 +1561,43 @@ $('memory-add').addEventListener('submit', (e) => {
     await loadMemory();
   });
 });
+/** The History's entries from older Jig versions that can still quote conversations, in words; '' if none. */
+function olderHistoryWords(older) {
+  if (!older.count) return '';
+  return `${plural(older.count, 'older History entry', 'older History entries')}, written by an earlier version of Jig `
+    + `up to ${when(older.last)}, can still include parts of conversations and jobs. The History can\u2019t be changed, so they stay.`;
+}
+
 $('memory-wipe').addEventListener('click', async () => {
   $('memory-saved').textContent = '';
+  const older = await act($('memory-wipe'), () => api('/audit/older-with-content'));
+  if (!older) return;
   const ok = await askConfirm({
-    title: 'Forget everything Jig remembers?',
+    title: 'Forget everything Jig keeps about you?',
     body: [bullets([
-      'Every memory, with Jig\u2019s search index of them, and every note Jig has written are deleted from this computer. Jig starts again knowing nothing about you.',
+      'Every memory and note, every conversation, and every finished job with its results are deleted from this computer, with the questions Jig asked you about them. Jig starts again knowing nothing about you.',
+      'A job that is still going, or a reply Jig is writing right now, stays. Stop it first if you want it gone too.',
+      'Your settings, rules, schedules and connected accounts stay, and so do files Jig made in its folder.',
       'This can\u2019t be undone.',
       'The History records that you did this and how many were deleted, never what they said.',
-      'Past conversations and job results aren\u2019t changed, so whatever Jig read or said in them stays there.',
-    ])],
+      olderHistoryWords(older),
+    ].filter(Boolean))],
     ok: 'Forget everything', danger: true,
   });
   if (!ok) return;
-  const out = await act($('memory-wipe'), () => api('/memory/wipe', { method: 'POST', body: { confirm: true, notes: true } }));
+  const out = await act($('memory-wipe'), () => api('/forget', { method: 'POST', body: { confirm: true } }));
   if (!out) return;
-  const parts = [out.forgotten && plural(out.forgotten, 'memory', 'memories'), out.notes_deleted && plural(out.notes_deleted, 'note')].filter(Boolean);
-  $('memory-saved').textContent = parts.length ? `Jig forgot ${parts.join(' and ')}.` : 'There was nothing to forget.';
+  const parts = [out.memories && plural(out.memories, 'memory', 'memories'), out.notes && plural(out.notes, 'note'),
+    out.conversations && plural(out.conversations, 'conversation'), out.goals && plural(out.goals, 'goal'),
+    out.tasks && plural(out.tasks, 'task')].filter(Boolean);
+  const kept = out.kept_replying + out.kept_unfinished;
+  $('memory-saved').textContent = [
+    parts.length ? `Jig deleted ${parts.slice(0, -1).join(', ')}${parts.length > 1 ? ' and ' : ''}${parts[parts.length - 1]}.` : 'There was nothing to forget.',
+    kept ? `${plural(kept, 'conversation or job', 'conversations or jobs')} still going stayed.` : '',
+  ].filter(Boolean).join(' ');
   memoryQuery = '';
   $('memory-q').value = '';
-  await Promise.all([loadMemory(), loadNotes()]);
+  await Promise.all([loadMemory(), loadNotes(), loadConversations(), loadActivity()]);
 });
 
 /* ---------- notes: what Jig writes down for itself ---------- */
@@ -1646,7 +1676,7 @@ $('notes-wipe').addEventListener('click', async () => {
       'Every note Jig has written is deleted from this computer. What it remembers about you stays.',
       'This can\u2019t be undone.',
       'The History records that you did this and how many were deleted, never what they said.',
-      'Past conversations and job results aren\u2019t changed, so whatever Jig read or said in them stays there.',
+      'Conversations and job results stay, including anything Jig read or said in them. Delete those in Conversations and jobs.',
     ])],
     ok: 'Delete all notes', danger: true,
   });
@@ -1655,6 +1685,129 @@ $('notes-wipe').addEventListener('click', async () => {
   if (!out) return;
   $('memory-saved').textContent = out.deleted ? `Deleted ${plural(out.deleted, 'note')}.` : 'There were no notes to delete.';
   await loadNotes();
+});
+
+/* ---------- conversations and job results: read and delete them ---------- */
+
+function conversationItem(c) {
+  const read = el('details', { class: 'body', 'data-testid': 'conversation-read' }, el('summary', { text: 'Read it' }));
+  read.addEventListener('toggle', async () => {
+    if (!read.open || read.dataset.loaded) return;
+    read.dataset.loaded = '1';
+    try {
+      const { transcript } = await api(`/sessions/${encodeURIComponent(c.id)}/transcript`);
+      read.append(...transcript.map((m) => el('div', { class: `said ${m.role}`, 'data-testid': 'conversation-said' },
+        el('p', { class: 'said-who', text: m.role === 'user' ? 'You' : 'Jig' }),
+        m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)))));
+    } catch (err) {
+      read.append(el('p', { class: 'error-text', text: err.message }));
+    }
+  });
+  const title = c.title || 'A conversation with no messages';
+  const actions = el('div', { class: 'item-actions' }, c.replying
+    ? el('span', { class: 'hint-quiet', text: 'Jig is replying, so this can be deleted once it has finished.' })
+    : el('button', { type: 'button', class: 'btn btn-small btn-danger', text: 'Delete', 'aria-label': `Delete the conversation ${q(title)}`,
+      onclick: (e) => act(e.currentTarget, async () => {
+        if (!confirm(`Delete the conversation ${q(title)}? Everything you and Jig said and did in it is deleted from this computer.`)) return;
+        await api(`/sessions/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+        $('conversations-saved').textContent = 'The conversation is deleted.';
+        await loadConversations();
+      }) }));
+  return el('div', { class: 'item conversation', 'data-testid': 'conversation', dataset: { id: c.id } },
+    el('div', { class: 'item-head' }, el('span', { class: 'title', text: title }), actions),
+    el('div', { class: 'meta', text: `${plural(c.messages, 'message')} \u00b7 started ${when(c.started_at)} \u00b7 last ${when(c.updated_at)}` }),
+    read);
+}
+
+/** Delete a finished goal (with its tasks) or task of its own, after asking. */
+function deleteJobButton(kind, job) {
+  return el('button', { type: 'button', class: 'btn btn-small btn-danger', text: 'Delete', 'aria-label': `Delete the ${kind} ${job.title}`,
+    'data-testid': `${kind}-delete`,
+    onclick: (e) => act(e.currentTarget, async () => {
+      if (!confirm(kind === 'goal'
+        ? `Delete the goal ${q(job.title)}, its tasks and their results? They are deleted from this computer, with the questions Jig asked you about them.`
+        : `Delete the task ${q(job.title)} and its result? It is deleted from this computer, with the questions Jig asked you about it.`)) return;
+      await api(`/${kind}s/${job.id}`, { method: 'DELETE' });
+      $('conversations-saved').textContent = kind === 'goal' ? 'The goal and its tasks are deleted.' : 'The task is deleted.';
+      await Promise.all([loadActivity(), loadConversations()]);
+    }) });
+}
+
+function jobItem(kind, job, tasks = 0) {
+  return el('div', { class: 'item job', 'data-testid': 'job', dataset: { id: job.id, kind, status: job.status } },
+    el('div', { class: 'item-head' }, statusBadge(job.status), el('span', { class: 'title', text: job.title }),
+      el('div', { class: 'item-actions' }, deleteJobButton(kind, job))),
+    el('div', { class: 'meta', text: `${kind === 'goal' ? `Goal with ${plural(tasks, 'task')}` : 'Task'} \u00b7 created ${when(job.created_at)}` }));
+}
+
+async function loadConversations() {
+  let conversations, goals, tasks;
+  try {
+    [conversations, goals, tasks] = await Promise.all([api('/sessions?limit=500'), api('/goals'), api('/tasks?newest_first=true&limit=1000')]);
+  } catch (err) {
+    if (err.status !== 401) showError(err.message);
+    return;
+  }
+  // The conversation open in the chat was deleted (here or on another device): start a new one.
+  if (sessionId && !chatBusy && !conversations.some((c) => c.id === sessionId)) clearChat();
+  $('conversations-list-heading').textContent = `Conversations (${conversations.length})`;
+  $('conversations').replaceChildren(...conversations.map(conversationItem));
+  if (!conversations.length) $('conversations').append(empty('There are no conversations with Jig on this computer.'));
+
+  const unfinished = new Set(tasks.filter((t) => t.goal_id && !TERMINAL_TASK.has(t.status)).map((t) => t.goal_id));
+  const goalJobs = goals.filter((g) => TERMINAL_GOAL.has(g.status) && !unfinished.has(g.id))
+    .map((g) => ({ at: g.created_at, node: jobItem('goal', g, tasks.filter((t) => t.goal_id === g.id).length) }));
+  const taskJobs = tasks.filter((t) => !t.goal_id && TERMINAL_TASK.has(t.status)).map((t) => ({ at: t.created_at, node: jobItem('task', t) }));
+  const jobs = [...goalJobs, ...taskJobs].sort((a, b) => b.at.localeCompare(a.at));
+  $('jobs-heading').textContent = `Finished jobs (${jobs.length})`;
+  $('jobs').replaceChildren(...jobs.map((j) => j.node));
+  if (!jobs.length) $('jobs').append(empty('There are no finished jobs on this computer.'));
+}
+
+$('conversations-wipe').addEventListener('click', async () => {
+  $('conversations-saved').textContent = '';
+  const ok = await askConfirm({
+    title: 'Delete all conversations?',
+    body: [bullets([
+      'Every conversation with Jig is deleted from this computer, with everything you and Jig said and did in it and the questions Jig asked you there.',
+      'What Jig remembers about you, its notes and its jobs stay.',
+      'This can\u2019t be undone.',
+      'The History records that you did this and how many were deleted, never what they said.',
+    ])],
+    ok: 'Delete all conversations', danger: true,
+  });
+  if (!ok) return;
+  const out = await act($('conversations-wipe'), () => api('/sessions/wipe', { method: 'POST', body: { confirm: true } }));
+  if (!out) return;
+  $('conversations-saved').textContent = [
+    out.conversations ? `Deleted ${plural(out.conversations, 'conversation')}.` : 'There were no conversations to delete.',
+    out.kept_replying ? `${plural(out.kept_replying, 'conversation')} Jig is replying in stayed; delete it once the reply has finished.` : '',
+  ].filter(Boolean).join(' ');
+  await loadConversations();
+});
+
+$('jobs-wipe').addEventListener('click', async () => {
+  $('conversations-saved').textContent = '';
+  const ok = await askConfirm({
+    title: 'Delete all finished jobs?',
+    body: [bullets([
+      'Every finished goal and task is deleted from this computer, with its results and the questions Jig asked you about it.',
+      'Jobs that are still going stay. Stop them first if you want them gone too.',
+      'Files Jig made in its folder stay.',
+      'This can\u2019t be undone.',
+      'The History records that you did this and how many were deleted, never what they said.',
+    ])],
+    ok: 'Delete all finished jobs', danger: true,
+  });
+  if (!ok) return;
+  const out = await act($('jobs-wipe'), () => api('/jobs/wipe', { method: 'POST', body: { confirm: true } }));
+  if (!out) return;
+  const parts = [out.goals && plural(out.goals, 'goal'), out.tasks && plural(out.tasks, 'task')].filter(Boolean);
+  $('conversations-saved').textContent = [
+    parts.length ? `Deleted ${parts.join(' and ')}.` : 'There were no finished jobs to delete.',
+    out.kept_unfinished ? `${plural(out.kept_unfinished, 'job')} stayed: still going, or needed by a job that is.` : '',
+  ].filter(Boolean).join(' ');
+  await Promise.all([loadActivity(), loadConversations()]);
 });
 
 /* ---------- schedules: jobs Jig does by itself at set times ---------- */
@@ -1917,12 +2070,16 @@ async function loadAudit(reset) {
   if (kind) params.set('kind', kind);
   if (task) params.set('task_id', task);
   if (!reset && auditOldest !== null) params.set('before_id', String(auditOldest));
-  let rows;
+  let rows, older;
   try {
-    rows = await api(`/audit?${params}`);
+    [rows, older] = await Promise.all([api(`/audit?${params}`), reset ? api('/audit/older-with-content') : null]);
   } catch (err) {
     if (err.status !== 401) showError(err.message);
     return;
+  }
+  if (older) {
+    $('audit-older').textContent = olderHistoryWords(older);
+    $('audit-older').hidden = !older.count;
   }
   const list = $('audit');
   if (reset) {

@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..audit import AuditLog
+from ..audit import AuditLog, result_shape, sizes
 from ..constants import ApprovalStatus, Decision, Effect, EventType, Mode, TaskVariant, Verdict
 from ..errors import (ApprovalDenied, JigError, ModeViolation, PolicyBlocked, SentinelError, ToolArgumentError,
                       ToolError, ToolNotFound)
@@ -41,24 +41,9 @@ from .urls import complete_url_args
 TOOL_TIMEOUT_S = 180.0
 
 
-def _private_args(args: dict[str, Any]) -> dict[str, Any]:
-    """A private tool's arguments for the audit log: numbers and flags as they are, text only as its size."""
-    return {k: v if v is None or isinstance(v, (bool, int, float))
-            else f"[private, {len(v) if isinstance(v, (str, list, dict)) else 1} "
-                 f"{'characters' if isinstance(v, str) else 'items'}]"
-            for k, v in args.items()}
-
-
-def _private_preview(result: Any) -> str:
-    """A private tool's result for the audit log: the ids it touched, never the text."""
-    if isinstance(result, dict):
-        if "id" in result:
-            return f"[private: id {result['id']}]"
-        for value in result.values():
-            if isinstance(value, list):
-                ids = [x["id"] for x in value if isinstance(x, dict) and "id" in x]
-                return f"[private: {len(value)} found, ids {ids}]"
-    return "[private]"
+def _findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rule findings for the audit log: which rule and what it decided. The reason can quote the arguments."""
+    return [{"rule": f["rule"], "decision": f["decision"]} for f in findings]
 
 
 @dataclass
@@ -115,17 +100,15 @@ class ToolExecutor:
         try:
             result = await self._execute(call, ctx, policy)
             outcome = ToolOutcome(call.id, call.name, True, result=result, policy=policy)
-            preview = (_private_preview(result) if self.registry.get(call.name).private
-                       else outcome.message_content()[:500])
             self.audit.record("tool.result", f"{call.name} succeeded", task_id=ctx.task_id, run_id=ctx.run_id,
-                              tool=call.name, call_id=call.id, result_preview=preview)
+                              tool=call.name, call_id=call.id, result=result_shape(result))
         except asyncio.CancelledError:
             raise
         except (JigError, OSError) as exc:
             outcome = ToolOutcome(call.id, call.name, False, error=str(exc), error_type=type(exc).__name__,
                                   policy=policy)
             self.audit.record("tool.error", f"{call.name} failed: {type(exc).__name__}", task_id=ctx.task_id,
-                              run_id=ctx.run_id, tool=call.name, call_id=call.id, error=str(exc),
+                              run_id=ctx.run_id, tool=call.name, call_id=call.id, error_chars=len(str(exc)),
                               error_type=type(exc).__name__)
         return outcome
 
@@ -141,17 +124,16 @@ class ToolExecutor:
         except ModelError as exc:
             raise ToolArgumentError(str(exc)) from exc
         self.audit.record("tool.call", f"{spec.name} requested", task_id=ctx.task_id, run_id=ctx.run_id,
-                          tool=spec.name, call_id=call.id, args=_private_args(args) if spec.private else args,
-                          mode=ctx.mode.value)
+                          tool=spec.name, call_id=call.id, args=sizes(args), mode=ctx.mode.value)
         url_notes: list[dict[str, Any]] = []
         if spec.outbound:
             args, completed = complete_url_args(args)
             if completed:
                 policy["url_normalised"] = completed
                 self.audit.record("policy.url_normalised",
-                                  f"{spec.name}: " + "; ".join(f"{c['original']} -> {c['normalised']}" for c in completed),
+                                  f"{spec.name}: completed {len(completed)} web address(es) with https://",
                                   task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, call_id=call.id,
-                                  normalised=completed)
+                                  args=[c["arg"] for c in completed])
                 url_notes = [{"rule": "url-normalised", "decision": "info",
                               "reason": f"{c['original']!r} has no scheme, so Jig will use {c['normalised']}"}
                              for c in completed]
@@ -178,7 +160,8 @@ class ToolExecutor:
                                              self.always_redact)) from None
             policy["resolved"] = resolved
             self.audit.record("policy.resolved", f"{spec.name}: looked up what it refers to", task_id=ctx.task_id,
-                              run_id=ctx.run_id, tool=spec.name, call_id=call.id, resolved=resolved)
+                              run_id=ctx.run_id, tool=spec.name, call_id=call.id,
+                              resolved=sizes(resolved) if isinstance(resolved, dict) else result_shape(resolved))
             if checkpoint := checkpoint_finding(resolved):
                 findings.append(checkpoint)
                 self.bus.publish(EventType.TOOL_CHECKOUT, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
@@ -186,15 +169,16 @@ class ToolExecutor:
                                  merchant=resolved.get("merchant"), amount=resolved.get("amount"))
         if spec.precheck and not blocks:
             if problem := spec.precheck(self.config, args, resolved):
-                self.audit.record("policy.connector_limit", f"{spec.name} refused: {problem}", task_id=ctx.task_id,
-                                  run_id=ctx.run_id, tool=spec.name, call_id=call.id, reason=problem)
+                self.audit.record("policy.connector_limit", f"{spec.name} refused by a connector limit",
+                                  task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, call_id=call.id,
+                                  reason_chars=len(problem))
                 raise PolicyBlocked(problem)
         rule = self.rules.match(spec.name, args)
         policy["core"] = [f.as_dict() for f in findings]
         policy["rule"] = {"id": rule["id"], "decision": rule["decision"]} if rule else None
         rule_decision = Decision(rule["decision"]) if rule else spec.default_decision
         self.audit.record("policy.decision", f"{spec.name}: rule={rule_decision.value}, core={len(findings)} findings",
-                          task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, core=policy["core"],
+                          task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, core=_findings(policy["core"]),
                           rule=policy["rule"], default_decision=spec.default_decision.value)
 
         if blocks:
@@ -216,12 +200,14 @@ class ToolExecutor:
                 )
             except SentinelError as exc:
                 self.audit.record("sentinel.error", f"Sentinel failed on {spec.name}", actor="sentinel",
-                                  task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, error=str(exc))
+                                  task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name,
+                                  error_chars=len(str(exc)))
                 raise
             policy["sentinel"] = verdict.as_dict()
             self.audit.record("sentinel.verdict", f"{spec.name}: {verdict.verdict.value} ({verdict.risk})",
                               actor="sentinel", task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name,
-                              args=args, **verdict.as_dict())
+                              call_id=call.id, verdict=verdict.verdict.value, risk=verdict.risk,
+                              reason_chars=len(verdict.reason))
             self.bus.publish(EventType.SENTINEL_VERDICT, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                              **verdict.as_dict())
             if verdict.verdict == Verdict.DENY:

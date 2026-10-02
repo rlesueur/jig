@@ -465,6 +465,12 @@ input[type="checkbox"][role="switch"]:checked::after { transform: translateX(20p
 .note details.body > summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note details.body > summary .note-less, .note details.body[open] > summary .note-preview { display: none; }
 .note details.body[open] > summary .note-less { display: inline; color: var(--link); font-weight: 700; }
+.conversation details.body > summary { cursor: pointer; color: var(--link); font-weight: 700; }
+.said { margin: 8px 0; padding-left: 10px; border-left: 3px solid var(--jig-line); }
+.said.user { border-left-color: var(--user-line); }
+.said-who { margin: 0; font-weight: 700; }
+.said-text { margin: 2px 0 0; overflow-wrap: anywhere; }
+p.said-text { white-space: pre-wrap; }
 .conn-steps { margin: 6px 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; }
 .conn-links { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; margin-left: 6px; }
 .conn-links a { color: var(--link); font-weight: 700; }

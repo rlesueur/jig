@@ -25,7 +25,7 @@ class Planner:
 
     async def plan(self, goal_id: str) -> dict[str, Any]:
         goal = self.store.get_goal(goal_id)
-        run_id = self.store.create_run(kind="plan", mode=Mode.RESEARCH)
+        run_id = self.store.create_run(kind="plan", mode=Mode.RESEARCH, goal_id=goal_id)
         ids = {"run_id": run_id, "task_id": None, "goal_id": goal_id}
         self.bus.publish(EventType.RUN_START, kind="plan", mode=Mode.ACTION.value, **ids)
         tools = ", ".join(f"{t.name} ({t.effect.value})" for t in self.registry.available())
@@ -42,7 +42,8 @@ class Planner:
             self.store.finish_step(step_id, status="error", error=error)
             self.store.finish_run(run_id, status=RunStatus.FAILED, error=error)
             self.store.update_goal(goal_id, status=GoalStatus.FAILED, error=f"planning failed: {error}")
-            self.audit.record("goal.plan_failed", "planning failed", **ids, error=error)
+            self.audit.record("goal.plan_failed", "planning failed", **ids, error_type=type(exc).__name__,
+                              error_chars=len(error))
             self.bus.publish(EventType.GOAL_STATUS, goal_id=goal_id, status=GoalStatus.FAILED.value, error=error)
             self.bus.publish(EventType.RUN_END, status="failed", error=error, **ids)
             raise
@@ -58,7 +59,7 @@ class Planner:
         plan["task_ids"] = task_ids
         self.store.update_goal(goal_id, status=GoalStatus.ACTIVE, plan=plan)
         self.store.finish_run(run_id, status=RunStatus.DONE, final=json.dumps(plan))
-        self.audit.record("goal.planned", f"goal planned into {len(task_ids)} tasks", **ids, plan=plan)
+        self.audit.record("goal.planned", f"goal planned into {len(task_ids)} tasks", **ids, task_ids=task_ids)
         self.bus.publish(EventType.GOAL_STATUS, goal_id=goal_id, status=GoalStatus.ACTIVE.value, plan=plan)
         self.bus.publish(EventType.RUN_END, status="done", **ids)
         return plan

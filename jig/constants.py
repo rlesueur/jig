@@ -117,6 +117,9 @@ class GoalStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+TERMINAL_GOAL_STATUSES = frozenset({GoalStatus.DONE, GoalStatus.FAILED, GoalStatus.CANCELLED})
+
+
 class ApprovalStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -149,6 +152,7 @@ class EventType(StrEnum):
     MEMORY_CHANGED = "memory.changed"
     SCHEDULE_CHANGED = "schedule.changed"
     NOTE_CHANGED = "note.changed"
+    HISTORY_CHANGED = "history.changed"  # conversations or job results were deleted
     RULE_CHANGED = "rule.changed"
     AGENT_STATUS = "agent.status"
     POWER_STOPPING = "power.stopping"

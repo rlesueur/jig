@@ -84,6 +84,7 @@
             <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
             <li><a href="#settings/connections" data-section="connections" data-testid="settings-nav-connections">Connections</a></li>
             <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">Memory and notes</a></li>
+            <li><a href="#settings/conversations" data-section="conversations" data-testid="settings-nav-conversations">Conversations and jobs</a></li>
             <li><a href="#settings/schedules" data-section="schedules" data-testid="settings-nav-schedules">Schedules</a></li>
             <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
             <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
@@ -203,10 +204,33 @@
             </details>
             <details class="advanced" data-testid="memory-wipe-details">
               <summary>Forget everything</summary>
-              <p class="hint">Deletes every memory, with its search index, and every note from this computer. Jig starts again knowing nothing about you. This can't be undone.</p>
+              <p class="hint">Deletes everything Jig keeps about you from this computer: every memory and note, every conversation, and every finished job with its results. Jig starts again knowing nothing about you. This can't be undone.</p>
               <button type="button" class="btn btn-danger" id="memory-wipe" data-testid="memory-wipe">Forget everything…</button>
             </details>
             <p class="saved" id="memory-saved" aria-live="polite" data-testid="memory-saved"></p>
+          </section>
+
+          <!-- Conversations and jobs -->
+          <section class="set-section" id="set-conversations" data-section="conversations" aria-labelledby="conversations-heading" data-testid="settings-conversations" hidden>
+            <h3 id="conversations-heading">Conversations and jobs</h3>
+            <p class="hint" data-testid="conversations-privacy">Your conversations with Jig, and the jobs it has done with their results, are stored only in its database on this computer. Delete any of them, or all of them, at any time. Deleting really removes the words from Jig's database.</p>
+            <h4 id="conversations-list-heading">Conversations</h4>
+            <div id="conversations" class="list" aria-labelledby="conversations-list-heading" data-testid="conversations"></div>
+            <details class="advanced" data-testid="conversations-wipe-details">
+              <summary>Delete all conversations</summary>
+              <p class="hint">Deletes every conversation with Jig from this computer, with everything you and Jig said and did in it. What Jig remembers about you, its notes and its jobs stay. This can't be undone.</p>
+              <button type="button" class="btn btn-danger" id="conversations-wipe" data-testid="conversations-wipe">Delete all conversations…</button>
+            </details>
+            <h4 id="jobs-heading">Finished jobs</h4>
+            <p class="hint-quiet">Goals and tasks Jig has finished, stopped or couldn't do. A job that is still going can't be deleted: stop it first in What Jig's up to.</p>
+            <div id="jobs" class="list" aria-labelledby="jobs-heading" data-testid="jobs"></div>
+            <details class="advanced" data-testid="jobs-wipe-details">
+              <summary>Delete all finished jobs</summary>
+              <p class="hint">Deletes every finished goal and task from this computer, with its results and the questions Jig asked you about it. Jobs that are still going stay. Files Jig made in its folder stay too. This can't be undone.</p>
+              <button type="button" class="btn btn-danger" id="jobs-wipe" data-testid="jobs-wipe">Delete all finished jobs…</button>
+            </details>
+            <p class="hint-quiet" data-testid="conversations-forget-link">To delete everything Jig keeps about you in one go, memories and notes included, use <a href="#settings/memory">Forget everything</a> in Memory and notes.</p>
+            <p class="saved" id="conversations-saved" aria-live="polite" data-testid="conversations-saved"></p>
           </section>
 
           <!-- Schedules -->
@@ -266,7 +290,8 @@
           <!-- History -->
           <section class="set-section" id="set-history" data-section="history" aria-labelledby="history-heading" data-testid="settings-history" hidden>
             <h3 id="history-heading">History</h3>
-            <p class="hint">A permanent record of everything Jig did. Entries can't be changed or deleted.</p>
+            <p class="hint">A permanent record of everything Jig did. Entries can't be changed or deleted, so they never hold what was said: they record what happened, when and what was decided, with ids and sizes instead of messages, tool details or results.</p>
+            <p class="hint-quiet" id="audit-older" data-testid="audit-older" hidden></p>
             <h4 id="answered-heading">Questions you've answered</h4>
             <div id="approvals-done" class="list" aria-labelledby="answered-heading" data-testid="approvals-done"></div>
             <form class="form" id="audit-form">
@@ -423,6 +448,7 @@
 
     <details class="advanced" id="activity-more" data-testid="activity-more">
       <summary>Everything, in detail</summary>
+      <p class="hint-quiet" data-testid="activity-delete-hint">Delete a finished job here, or all of them in <a href="#settings/conversations" id="activity-to-conversations" data-testid="activity-to-conversations">Settings, Conversations and jobs</a>. A job that is still going has to be stopped first.</p>
       <div class="section-head"><h3>Goals</h3><button type="button" class="btn btn-small" data-refresh="activity" data-testid="activity-refresh">Refresh</button></div>
       <div id="goals" class="list" data-testid="goals"></div>
       <h3>Other tasks</h3>

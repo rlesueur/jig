@@ -97,7 +97,7 @@ class Scheduler:
                 # Keep the heartbeat alive but make the failure visible in the log and the audit trail.
                 log.exception("scheduler tick failed")
                 self.jig.audit.record("scheduler.error", f"heartbeat tick failed: {type(exc).__name__}",
-                                      actor="scheduler", error=str(exc))
+                                      actor="scheduler", error_chars=len(str(exc)))
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.heartbeat_s)
@@ -209,5 +209,5 @@ class Scheduler:
                                               for t in tasks if t["status"] != TaskStatus.DONE)
             store.update_goal(goal["id"], status=status, result=result, error=error)
             self.jig.audit.record("goal.status", f"goal {status}", actor="scheduler", goal_id=goal["id"],
-                                  status=status.value, error=error)
+                                  status=status.value, error_chars=len(error) if error else None)
             self.jig.bus.publish(EventType.GOAL_STATUS, goal_id=goal["id"], status=status.value, error=error)

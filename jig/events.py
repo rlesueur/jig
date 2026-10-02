@@ -83,6 +83,16 @@ class EventBus:
     def remove_listener(self, fn: Callable[[Event], None]) -> None:
         self._listeners.remove(fn)
 
+    def forget(self, ids: set[str]) -> int:
+        """Drop the recent events about deleted conversations or jobs (they can carry chat text and tool
+        arguments), so a page that loads later can't replay them. Returns how many were dropped."""
+        keys = ("run_id", "task_id", "goal_id", "session_id", "approval_id")
+        keep = [e for e in self.recent if not any(e.data.get(k) in ids for k in keys)]
+        dropped = len(self.recent) - len(keep)
+        self.recent.clear()
+        self.recent.extend(keep)
+        return dropped
+
     def publish(self, type_: str, **data: Any) -> Event:
         event = Event(seq=next(self._seq), type=str(type_), ts=now_iso(), data=data)
         self.recent.append(event)
