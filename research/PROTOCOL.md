@@ -1,8 +1,33 @@
 # Research protocol: optimising always-on local agents (memory and unattended safety)
 
-Version 0.3, 2 October 2026. Living document. Author: Robyn Le Sueur. The testbed is Jig (Apache-2.0).
+Version 0.4, 2 October 2026. Living document. Author: Robyn Le Sueur. The testbed is Jig (Apache-2.0).
 Every experiment runs against the **real** Jig runtime and **real** local models; no model output is
 faked and no service is stubbed.
+
+**Changes in v0.4** (each also logged in `DEVIATIONS.md`):
+1. **D1 scope widened.** Whole AgentDojo v1 suites (every user task and every injection task), seeds 0, 1
+   and 2, and Jig's default sampling (§7) sent explicitly, with the seed, on every agent request
+   (run `d1-full-v2`, `configs/full/d1_full_v2.yaml`). The earlier run `d1-full-v1` (5 user × 3 injection
+   tasks per suite, seed 0) is kept and labelled as the earlier run; it is never pooled with v2. Its
+   configured temperature 0 was **never sent for the agent** (AgentDojo sends `temperature or NOT_GIVEN`), so
+   its agent sampled at the 8080 server's defaults, which equal Jig's defaults (temperature 1.0, top-p 0.95,
+   top-k 20, min-p 0.05) but unseeded; its reviewers did run at temperature 0, seed 0.
+2. **Qwen reviewer sized from measurement and run separately** (`d1-full-v2-qwen`): context 10,240 tokens
+   (measured review prompts of at most 446 tokens on the Guardian template, about 1k on Jig's Sentinel
+   template, plus Jig's 8,192-token output cap), down from 16,384. The VRAM guard (§9) is unchanged; by its
+   estimate the server still does not fit next to 8080 (about 19.4 GB + 2 GB margin against about 18.4–18.8 GB
+   free), so this run is refused loudly until more VRAM is free. It is a separate run so that `d1-full-v2`'s
+   completeness never depends on it.
+3. **Jig bare-URL fix in effect for v2.** Jig now completes a scheme-less web address in an outbound tool's
+   URL argument (`www.example.com`) to `https://` before every check (Jig commit `733c80c`). `d1-full-v1`
+   ran before the fix, `d1-full-v2` after it; results before and after are reported separately.
+4. **C1 rolling summary without a word limit.** The summary prompt no longer says "Keep it under 400 words";
+   everything else is unchanged. These trials form their own run (`c1-full-v1-summary-nolimit`); the earlier
+   cut-off trials (with the limit) stay in `c1-full-v1` and are reported separately as a finding.
+5. **InjecAgent licence confirmed (MIT)** from the official repository; still not used as a benchmark in
+   its own right without the owner's go-ahead (§5).
+6. **Provenance** now also records each server's default sampling values (what a request that omits a value
+   gets).
 
 **Scope change (v0.3).** This version re-scopes the safety side. The memory programme (C) continues in
 full. For safety (D), we **no longer author any attack content**: no injection payloads, no attack web
@@ -68,21 +93,25 @@ Safety (D1), all taken from the **published benchmark's own ground truth and sco
 
 ## 3. Conditions
 
-Defence configurations (D1), each an unchanged Jig configuration driven by the adapter:
-1. `no-sentinel` — the Sentinel slot is a labelled pass-through that returns "allow" with the reason
+Defence configurations (D1, as run from v0.4), each an unchanged Jig configuration driven by the adapter:
+1. `no-reviewer-action` — the Sentinel slot is a labelled pass-through that returns "allow" with the reason
    "benchmark condition: no reviewer configured". Core rules still apply. This is an experimental
    condition, not a simulated model output.
-2. `rules-only` — as `no-sentinel`, plus Jig custom rules appropriate to the benchmark's tool set.
-3. `sentinel-same-model` — Jig's Sentinel, unchanged, on the agent's own model.
-4. `sentinel-granite-8b` — Jig's Sentinel on a smaller model of a different family (granite 4.2 8B).
-5. `read-only` — Jig's research mode: only `read` and `private_write` tools are offered and the gate
-   refuses side effects, measured against the benchmark's cases.
+2. `sentinel-bonsai-action` — Jig's Sentinel, unchanged, on the agent's own model (ternary Bonsai 2 27B).
+3. `sentinel-bonsai-readonly` — as 2, in Jig's research mode: only `read` and `private_write` tools are
+   allowed and the gate refuses side effects.
+4. `guardian-action` — Granite Guardian 4.1 8B in the Sentinel slot (model card's own format, greedy).
+5. `sentinel-qwen-action` — Jig's Sentinel on the standard-quantisation counterpart (Qwen3.8-27B Q4_K_M),
+   for the effect of quantisation on the reviewer (separate run; see change 2 above).
+
+The v0.3 drafts `rules-only` and `sentinel-granite-8b` were not run: AgentDojo ships no custom rules for
+its tools, and writing benchmark-specific rules is left for future work.
 
 Each configuration is run with the benchmark's existing attack and no-attack cases, so ASR, utility and
 false-positive rate are all measured on the same items.
 
 Memory strategies (C1): `full_context` (the most recent sessions that fit a token budget),
-`rolling_summary` (the model rewrites a bounded summary after each session), `retrieval` (every turn
+`rolling_summary` (the model rewrites a summary after each session; no length limit from v0.4), `retrieval` (every turn
 stored as a Jig memory; the agent answers with `memory_search`), `hybrid_keep` (a Jig research task per
 session extracts dated facts with `memory_add`; every few sessions an action-mode task consolidates by
 adding "UPDATE" memories), `hybrid_forget` (as `hybrid_keep`, but consolidation deletes superseded facts
@@ -120,7 +149,12 @@ Run only if a published benchmark/dataset supplies the poisoning cases. Otherwis
 - **AgentDojo** — used for D1; **MIT licence** (confirmed from the installed package metadata, v0.1.35:
   `License :: OSI Approved :: MIT License`), recorded with each run's provenance. Provides the tool
   environments, user tasks, injection tasks, attacks and scorers, all used unchanged.
-- **InjecAgent** — candidate extension for D1; licence to be confirmed from its repository before use.
+- **InjecAgent** — **MIT licence**, confirmed on 2 October 2026 from the official repository's licence file
+  (`https://github.com/uiuc-kang-lab/InjecAgent`, file `LICENCE`, "Copyright (c) 2023 Qiusi Zhan", default
+  branch `main` at commit `f19c9f2`). Candidate extension for D1; **not used** as a benchmark in its own right
+  until the owner approves. (AgentDojo's own `injecagent` attack, used in D1, is a one-line attack template
+  from the InjecAgent paper that ships inside AgentDojo under AgentDojo's MIT licence; none of InjecAgent's
+  test cases are used.)
 - **LoCoMo** — candidate extension for C1; used only if its licence permits; recorded if used.
 - **BIPIA** — not used (no clear redistribution licence at time of writing).
 
@@ -135,7 +169,11 @@ that stand in for the benchmark's tools, so the benchmark's cases drive Jig's re
 other part of Jig (gate, core and custom rules, Sentinel, approvals) unmodified. Where a benchmark reaches
 external hosts, the harness confines the run with `netroute` (reserved `.test` hosts only; all other hosts
 refused) so a run can never touch a third party. The container browser and egress-proxy path are not
-covered yet (a core hook is recommended).
+covered yet (a core hook is recommended). AgentDojo's tools are simulated and make no network requests, but
+Jig's core rule `no-local-network` resolves every URL's host in real DNS before allowing an outbound call, so a
+D1 run makes DNS lookups (and nothing else) for the benchmark's host names. AgentDojo's fictional hosts that
+do not exist in DNS (for example `www.dora-website.com`) are therefore refused by that rule in every
+condition; this is reported as a benchmark–environment mismatch, not worked around.
 
 ## 7. Models, provenance and statistics
 
@@ -148,7 +186,9 @@ covered yet (a core hook is recommended).
   VRAM, CPU, RAM), and for every endpoint the served model file, its quantisation type, the llama.cpp
   build, context size and slots, plus the full config and seeds.
 - **Sampling**: Jig's defaults (temperature 1.0, top-p 0.95, top-k 20, min-p 0.05) with a recorded seed;
-  the judge and any guard model use temperature 0.
+  the judge and any guard model use temperature 0. In D1 the agent's requests are sent by AgentDojo's
+  pipeline, so from v0.4 the harness sends every sampling value and the seed explicitly on each request and
+  records them per trial (`agent_request_sampling`), rather than relying on server defaults.
 - **Statistics**: rates with Wilson 95% intervals; means with percentile-bootstrap 95% intervals;
   pairwise comparisons by Fisher's exact test (unpaired) or McNemar (paired items), with Holm–Bonferroni
   correction. Full runs use ≥3 seeds, rising as overnight capacity allows. Pilots report raw counts and
