@@ -1,0 +1,131 @@
+/*
+ * Theme: jig-dark. The web UI's dark theme (plum, amber and peach; jig/web/style.css tokens) and its
+ * font, Nunito. Same variables and classes as the other themes.
+ */
+@font-face { font-family: 'Jig Sans'; src: url('/fonts/Nunito-Variable.ttf') format('truetype'); font-weight: 200 1000; }
+@font-face { font-family: 'Jig Label'; src: url('/fonts/Nunito-Variable.ttf') format('truetype'); font-weight: 200 1000; }
+@font-face { font-family: 'Jig Mono'; src: url('/fonts/CascadiaMono.ttf') format('truetype'); font-weight: 200 700; }
+
+:root {
+  --avatar-theme: dark;
+  --font-sans: 'Jig Sans';
+  --font-label: 'Jig Label';
+  --font-mono: 'Jig Mono';
+
+  --amber: #ffb661;
+  --peach: #ff9f80;
+  --mint: #9fe6b8;
+  --ink: #fdf0e6;
+  --muted: #dcc5cc;
+
+  --bg: #1b1220;
+  --bg-art:
+    radial-gradient(900px 600px at 12% -12%, #3b1f35 0%, transparent 62%),
+    radial-gradient(800px 520px at 100% 0%, #2d1834 0%, transparent 58%),
+    #1b1220;
+
+  --screen-radius: 22px;
+  --screen-bg: #2b1c2e;
+  --screen-border: 1.5px solid #4b3450;
+  --screen-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+
+  --term-bg: #20152a;
+  --term-bar-bg: linear-gradient(180deg, #3e2942, #352339);
+  --term-bar-border: 1px solid #4b3450;
+  --dot-1: var(--peach);
+  --dot-2: var(--amber);
+  --dot-3: var(--mint);
+  --term-fg: #fdf0e6;
+  --term-cursor: var(--amber);
+  --term-ansi: #20152a #ff9f80 #9fe6b8 #ffc670 #a9c6ff #e6b3e0 #8fe0d6 #f1e4d2 #8d6889 #ffb198 #b6efca #ffd38e #c3d6ff #f0c8ea #a6ecdf #fffaf2;
+
+  --ring-radius: 16px;
+  --ring-border: 3px solid var(--amber);
+  --ring-shadow: 0 6px 26px rgba(255, 182, 97, 0.35);
+
+  --hl-ink: var(--amber);
+  --hl-bg: none;
+  --hl-clip: border-box;
+}
+
+.kicker {
+  font-family: var(--font-label);
+  font-weight: 800;
+  font-size: var(--fs-kicker);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--amber);
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+}
+.kicker:empty { display: none; }
+.kicker::before, .kicker::after { content: ''; width: 2em; height: 3px; border-radius: 3px; background: var(--peach); }
+
+.card-title, #header-title { font-weight: 900; letter-spacing: -0.02em; color: var(--ink); }
+.card-title .hl, #header-title .hl {
+  background: linear-gradient(90deg, #ffb661, #ff9f80 60%, #ffc48a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.card-sub { font-weight: 600; color: var(--muted); }
+.card-lines li { font-weight: 700; color: var(--ink); }
+.card-lines li::before { content: '•'; color: var(--amber); margin-right: 0.55em; }
+
+.chapter {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2a1206;
+  padding: 0.5em 1em 0.52em;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffb661, #ff9f80);
+}
+.chapter:empty { display: none; }
+.caption { font-weight: 700; letter-spacing: -0.005em; color: var(--ink); }
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  font-weight: 500;
+  color: #ffd3a6;
+  background: #352339;
+  border: 1px solid #5a3f5c;
+  border-radius: 8px;
+  padding: 0.02em 0.32em 0.06em;
+}
+
+.badge {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2a1206;
+  background: var(--amber);
+  padding: 0.38em 0.85em 0.42em;
+  border-radius: 10px;
+}
+#skip { background: var(--mint); color: #10301d; }
+
+.callout {
+  font-weight: 700;
+  color: var(--ink);
+  background: #2b1c2e;
+  border: 2px solid var(--amber);
+  border-radius: 18px;
+  padding: 0.9em 1.2em;
+  box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5);
+}
+.callout b { display: block; font-family: var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.72em; color: var(--amber); margin-bottom: 0.3em; }
+
+.watermark {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #2a1206;
+  background: var(--peach);
+  padding: 0.3em 0.8em;
+  border-radius: 8px;
+}

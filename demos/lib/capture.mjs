@@ -34,6 +34,13 @@ function snapshotCommit() {
   return sha;
 }
 
+/** The model the real model server is serving (recorded in FINDINGS; never shown in a video). */
+async function modelServed() {
+  const r = await fetch('http://127.0.0.1:8080/v1/models');
+  if (!r.ok) throw new Error(`The model server on 127.0.0.1:8080 answered /v1/models with HTTP ${r.status}`);
+  return (await r.json()).data.map((m) => m.id).join(', ');
+}
+
 export async function loadScenario(name) {
   const mod = await import(pathToFileURL(path.join(DEMOS, 'scenarios', `${name}.mjs`)).href);
   if (!mod.default?.capture || !mod.default?.edit) throw new Error(`scenarios/${name}.mjs must export default { capture, edit }`);
@@ -72,14 +79,14 @@ async function main() {
       console.log(`  note  ${text}`);
     },
     async term(id, opts = {}) {
-      const t = new TermSession({ id, captureDir: dir, env: jig.env(opts.env || {}), ...opts });
+      const t = new TermSession({ id, captureDir: dir, ...opts, env: jig.env(opts.env || {}) });
       terms.push(t);
       await t.start();
       return t;
     },
     async screen() {
       if (!screen) {
-        screen = new Screen({ captureDir: dir });
+        screen = new Screen({ captureDir: dir, scheme: scenario.scheme || 'light' });
         await screen.launch();
       }
       return screen;
@@ -87,7 +94,7 @@ async function main() {
   };
 
   const manifest = { scenario: name, title: scenario.title, commit: snapshotCommit(), repoHead: gitHead(), startedAt: now(), test: ctx.test,
-    host: { os: process.platform } };
+    host: { os: process.platform }, model: await modelServed() };
   let status = 'passed';
   let error = null;
   try {

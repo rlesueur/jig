@@ -1,6 +1,6 @@
 /* Our own Jig instance: environment, start-up, the authenticated API and the live event stream. */
 import { spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,9 +33,11 @@ export class JigInstance {
   /** Environment for every Jig command in this demo, real CLI and server alike. */
   env(extra = {}) {
     const scripts = path.dirname(venvBin('jig.exe'));
+    /* Windows names it Path; a second PATH key would leave the child with only one of the two */
+    const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'path'));
     return {
-      ...process.env,
-      PATH: `${scripts};${process.env.PATH}`,
+      ...base,
+      Path: `${scripts};${process.env.PATH}`,
       JIG_CONFIG: this.configPath,
       JIG_DATA_DIR: this.dataDir,
       JIG_SANDBOX_DIR: this.sandboxDir,
@@ -55,6 +57,15 @@ export class JigInstance {
     await requirePortFree(PORTS.jig);
     mkdirSync(this.dataDir, { recursive: true });
     mkdirSync(this.sandboxDir, { recursive: true });
+  }
+
+  /** Put the files of demos/fixtures/<name> into Jig's workspace, as a user would before asking. */
+  seed(name) {
+    const from = path.join(DEMOS, 'fixtures', name);
+    if (!existsSync(from)) throw new Error(`No fixture folder ${from}`);
+    mkdirSync(this.workspace, { recursive: true });
+    cpSync(from, this.workspace, { recursive: true });
+    return readdirSync(from);
   }
 
   /**

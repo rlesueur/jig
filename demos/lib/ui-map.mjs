@@ -1,83 +1,113 @@
 /*
- * Every element the demos touch, located only by accessible role and name, label text or data-testid.
+ * Every element the demos touch, located only by accessible role and name, label text or data-testid
+ * (plus the data attributes the UI puts on an item to say what it is, such as an approval's tool and status).
  * No CSS classes, ids used for styling, or layout positions, so a restyle of the UI does not break the
- * recordings. If the redesign renames something, change it here (and nowhere else).
+ * recordings. If the UI renames something, change it here (and nowhere else).
  *
- * Each entry is a function of the Playwright page (or a scope) returning one locator. There are no
- * alternatives or fallbacks: if an element cannot be found, the run fails and says which one.
+ * This map follows the chat-first UI (one conversation view, approval cards inside the conversation,
+ * "What Jig's up to" and Settings). Each entry is a function of the Playwright page (or a scope) returning
+ * one locator. There are no alternatives or fallbacks: if an element cannot be found, the run fails and
+ * says which one.
  */
 
 const exact = { exact: true };
+const tid = (p, id) => p.getByTestId(id);
 
 export const ui = {
   /* sign-in */
   loginDialog: (p) => p.getByRole('dialog', { name: 'Sign in to Jig' }),
   tokenField: (p) => ui.loginDialog(p).getByLabel('API token', exact),
   signIn: (p) => ui.loginDialog(p).getByRole('button', { name: 'Sign in', exact: true }),
-  connection: (p) => p.getByRole('status').filter({ hasText: /Live|Connecting|Signed out|Not connected|Disconnected|Unreachable/ }),
+  connection: (p) => tid(p, 'connection'),
+  healthBanner: (p) => tid(p, 'health-banner'),
 
-  /* side panel */
+  /* the main screen: avatar, conversation, what Jig's up to */
+  chatView: (p) => tid(p, 'chat-view'),
   avatarRegion: (p) => p.getByRole('region', { name: 'Live avatar' }),
   avatar: (p) => ui.avatarRegion(p).locator('jig-avatar'),
-  statusRegion: (p) => p.getByRole('region', { name: 'Status' }),
-  statusRefresh: (p) => ui.statusRegion(p).getByRole('button', { name: 'Refresh', exact: true }),
+  avatarSays: (p) => tid(p, 'avatar-says'),
+  chatLog: (p) => tid(p, 'chat-log'),
+  chatInput: (p) => tid(p, 'chat-input'),
+  chatSend: (p) => tid(p, 'chat-send'),
+  chatNew: (p) => tid(p, 'chat-new'),
+  jigReplies: (p) => ui.chatLog(p).getByRole('article', { name: 'Jig replied' }),
+  userMessages: (p) => ui.chatLog(p).getByRole('article', { name: 'You said' }),
+  working: (scope) => scope.getByTestId('chat-working'),
+  problem: (scope) => scope.getByTestId('chat-problem'),
+  readOnlyNote: (p) => tid(p, 'read-only-note'),
+
+  /* approval cards, inline in the conversation */
+  approvalCard: (p, tool, status = 'pending') => ui.chatLog(p).locator(`[data-testid="approval"][data-tool="${tool}"][data-status="${status}"]`),
+  approve: (scope, tool) => scope.getByRole('button', { name: `Yes, approve ${tool}`, exact: true }),
+  deny: (scope, tool) => scope.getByRole('button', { name: `No, deny ${tool}`, exact: true }),
+  approvalWill: (card) => card.getByTestId('approval-will'),
+  approvalPreview: (card) => card.getByTestId('approval-preview'),
+  approvalWhy: (card) => card.getByTestId('approval-why'),
+  approvalWhySummary: (card) => ui.approvalWhy(card).locator('summary').filter({ hasText: 'Why am I asking?' }),
+  approvalVerdict: (card) => card.getByTestId('sentinel-verdict'),
+  approvalNote: (card) => card.getByTestId('approval-note'),
+  approvalOutcome: (card) => card.getByTestId('approval-outcome'),
+
+  /* what Jig's up to: the strip under the conversation and its drawer */
+  doing: (p) => tid(p, 'doing'),
+  doingText: (p) => tid(p, 'doing-text'),
+  agentToggle: (p) => tid(p, 'agent-toggle'),
+  doingOpen: (p) => tid(p, 'doing-open'),
+  approvalsBadge: (p) => tid(p, 'approvals-badge'),
+  activity: (p) => p.getByRole('dialog', { name: 'What Jig\'s up to' }),
+  activityClose: (p) => tid(p, 'activity-close'),
+  doingList: (p) => tid(p, 'doing-list'),
+  doingItem: (p, title) => ui.doingList(p).getByTestId('doing-item').filter({ hasText: title }),
+  pauseTask: (p, title) => ui.doingList(p).getByRole('button', { name: `Pause task ${title}`, exact: true }),
+  resumeTask: (p, title) => ui.doingList(p).getByRole('button', { name: `Resume task ${title}`, exact: true }),
+  goalDescription: (p) => ui.activity(p).getByLabel('What should Jig achieve?'),
+  goalTitle: (p) => ui.activity(p).getByLabel('Title (optional)'),
+  createGoal: (p) => tid(p, 'goal-create'),
+  activityMore: (p) => tid(p, 'activity-more'),
+  activityMoreSummary: (p) => ui.activityMore(p).locator('summary').filter({ hasText: 'Everything, in detail' }).first(),
+  goalItem: (p, title) => tid(p, 'goals').getByTestId('goal').filter({ hasText: title }),
+  goalResultDetails: (p, title) => ui.goalItem(p, title).locator(':scope > details.body'),
+  goalResult: (p, title) => ui.goalResultDetails(p, title).locator('summary').filter({ hasText: /^Result$/ }),
+
+  /* Settings */
+  openSettings: (p) => tid(p, 'open-settings'),
+  closeSettings: (p) => tid(p, 'close-settings'),
+  settingsNav: (p, section) => tid(p, `settings-nav-${section}`),
+  settingsSection: (p, section) => tid(p, `settings-${section}`),
+  statusRegion: (p) => ui.settingsSection(p, 'model'),
+  statusRefresh: (p) => tid(p, 'status-refresh'),
   statusTerm: (p, name) => ui.statusRegion(p).getByRole('term').filter({ hasText: name }),
   statusValue: (p, re) => ui.statusRegion(p).getByRole('definition').filter({ hasText: re }),
-  autostartButton: (p) => ui.statusRegion(p).getByRole('button', { name: /^Turn (on|off)/ }),
-  autostartValue: (p) => ui.statusRegion(p).getByRole('definition').filter({ has: p.getByRole('button', { name: /^Turn (on|off)/ }) }),
+  autostartButton: (p) => ui.settingsSection(p, 'startup').getByRole('button', { name: /^Turn (on|off)/ }),
+  autostartValue: (p) => ui.settingsSection(p, 'startup').getByRole('definition').filter({ has: p.getByRole('button', { name: /^Turn (on|off)/ }) }),
 
-  /* tabs */
-  tab: (p, name) => p.getByRole('tab', { name: new RegExp(`^${name}\\b`) }),
-  panel: (p, name) => p.getByRole('tabpanel', { name: new RegExp(`^${name}\\b`) }),
+  /* Settings: what Jig can do on its own */
+  toolChoice: (p, label) => ui.settingsSection(p, 'rules').getByRole('combobox', { name: label, exact: true }),
+  toolChoiceRow: (p, tool) => ui.settingsSection(p, 'rules').locator(`[data-testid="tool-choice-row"][data-tool="${tool}"]`),
+  toolChoiceSaved: (p) => tid(p, 'tool-choice-saved'),
 
-  /* chat */
-  chatInput: (p) => ui.panel(p, 'Chat').getByRole('textbox', { name: 'Message' }),
-  chatMode: (p) => ui.panel(p, 'Chat').getByRole('combobox', { name: 'Mode' }),
-  chatSend: (p) => ui.panel(p, 'Chat').getByRole('button', { name: 'Send', exact: true }),
-  chatNew: (p) => ui.panel(p, 'Chat').getByRole('button', { name: 'New conversation', exact: true }),
-  jigReplies: (p) => ui.panel(p, 'Chat').getByRole('article', { name: 'Jig replied' }),
-  userMessages: (p) => ui.panel(p, 'Chat').getByRole('article', { name: 'You said' }),
-  reviewButton: (scope) => scope.getByRole('button', { name: 'Review', exact: true }),
+  /* Settings: what Jig remembers about you */
+  memoryList: (p) => tid(p, 'memories'),
+  memoryItems: (p) => ui.memoryList(p).getByTestId('memory'),
+  memorySearch: (p) => ui.settingsSection(p, 'memory').getByRole('searchbox', { name: 'Search words' }),
+  memorySearchButton: (p) => tid(p, 'memory-search'),
+  memoryShowAll: (p) => tid(p, 'memory-clear'),
+  memoryEdit: (p, id) => ui.memoryList(p).getByRole('button', { name: `Edit memory ${id}`, exact: true }),
+  memoryForget: (p, id) => ui.memoryList(p).getByRole('button', { name: `Forget memory ${id}`, exact: true }),
+  memoryEditContent: (p, id) => ui.memoryList(p).getByLabel(`Edit memory #${id}`),
+  memorySave: (p) => ui.memoryList(p).getByRole('button', { name: 'Save', exact: true }),
+  memoryHeading: (p) => ui.settingsSection(p, 'memory').getByRole('heading', { name: /^Memories/ }),
 
-  /* activity */
-  goalDescription: (p) => ui.panel(p, 'Activity').getByLabel('What should Jig achieve?'),
-  goalTitle: (p) => ui.panel(p, 'Activity').getByLabel('Title (optional)'),
-  createGoal: (p) => ui.panel(p, 'Activity').getByRole('button', { name: 'Create goal', exact: true }),
-  activityRefresh: (p) => ui.panel(p, 'Activity').getByRole('button', { name: 'Refresh', exact: true }),
-  runsTable: (p) => ui.panel(p, 'Activity').getByRole('table', { name: 'Recent runs' }),
-  goalHeading: (p) => ui.panel(p, 'Activity').getByRole('heading', { name: 'Goals', exact: true }),
+  /* Settings: history and the audit log */
+  auditKind: (p) => tid(p, 'audit-kind'),
+  auditFilter: (p) => tid(p, 'audit-filter'),
+  auditList: (p) => tid(p, 'audit'),
+  auditRow: (p, kind) => ui.auditList(p).locator('summary').filter({ hasText: kind }),
+  answeredList: (p) => tid(p, 'approvals-done'),
 
-  /* approvals */
-  approve: (p, tool) => ui.panel(p, 'Approvals').getByRole('button', { name: `Approve ${tool}`, exact: true }),
-  deny: (p, tool) => ui.panel(p, 'Approvals').getByRole('button', { name: `Deny ${tool}`, exact: true }),
-  waitingHeading: (p) => ui.panel(p, 'Approvals').getByRole('heading', { name: 'Waiting for you' }),
-  /* memory */
-  memorySearch: (p) => ui.panel(p, 'Memory').getByRole('searchbox', { name: 'Search words' }),
-  memorySearchButton: (p) => ui.panel(p, 'Memory').getByRole('button', { name: 'Search', exact: true }),
-  memoryShowAll: (p) => ui.panel(p, 'Memory').getByRole('button', { name: 'Show all', exact: true }),
-  memoryEdit: (p, id) => ui.panel(p, 'Memory').getByRole('button', { name: `Edit memory ${id}`, exact: true }),
-  memoryForget: (p, id) => ui.panel(p, 'Memory').getByRole('button', { name: `Forget memory ${id}`, exact: true }),
-  memoryEditContent: (p, id) => ui.panel(p, 'Memory').getByLabel(`Edit memory #${id}`),
-  memorySave: (p) => ui.panel(p, 'Memory').getByRole('button', { name: 'Save', exact: true }),
-  memoryHeading: (p) => ui.panel(p, 'Memory').getByRole('heading', { name: /^Memories/ }),
-
-  /* rules */
-  ruleTool: (p) => ui.panel(p, 'Rules').getByLabel('Tool (glob)'),
-  /* the select sits inside its label, so its accessible name also carries the selected option ("Decision Ask") */
-  ruleDecision: (p) => ui.panel(p, 'Rules').getByRole('combobox', { name: /^Decision(?! for rule)/ }),
-  ruleArg: (p) => ui.panel(p, 'Rules').getByLabel('Argument (optional)'),
-  rulePattern: (p) => ui.panel(p, 'Rules').getByLabel('Pattern (optional)'),
-  ruleNote: (p) => ui.panel(p, 'Rules').getByLabel('Note', exact),
-  addRule: (p) => ui.panel(p, 'Rules').getByRole('button', { name: 'Add rule', exact: true }),
-  rulesTable: (p) => ui.panel(p, 'Rules').getByRole('table', { name: 'Custom rules' }),
-  ruleRowDecision: (p, tool) => ui.panel(p, 'Rules').getByRole('combobox', { name: `Decision for rule ${tool}`, exact: true }),
-  ruleRowSave: (p, tool) => ui.panel(p, 'Rules').getByRole('button', { name: `Save rule ${tool}`, exact: true }),
-  coreRulesHeading: (p) => ui.panel(p, 'Rules').getByRole('heading', { name: /^Core rules/ }),
-
-  /* audit */
-  auditKind: (p) => ui.panel(p, 'Audit log').getByLabel('Kind', exact),
-  auditFilter: (p) => ui.panel(p, 'Audit log').getByRole('button', { name: 'Filter', exact: true }),
-  auditHeading: (p) => ui.panel(p, 'Audit log').getByRole('heading', { name: 'Audit log', exact: true }),
+  /* Settings: in the conversation */
+  readOnlySwitch: (p) => ui.settingsSection(p, 'chat').getByRole('switch', { name: 'Just look, don\'t touch' }),
+  showWorkingSwitch: (p) => ui.settingsSection(p, 'chat').getByRole('switch', { name: 'Show Jig\'s working' }),
 };
 
 /** The avatar's live state, read from the real <jig-avatar> element's public getters. */

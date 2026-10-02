@@ -73,6 +73,15 @@ async function loadTerm(id, spec) {
     convertEol: false, allowProposedApi: true,
   });
   term.open(host);
+  /* The row-height ratio above is only an estimate for the font; shrink until every row really fits. */
+  host.style.visibility = 'hidden';
+  host.style.display = 'block';
+  const screen = host.querySelector('.xterm-screen');
+  while (screen.getBoundingClientRect().height > availH && term.options.fontSize > 8) {
+    term.options.fontSize = Math.round((term.options.fontSize - 0.5) * 10) / 10;
+  }
+  host.style.display = 'none';
+  host.style.visibility = '';
   terms.set(id, { term, host, chunks, idx: 0, src: -Infinity, spec });
 }
 
@@ -219,7 +228,7 @@ async function renderFrame(i) {
   }
 
   const speed = $('speed');
-  speed.textContent = shot.speed && shot.speed !== 1 ? `▶▶ ×${shot.speed} · sped up` : '';
+  speed.textContent = shot.speed && shot.speed !== 1 ? `Sped up ×${shot.speed}` : '';
   speed.style.opacity = shot.speed && shot.speed !== 1 && shot.type !== 'card' ? String(op) : '0';
   const skip = $('skip');
   skip.textContent = shot.skipLabel || '';
@@ -252,6 +261,8 @@ window.__demo = {
     await document.fonts.ready;
     avatarReady = import(`/avatar/jig-avatar.js`).then(() => customElements.whenDefined('jig-avatar'));
     await avatarReady;
+    const avatarTheme = cssVar('--avatar-theme');
+    if (avatarTheme) $('card-jig').setAttribute('theme', avatarTheme);
     for (const [id, spec] of Object.entries(p.terms)) await loadTerm(id, spec);
     return { frames: p.totalFrames };
   },

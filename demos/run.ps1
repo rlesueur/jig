@@ -4,10 +4,11 @@
 
 .DESCRIPTION
   demos/run.ps1 <name> [-Test] [-CaptureOnly] [-RenderOnly] [-Capture <stamp>] [-Format landscape|portrait|all]
-                       [-Theme neon] [-NoAudio] [-Commit <sha>] [-PrepareOnly]
+                       [-Theme jig-light|jig-dark|neon|warm] [-NoAudio] [-Commit <sha>] [-PrepareOnly]
 
-  <name> is one of: quickstart, compose, goal, safety, memory, byo-model, always-on, all
-  (or the full scenario file name, such as 02-goal).
+  <name> is one of: research, coding, background, memory, safety (the launch demos; `launch` runs all five),
+  quickstart, compose, byo-model, always-on, all (or the full scenario file name, such as 07-research).
+  Without -Theme, each scenario renders in its own theme (jig-light unless it says otherwise).
 
   Each run:
     1. snapshots the committed tree (HEAD, or -Commit) into demos/.work/src-<sha> with `git archive`, so
@@ -24,7 +25,7 @@ param(
   [switch]$RenderOnly,
   [string]$Capture = 'latest',
   [string]$Format = 'all',
-  [string]$Theme = 'neon',
+  [string]$Theme = '',
   [switch]$NoAudio,
   [string]$Commit = '',
   [switch]$PrepareOnly
@@ -41,10 +42,14 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 }
 
 $Aliases = [ordered]@{
-  'quickstart' = '01-quickstart'; 'compose' = '01-quickstart-compose'; 'goal' = '02-goal'; 'safety' = '03-safety'
-  'memory' = '04-memory'; 'byo-model' = '05-byo-model'; 'always-on' = '06-always-on'
+  'research' = '07-research'; 'coding' = '08-coding'; 'background' = '09-background'; 'memory' = '04-memory'
+  'safety' = '03-safety'; 'quickstart' = '01-quickstart'; 'compose' = '01-quickstart-compose'
+  'byo-model' = '05-byo-model'; 'always-on' = '06-always-on'
 }
+# The launch demos, in the order they are usually recorded
+$Launch = @('07-research', '08-coding', '09-background', '04-memory', '03-safety')
 if ($Name -eq 'all') { $Scenarios = @($Aliases.Values) }
+elseif ($Name -eq 'launch') { $Scenarios = $Launch }
 elseif ($Aliases.Contains($Name)) { $Scenarios = @($Aliases[$Name]) }
 elseif (Test-Path (Join-Path $Demos "scenarios\$Name.mjs")) { $Scenarios = @($Name) }
 else { throw "Unknown demo '$Name'. Use one of: $($Aliases.Keys -join ', '), all" }
@@ -60,8 +65,10 @@ function Invoke-Native([string]$What, [scriptblock]$Block) {
 
 function Initialize-Snapshot {
   New-Item -ItemType Directory -Force $Work | Out-Null
-  $sha = if ($Commit) { $Commit } else { (git -C $Repo rev-parse --short HEAD).Trim() }
-  if ($LASTEXITCODE -ne 0 -or -not $sha) { throw 'git rev-parse failed' }
+  $rev = if ($Commit) { "$Commit^{commit}" } else { 'HEAD' }
+  $sha = git -C $Repo rev-parse --short --verify $rev
+  if ($LASTEXITCODE -ne 0 -or -not $sha) { throw "git rev-parse failed for $rev" }
+  $sha = $sha.Trim()
   $src = Join-Path $Work "src-$sha"
   if (-not (Test-Path (Join-Path $src 'pyproject.toml'))) {
     Write-Host "Snapshotting commit $sha into $src"
@@ -90,25 +97,8 @@ function Initialize-Snapshot {
   return $sha
 }
 
-function Initialize-Cloudflared {
-  # The safety demo's test page needs a public URL (Jig rightly refuses local addresses): a cloudflared quick
-  # tunnel. Standalone binary, no admin rights; checked against the SHA-256 digest GitHub publishes.
-  $exe = Join-Path $Work 'bin\cloudflared.exe'
-  if (Test-Path $exe) { return }
-  New-Item -ItemType Directory -Force (Split-Path $exe) | Out-Null
-  $rel = Invoke-RestMethod 'https://api.github.com/repos/cloudflare/cloudflared/releases/latest'
-  $asset = $rel.assets | Where-Object name -eq 'cloudflared-windows-amd64.exe'
-  if (-not $asset -or -not $asset.digest) { throw "cloudflared $($rel.tag_name): no Windows binary with a published digest" }
-  Write-Host "Downloading cloudflared $($rel.tag_name) (Apache-2.0)"
-  Invoke-WebRequest $asset.browser_download_url -OutFile "$exe.part"
-  $hash = 'sha256:' + (Get-FileHash "$exe.part" -Algorithm SHA256).Hash.ToLower()
-  if ($hash -ne $asset.digest) { Remove-Item "$exe.part"; throw "cloudflared digest mismatch: $hash, expected $($asset.digest)" }
-  Move-Item "$exe.part" $exe
-}
-
 Push-Location $Demos
 try {
-  if (-not $RenderOnly -and $Scenarios -contains '03-safety') { Initialize-Cloudflared }
   if (-not (Test-Path (Join-Path $Demos 'node_modules\playwright'))) { Invoke-Native 'npm install' { npm install --no-audit --no-fund } }
   $sha = Initialize-Snapshot
   Write-Host "Jig under test: commit $sha"
@@ -125,7 +115,8 @@ try {
       if ($code -ne 0) { Write-Host "$s FAILED (exit $code)"; $exit = 1; continue }
     }
     if (-not $CaptureOnly) {
-      $renderArgs = @('lib/render.mjs', $s, "--capture=$Capture", "--format=$Format", "--theme=$Theme")
+      $renderArgs = @('lib/render.mjs', $s, "--capture=$Capture", "--format=$Format")
+      if ($Theme) { $renderArgs += "--theme=$Theme" }
       if ($NoAudio) { $renderArgs += '--no-audio' }
       if ($Test) { $renderArgs += '--test' }
       & node @renderArgs

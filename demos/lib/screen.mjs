@@ -74,7 +74,10 @@ const CURSOR_SCRIPT = () => {
 };
 
 export class Screen {
-  constructor({ captureDir }) {
+  /** @param {{captureDir: string, scheme?: 'light'|'dark'}} o  scheme is what the page's prefers-color-scheme reports */
+  constructor({ captureDir, scheme = 'light' }) {
+    if (!['light', 'dark'].includes(scheme)) throw new Error(`Unknown colour scheme ${scheme}`);
+    this.scheme = scheme;
     this.dir = path.join(captureDir, 'screen');
     mkdirSync(this.dir, { recursive: true });
     this.frames = [];
@@ -87,7 +90,7 @@ export class Screen {
   async launch() {
     this.browser = await chromium.launch({ headless: true });
     this.context = await this.browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DSF, locale: 'en-GB',
-      timezoneId: 'Europe/London', colorScheme: 'dark' });
+      timezoneId: 'Europe/London', colorScheme: this.scheme });
     await this.context.addInitScript(CURSOR_SCRIPT);
     this.page = await this.context.newPage();
     this.page.on('pageerror', (e) => this.pageErrors.push({ t: now(), message: String(e) }));
@@ -174,6 +177,16 @@ export class Screen {
     await sleep(after);
   }
 
+  /** Point at a scrollable area and scroll it with the mouse wheel, gently, like a person reading. */
+  async scroll(locator, dy, { steps = 12, stepMs = 70, after = 400 } = {}) {
+    await this.moveTo(locator, { ms: 500 });
+    for (let i = 0; i < steps; i++) {
+      await this.page.mouse.wheel(0, dy / steps);
+      await sleep(stepMs);
+    }
+    await sleep(after);
+  }
+
   async press(key, { after = 300 } = {}) {
     await this.page.keyboard.press(key);
     await sleep(after);
@@ -191,7 +204,7 @@ export class Screen {
   }
 
   manifest() {
-    return { dir: 'screen', frames: this.frames, viewport: VIEWPORT, dsf: DSF, dialogs: this.dialogs,
+    return { dir: 'screen', scheme: this.scheme, frames: this.frames, viewport: VIEWPORT, dsf: DSF, dialogs: this.dialogs,
       pageErrors: this.pageErrors, recordingFrom: this.recordingFrom };
   }
 }

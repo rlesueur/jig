@@ -1,0 +1,13 @@
+date,shop,item,quantity,price
+2026-09-01,Leeds,Sourdough loaf,14,£4.20
+2026-09-01,York,Sourdough loaf,9,£4.20
+2026-09-01,Leeds,Cinnamon bun,22,£2.75
+2026-09-02,Harrogate,Sourdough loaf,11,£4.20
+2026-09-02,York,Cinnamon bun,18,£2.75
+2026-09-02,Leeds,Celebration cake,1,"£1,250.00"
+2026-09-03,Harrogate,Cinnamon bun,25,£2.75
+2026-09-03,York,Seeded rye,7,£3.90
+
+2026-09-04,Leeds,Seeded rye,6,£3.90
+2026-09-04,Harrogate,Celebration cake,2,£38.00
+2026-09-05,York,Sourdough loaf,12,£4.20

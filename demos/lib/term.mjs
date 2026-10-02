@@ -7,8 +7,10 @@ const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-
 export const stripAnsi = (s) => s.replace(ANSI, '');
 
 /* The prompt carries an invisible OSC marker with the last exit code, so we know exactly when a
- * command has finished and whether it succeeded. xterm.js ignores unknown OSC sequences. */
-const MARKER = /\x1b\]9001;P;(-?\d+)\x07/g;
+ * command has finished and whether it succeeded. xterm.js ignores unknown OSC sequences. Each prompt is
+ * numbered: PSReadLine can repaint the line, prompt and all, while a command is typed, and a repainted
+ * marker must not be taken for the command finishing. */
+const MARKER = /\x1b\]9001;P;(-?\d+);(\d+)\x07/g;
 const PROMPT_TEXT = 'PS Jig> ';
 
 export class TermSession {
@@ -75,12 +77,20 @@ export class TermSession {
       /* ConPTY asks the terminal to identify itself and waits for an answer, as a real terminal would give */
       if (m.data.includes('\x1b[c')) this._send('\x1b[?1;0c');
       if (m.data.includes('\x1b[6n')) this._send('\x1b[1;1R');
-      for (const match of m.data.matchAll(MARKER)) this.prompts.push({ t, code: Number(match[1]) });
+      for (const match of m.data.matchAll(MARKER)) {
+        const n = Number(match[2]);
+        if (n > this.lastPrompt()) this.prompts.push({ t, code: Number(match[1]), n });
+      }
       for (const l of this.listeners) l(m.data);
     } else if ('exit' in m) {
       this.exited = true;
       this.exitCode = m.exit;
     }
+  }
+
+  /** The number of the newest real prompt (0 before the first). */
+  lastPrompt() {
+    return this.prompts.at(-1)?.n ?? 0;
   }
 
   _send(data) {
@@ -95,7 +105,7 @@ export class TermSession {
   async _setupShell() {
     await sleep(600);
     const setup = [
-      `function global:prompt { $c = $global:LASTEXITCODE; if ($null -eq $c) { $c = 0 }; $global:LASTEXITCODE = 0; "$([char]27)]9001;P;$c$([char]7)${PROMPT_TEXT}" }`,
+      `function global:prompt { $c = $global:LASTEXITCODE; if ($null -eq $c) { $c = 0 }; $global:LASTEXITCODE = 0; $global:JigPromptN = 1 + [int]$global:JigPromptN; "$([char]27)]9001;P;$c;$($global:JigPromptN)$([char]7)${PROMPT_TEXT}" }`,
       'try { Set-PSReadLineOption -PredictionSource None } catch { }',
       /* the pseudo-console starts PowerShell in a new process group, which disables Ctrl+C for it and
        * everything it launches; re-enable it so Ctrl+C stops `jig serve` the way it would for a person */

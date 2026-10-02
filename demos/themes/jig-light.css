@@ -1,0 +1,138 @@
+/*
+ * Theme: jig-light. The web UI's light theme (warm paper, coral and violet; jig/web/style.css tokens) and
+ * its font, Nunito. Same variables and classes as the other themes.
+ */
+@font-face { font-family: 'Jig Sans'; src: url('/fonts/Nunito-Variable.ttf') format('truetype'); font-weight: 200 1000; }
+@font-face { font-family: 'Jig Label'; src: url('/fonts/Nunito-Variable.ttf') format('truetype'); font-weight: 200 1000; }
+@font-face { font-family: 'Jig Mono'; src: url('/fonts/CascadiaMono.ttf') format('truetype'); font-weight: 200 700; }
+
+:root {
+  --avatar-theme: light;
+  --font-sans: 'Jig Sans';
+  --font-label: 'Jig Label';
+  --font-mono: 'Jig Mono';
+
+  --coral: #b23d27;
+  --coral-hi: #c8482e;
+  --violet: #5537c0;
+  --amber: #b8650b;
+  --green: #1b6a43;
+  --ink: #2d2219;
+  --muted: #65513f;
+
+  --bg: #f6eedf;
+  --bg-art:
+    radial-gradient(900px 520px at 8% -12%, #fff7e9 0%, transparent 62%),
+    radial-gradient(760px 520px at 100% 0%, #fde2d3 0%, transparent 60%),
+    #f6eedf;
+
+  --screen-radius: 22px;
+  --screen-bg: #fffaf2;
+  --screen-border: 1.5px solid #ead8bf;
+  --screen-shadow: 0 1px 2px rgba(120, 80, 40, 0.06), 0 18px 50px rgba(90, 50, 20, 0.18);
+
+  --term-bg: #2b1c2e;
+  --term-bar-bg: linear-gradient(180deg, #3e2942, #352339);
+  --term-bar-border: 1px solid #4b3450;
+  --dot-1: #ff9f80;
+  --dot-2: #ffb661;
+  --dot-3: #9fe6b8;
+  --term-fg: #fdf0e6;
+  --term-cursor: #ffb661;
+  --term-ansi: #2b1c2e #ff9f80 #9fe6b8 #ffc670 #a9c6ff #e6b3e0 #8fe0d6 #f1e4d2 #8d6889 #ffb198 #b6efca #ffd38e #c3d6ff #f0c8ea #a6ecdf #fffaf2;
+
+  --ring-radius: 16px;
+  --ring-border: 3px solid var(--coral-hi);
+  --ring-shadow: 0 6px 24px rgba(178, 61, 39, 0.28);
+
+  --hl-ink: var(--coral);
+  --hl-bg: none;
+  --hl-clip: border-box;
+}
+
+.kicker {
+  font-family: var(--font-label);
+  font-weight: 800;
+  font-size: var(--fs-kicker);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--coral);
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+}
+.kicker:empty { display: none; }
+.kicker::before, .kicker::after { content: ''; width: 2em; height: 3px; border-radius: 3px; background: var(--amber); }
+
+.card-title, #header-title {
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.card-title .hl, #header-title .hl {
+  background: linear-gradient(90deg, #b23d27, #b8650b 55%, #5537c0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.card-sub { font-weight: 600; color: var(--muted); }
+.card-lines li { font-weight: 700; color: var(--ink); }
+.card-lines li::before { content: '•'; color: var(--coral); margin-right: 0.55em; }
+
+.chapter {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  padding: 0.5em 1em 0.52em;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #c8482e, #b23d27);
+}
+.chapter:empty { display: none; }
+.caption { font-weight: 700; letter-spacing: -0.005em; color: var(--ink); }
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  font-weight: 500;
+  color: #8f3a1c;
+  background: #fdf3e5;
+  border: 1px solid #ead8bf;
+  border-radius: 8px;
+  padding: 0.02em 0.32em 0.06em;
+}
+
+.badge {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2d2219;
+  background: #fff1dc;
+  border: 1.5px solid #c9906f;
+  padding: 0.38em 0.85em 0.42em;
+  border-radius: 10px;
+}
+#skip { background: #e8f5ec; border-color: #7fb595; }
+
+.callout {
+  font-weight: 700;
+  color: var(--ink);
+  background: #fffaf2;
+  border: 2px solid var(--coral-hi);
+  border-radius: 18px;
+  padding: 0.9em 1.2em;
+  box-shadow: 0 14px 50px rgba(90, 50, 20, 0.25);
+}
+.callout b { display: block; font-family: var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.72em; color: var(--coral); margin-bottom: 0.3em; }
+
+.watermark {
+  font-family: var(--font-label);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: var(--violet);
+  padding: 0.3em 0.8em;
+  border-radius: 8px;
+}

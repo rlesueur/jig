@@ -21,6 +21,8 @@ const FFPROBE = process.env.FFPROBE || 'ffprobe';
 const ORIGIN = 'http://demo.render';
 const FONTS = { 'SegUIVar.ttf': 'C:\\Windows\\Fonts\\SegUIVar.ttf', 'bahnschrift.ttf': 'C:\\Windows\\Fonts\\bahnschrift.ttf',
   'CascadiaMono.ttf': 'C:\\Windows\\Fonts\\CascadiaMono.ttf' };
+/* Nunito (SIL OFL) is the web UI's own font, taken from the snapshot of the commit under test */
+const UI_FONTS = ['Nunito-Variable.ttf', 'Nunito-Italic-Variable.ttf'];
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf',
   '.jpg': 'image/jpeg', '.png': 'image/png', '.jsonl': 'application/x-ndjson', '.json': 'application/json' };
 
@@ -63,7 +65,7 @@ export function buildPlan(edit, manifest, formatName) {
       shot = {
         ...base, outDur, srcFrom: s.from, speed,
         session: s.session, termTitle: s.title,
-        skipLabel: gap > 1500 ? `⏭ ${human(gap)} skipped` : '',
+        skipLabel: gap > 1500 ? `${human(gap)} skipped` : '',
         /* a caption ends when the next one starts, so it never describes a moment that has passed */
         captions: (s.captions || []).map((c) => {
           const from = Math.max(0, c.at === undefined ? 0 : local(c.at));
@@ -110,6 +112,7 @@ function router(captureDir, commit) {
     else if (p.startsWith('/cap/')) file = path.join(captureDir, p.slice(5));
     else if (p.startsWith('/xterm/')) file = path.join(DEMOS, 'node_modules', '@xterm', 'xterm', p.slice(7));
     else if (p.startsWith('/avatar/')) file = path.join(avatarDir, p.slice(8));
+    else if (p.startsWith('/fonts/') && UI_FONTS.includes(p.slice(7))) file = path.join(WORK, `src-${commit}`, 'jig', 'web', 'fonts', p.slice(7));
     else if (p.startsWith('/fonts/')) file = FONTS[p.slice(7)];
     else if (p === '/composition.html') file = path.join(LIB, 'composition.html');
     if (!file || !existsSync(file)) {
@@ -132,6 +135,13 @@ async function probe(file) {
     video: `${v.codec_name} (${v.profile}) ${v.width}x${v.height} ${v.pix_fmt} ${v.r_frame_rate} fps, ${v.nb_frames} frames`,
     audio: a ? `${a.codec_name} ${a.sample_rate} Hz ${a.channels}ch` : 'none',
   };
+}
+
+/** Sixteen evenly spaced stills from the finished video, in a 4x4 grid, for review. */
+async function contactSheet(video, duration, out) {
+  const n = 16;
+  await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', video,
+    '-vf', `fps=${(n / duration).toFixed(6)},scale=480:-2,tile=4x4:padding=6:margin=6:color=0x2d2219`, '-frames:v', '1', out]);
 }
 
 async function renderFormat(browser, { scenarioName, edit, manifest, captureDir, formatName, theme, outDir }) {
@@ -200,7 +210,7 @@ async function main() {
   const manifest = JSON.parse(readFileSync(path.join(captureDir, 'manifest.json'), 'utf8'));
   if (manifest.status !== 'passed') throw new Error(`Capture ${stamp} did not pass (${manifest.status}); refusing to render it`);
   if (args.test) manifest.test = true;
-  const theme = args.theme || 'neon';
+  const theme = args.theme || scenario.theme || 'jig-light';
   if (!existsSync(path.join(DEMOS, 'themes', `${theme}.css`))) throw new Error(`No theme demos/themes/${theme}.css`);
   const formats = args.format === 'all' ? (scenario.formats || ['landscape']) : [args.format || 'landscape'];
   const outDir = path.join(OUT, scenarioName);
@@ -214,6 +224,7 @@ async function main() {
       const edit = await scenario.edit(manifest, formatName);
       const { silent, plan, name } = await renderFormat(browser, { scenarioName, edit, manifest, captureDir, formatName, theme, outDir });
       results.push(await probe(silent));
+      await contactSheet(silent, plan.duration, path.join(outDir, `${name}-contact-sheet.png`));
       if (!args['no-audio']) {
         const cueFile = path.join(outDir, `${name}-cues.json`);
         const bed = path.join(outDir, `${name}-bed.wav`);
@@ -221,7 +232,7 @@ async function main() {
         console.log((await run(venvBin('python.exe'), [path.join(LIB, 'bed.py'), cueFile, bed])).trim());
         const withAudio = path.join(outDir, `${name}.mp4`);
         await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', silent, '-i', bed, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-          '-af', 'loudnorm=I=-20:TP=-2:LRA=9', '-ar', '48000', '-c:a', 'aac', '-b:a', '160k', '-t', plan.duration.toFixed(3),
+          '-af', 'loudnorm=I=-24:TP=-3:LRA=9', '-ar', '48000', '-c:a', 'aac', '-b:a', '160k', '-t', plan.duration.toFixed(3),
           '-movflags', '+faststart', withAudio]);
         results.push(await probe(withAudio));
       }

@@ -58,6 +58,43 @@ export async function checkAvatarMirrors(ctx, page, { since, until = now(), minM
 }
 
 /**
+ * Answer a pending approval card in the conversation through the real UI: wait for the card, let it be read,
+ * optionally open "Why am I asking?" and add a note, then press Yes or No. Marks `${label}-card`,
+ * `${label}-why` (if opened) and `${label}-answer` with boxes for the edit.
+ */
+export async function answerCard(ctx, s, tool, { label, approve = true, why = false, note = '', readMs = 2600 } = {}) {
+  const p = s.page;
+  const card = ui.approvalCard(p, tool);
+  await card.waitFor({ state: 'visible', timeout: 30000 });
+  await ui.approve(card, tool).waitFor({ state: 'visible' });
+  await card.scrollIntoViewIfNeeded();
+  await ctx.sleep(400);
+  ctx.mark(`${label}-card`, { box: await s.box(card) });
+  await s.moveTo(ui.approvalWill(card), { ms: 900 });
+  await ctx.sleep(readMs);
+  if (why) {
+    await s.click(ui.approvalWhySummary(card));
+    await ctx.sleep(500);
+    await ui.approvalVerdict(card).scrollIntoViewIfNeeded();
+    ctx.mark(`${label}-why`, { box: await s.box(ui.approvalWhy(card)) });
+    await s.moveTo(ui.approvalVerdict(card), { ms: 900 });
+    await ctx.sleep(readMs + 1200);
+  }
+  if (note) {
+    await s.type(ui.approvalNote(card), note, { charMs: 34 });
+    await ctx.sleep(500);
+  }
+  const button = approve ? ui.approve(card, tool) : ui.deny(card, tool);
+  await button.scrollIntoViewIfNeeded();
+  ctx.mark(`${label}-answer`, { box: await s.box(button) });
+  await s.click(button);
+  const outcome = ui.chatLog(p).locator(`[data-testid="approval"][data-tool="${tool}"][data-status="${approve ? 'approved' : 'denied'}"]`).last();
+  await outcome.waitFor({ state: 'visible', timeout: 15000 });
+  ctx.checks.ok(`${label}: the card now says what you answered`, await ui.approvalOutcome(outcome).isVisible());
+  return outcome;
+}
+
+/**
  * After a chat message has been sent in the UI: follow the real run through /events, mark the moments
  * the edit needs, and check the reply is in the UI.
  */
@@ -95,6 +132,8 @@ export async function followChat(ctx, s, { label, send, expectStates = ['thinkin
   await waitUntil(`${label}: the reply to appear in the UI`, async () => (await reply.innerText()).trim().length > 10, { timeoutMs: 20000 });
   await waitUntil(`${label}: the Send button to be enabled again`, () => ui.chatSend(p).isEnabled(), { timeoutMs: 20000 });
   const text = (await reply.innerText()).trim();
+  const run = await jig.get(`/runs/${runId}`);
   await checkAvatarMirrors(ctx, p, { since: sent, label });
-  return { runId, reply: text, states: [...seen], approvals };
+  ctx.note(`${label}: run ${runId} took ${Math.round((end.t - sent) / 1000)} s, ${run.steps} steps`);
+  return { runId, reply: text, final: run.final || '', steps: run.steps, states: [...seen], approvals, ms: end.t - sent };
 }
