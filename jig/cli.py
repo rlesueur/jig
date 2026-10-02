@@ -268,7 +268,8 @@ def _model_key_status(config, vault) -> int:
 
 def _model_cloud(args: argparse.Namespace, config) -> int:
     """``jig model cloud status|confirm|revoke``: consent to sending data to a cloud model."""
-    from .cloud import GIVEN, ROLES, cloud_uses, consent_state, disclosure, record_consent, record_revocation
+    from .cloud import (GIVEN, ROLES, active_consents, cloud_uses, consent_groups, consent_state, disclosure,
+                        record_consent, record_revocation)
 
     action = args.sub or "status"
     if action not in ("status", "confirm", "revoke"):
@@ -290,18 +291,13 @@ def _model_cloud(args: argparse.Namespace, config) -> int:
                       f"{'confirmed ' + state['ts'] if confirmed else 'not confirmed'}")
             return 0
         if action == "revoke":
-            given = [r for r in audit.query(kind="model.cloud_consent", newest_first=True, limit=5000)]
-            latest: dict[tuple[str, str], str] = {}
-            for row in given:
-                data = json.loads(row["data_json"])
-                latest.setdefault((data["role"], data["origin"]), row["kind"])
-            active = [key for key, kind in latest.items() if kind == GIVEN]
+            active = active_consents(audit)
             if not active:
                 print("There is no cloud model consent to withdraw.")
                 return 0
-            for role, endpoint_origin in active:
-                record_revocation(audit, role, endpoint_origin, via="cli")
-                print(f"Withdrawn: {ROLES[role]} at {endpoint_origin}")
+            for endpoint_origin, roles in active.items():
+                record_revocation(audit, roles, endpoint_origin, via="cli")
+                print(f"Withdrawn: {' and '.join(ROLES[r] for r in roles)} at {endpoint_origin}")
             print("Jig will refuse to start with a cloud model until you confirm again.")
             return 0
         if not uses:
@@ -313,15 +309,16 @@ def _model_cloud(args: argparse.Namespace, config) -> int:
                 section = "model" if u.role == "agent" else "sentinel"
                 print(f"Not confirmed: {ROLES[u.role]} would use {u.location.host}, but [{section}] allow_cloud is not "
                       f"set in {config.source}. Add allow_cloud = true under [{section}] first"
-                      + (", or point [sentinel] at a local model (recommended)." if u.role == "sentinel" else "."),
+                      + (", or point [sentinel] base_url at a local model server to keep safety checks on this "
+                         "machine." if u.role == "sentinel" else "."),
                       file=sys.stderr)
             return 1
         print(disclosure(uses))
         print()
         if not _confirmed(args, "Send this to the cloud model(s) above?"):
             return 1
-        for u in uses:
-            record_consent(audit, u, via="cli")
+        for group in consent_groups(uses):
+            record_consent(audit, group, via="cli")
         print("Confirmed and recorded in the audit log. Withdraw it any time with 'jig model cloud revoke'.")
         return 0
     finally:

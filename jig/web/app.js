@@ -615,12 +615,14 @@ function showConnection(conn) {
   const agent = conn.agent;
   const sentinel = conn.sentinel;
   $('st-agent-where').textContent = whereText(agent);
-  $('st-sentinel-where').textContent = whereText(sentinel);
+  $('st-sentinel-where').textContent = whereText(sentinel) + (sentinel.same_endpoint_as_agent ? ' (same model as the agent)' : '');
   const lines = [];
   if (agent.kind === 'cloud') {
     lines.push(`The agent uses a cloud model, so your conversation, the memory and tool results it works with, and any images you share are sent to ${agent.host}.`);
   }
-  if (sentinel.kind === 'cloud') {
+  if (sentinel.kind === 'cloud' && sentinel.same_endpoint_as_agent) {
+    lines.push(`The safety checker uses the same model as the agent, so each action Jig wants to take, with its details, is sent to ${sentinel.host} too.`);
+  } else if (sentinel.kind === 'cloud') {
     lines.push(`The safety checker uses a cloud model, so each action Jig wants to take, with its details, is sent to ${sentinel.host}.`);
   } else if (agent.kind === 'cloud') {
     lines.push('The safety checker runs locally, so its checks stay on this computer.');

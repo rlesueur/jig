@@ -119,6 +119,8 @@ The sandbox's CPU, memory, process and tmpfs limits are set in `compose.yaml` (`
 
 ## The model server
 
+You need one model server. The safety checker (Sentinel) uses the agent's model on that server by default, so no second model or service is started. Running it on a different model is optional (see [The safety checker's model](../README.md#the-safety-checkers-model)).
+
 **Default: a server on the host.** Jig uses `http://host.docker.internal:8080/v1`. Docker Desktop provides that name, and `compose.yaml` adds `host.docker.internal:host-gateway` so it works on Linux Docker Engine as well.
 
 - On **Docker Desktop**, a server listening on the host's `127.0.0.1` can be reached this way.

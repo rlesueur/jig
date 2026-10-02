@@ -33,6 +33,8 @@ top_p = 0.95
 readiness_timeout_s = 600
 poll_interval_s = 5
 
+# The safety checker (Sentinel) uses the same model and server as the agent, so nothing extra is loaded.
+# A different model is optional; see "The safety checker's model" in README.md.
 [sentinel]
 
 # Needs a vision-capable model; when true, a real test image is checked at start-up.

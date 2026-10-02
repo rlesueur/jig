@@ -12,6 +12,8 @@ max_tokens = 8192
 temperature = 0.7
 top_p = 0.9
 
+# The safety checker (Sentinel) uses the same model and server as the agent, so nothing extra is loaded.
+# A different model is optional; see "The safety checker's model" in README.md.
 [sentinel]
 
 [paths]

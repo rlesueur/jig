@@ -33,12 +33,13 @@ top_p = 0.95
 top_k = 20
 min_p = 0.05
 
-# The Sentinel inherits everything from [model] unless set here, so it can use a
-# different endpoint or a smaller model. It never inherits allow_cloud, and when
-# its base_url differs it gets none of [model]'s key or provider settings. With a
-# cloud agent, keeping the Sentinel on a local model is recommended. Example:
+# The safety checker (Sentinel) inherits everything from [model] unless set here, so by
+# default it uses the agent's own model and server: no second model is loaded. A different
+# model is an optional, advanced setting that costs that model's memory on top of the
+# agent's (see "The safety checker's model" in README.md). It never inherits allow_cloud,
+# and when its base_url differs it gets none of [model]'s key or provider settings. Example:
 #   base_url = "http://127.0.0.1:11434/v1"
-#   name = "your-small-reviewer-model"
+#   name = "your-reviewer-model"
 [sentinel]
 
 # Image input. Needs a vision-capable model: for llama.cpp start llama-server with

@@ -154,13 +154,28 @@ Use one with `jig --config profiles/ollama.toml serve`, or set `JIG_CONFIG`. `[m
 
 Jig works out where each endpoint is from its address alone (it never looks the name up): loopback, private network addresses (10/8, 172.16/12, 192.168/16, fc00::/7), link-local, Tailscale (100.64.0.0/10, `*.ts.net`) and local names (`localhost`, single-label names, `.local`, `.lan`, `.home.arpa`, `.internal`) are **local**; everything else is **cloud**. `jig health`, `jig model cloud status`, `GET /status` and Settings in the web UI show where the agent and the Sentinel run.
 
-The Sentinel inherits the `[model]` settings unless you override them. To give it a different (for example smaller) model or another server:
+### The safety checker's model
+
+By default the safety checker (the Sentinel) is the agent's own model on the same server. `[sentinel]` inherits every `[model]` setting, so no second model is loaded and Jig needs no more GPU memory than the agent alone. The Sentinel is still isolated: each review is a separate request with its own system prompt and no tools, and it never sees the agent's conversation. At start-up Jig runs the capability checks once for the shared model, and Settings shows "same model as the agent".
+
+**Optional, advanced: a different model.** You can point the safety checker at another model or server:
 
 ```toml
 [sentinel]
 base_url = "http://127.0.0.1:11434/v1"
-name = "your-small-reviewer-model"
+name = "your-reviewer-model"
 ```
+
+That model must also pass the start-up checks (a JSON-schema answer). It costs its own memory on top of the agent's: its weights, plus its context cache, plus the server's working buffers. On one GPU, both models have to fit together, or the server has to swap between them on every review. Use a different model only if you have the memory to spare, or if you want reviews from a different model family or kept on a local server while the agent is in the cloud.
+
+### Lower-memory GPUs (8–12 GB)
+
+Jig does not need a 32 GB card. One model serves as both agent and safety checker, so what matters is that one model and its context fit. As a measured example, granite 4.2 8B at Q4_K_M (a 5.3 GB file) on the upstream `llama-server` (`-ngl 99 --jinja --parallel 1`) passes Jig's tool-calling and JSON-schema checks. It took about 8.1 GB of GPU memory with a 16K-token context, and about 10.6 GB with 32K. The server reported 4.9 GB of weights, a 2.5 GB or 5.1 GB context cache and about 0.2 GB of working buffers. Those were single measurements on an RTX 5090, read as the change in total GPU memory, so allow some margin.
+
+- **12 GB:** an 8B model at Q4_K_M with a 16K context fits with room to spare. 32K fits, but only just.
+- **8 GB:** we have not yet measured a setup that fits. A smaller model, a lower-bit quantisation or a shorter context reduces memory. llama.cpp can also store the context cache at lower precision (`--cache-type-k` / `--cache-type-v`).
+- **Context:** Jig warns at start-up if the context is under `[runtime] min_context_tokens` (32,768), because long tasks and memory lookups need room. It still runs with less.
+- **The guard:** whatever you choose, Jig refuses to start if the model fails the tool-calling or JSON-schema check (or the vision check, with `[vision] enabled = true`). It never falls back to another model. A model that is too small to call tools reliably is caught there, not halfway through a task.
 
 ### Tests
 
@@ -184,10 +199,10 @@ With `jig serve` running:
 Jig is built for local models, and a local model is the private choice. If you would rather use a cloud model, Jig supports OpenAI, OpenRouter, Anthropic and Google Gemini through their OpenAI-compatible APIs, with these safeguards:
 
 - **The privacy trade-off is real.** With a cloud agent, your conversation, the memory and tool results the agent works with, and any images you share are sent to the provider, under its terms and retention policy. If the Sentinel is also on the cloud, every action Jig wants to take, with its details, is sent too. Your memory database, history, audit log, rules and vault stay on your machine; only what goes into a request leaves it.
-- **Explicit consent, twice.** Jig refuses to start with a cloud endpoint until you have set `allow_cloud = true` in that section of the config **and** run `jig model cloud confirm`, which shows exactly what is sent and records your confirmation in the audit log. The confirmation is per role (agent or Sentinel) and per endpoint, so pointing at a different provider asks again. `jig model cloud revoke` withdraws it.
+- **Explicit consent, twice.** Jig refuses to start with a cloud endpoint until you have set `allow_cloud = true` in that section of the config **and** run `jig model cloud confirm`, which shows exactly what is sent and records your confirmation in the audit log. The config line is per role: the safety checker never inherits it, so `[sentinel] allow_cloud = true` is needed too. When the safety checker uses the agent's endpoint (the default), one `jig model cloud confirm` covers both roles. It is recorded once, naming both. A different endpoint asks again. `jig model cloud revoke` withdraws it.
 - **HTTPS only.** A cloud endpoint over `http://` is a configuration error.
 - **Keys in the vault.** `jig model key set <provider>` stores the key in the vault (prompted without echo, or `--stdin`). It is never logged, never shown to the model, never available to any tool (a core rule blocks it and tool results are redacted), and it is redacted from errors and the audit log, including the masked form some providers echo back. `jig model key status` shows which keys are stored, and `jig model key delete <provider>` removes one. `api_key_env` still works if you prefer an environment variable.
-- **The Sentinel stays local (recommended).** The cloud profiles keep the safety checker on your local server, so its reviews never leave your machine and it stays independent of the agent's provider. The Sentinel never inherits `allow_cloud`, the key or the provider settings from `[model]` when it points somewhere else.
+- **The safety checker uses the same model by default.** In the cloud profiles the safety checker is the agent's cloud model, so you need no local GPU. Its reviews go to the provider too. Each profile has a commented block for running the safety checker on a local model instead. Then its reviews never leave your machine and it is independent of the agent's provider, but you need a local model server and the memory it takes. When it points somewhere else, the safety checker gets none of `[model]`'s key or provider settings.
 - **You can see it.** Settings > Model and connection shows "Local" or "Cloud: host" for the agent and the safety checker, with a short note on what is sent, and a "Cloud model" label sits next to the health dot whenever the agent is on the cloud.
 
 Set up a provider in three steps (Anthropic shown; use `openai`, `openrouter` or `gemini` in the same way):
@@ -493,7 +508,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - **A mobile app** that connects to Jig running on your own computer, over the same paired-device, Tailscale-only connection the web UI uses, so you can take Jig with you while the model stays at home.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
 - **Messaging channels** such as email, Signal and Matrix, as human-only actions.
-- **A smaller dedicated Sentinel model** for faster reviews (already configurable via `[sentinel]`).
+- **Smaller-GPU support**: measured setups for 8 GB cards, with one model as both agent and safety checker (a different safety checker model stays optional via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
 - Embeddings-backed memory search and cron-style schedules.

@@ -18,9 +18,11 @@ top_p = 0.9
 # [model.launch]
 # readiness_timeout_s = 120
 
-# A smaller model can review actions, which keeps the Sentinel quick:
-# [sentinel]
-# name = "qwen3:4b"
+# The safety checker (Sentinel) uses the same model as the agent: nothing extra is loaded.
+# Optional, advanced: a different model for it, added under [sentinel] below, for example
+#   name = "qwen3:4b"
+# Ollama then keeps both models loaded if memory allows (or swaps them, which is slow), so this costs that
+# model's memory on top of the agent's. See "The safety checker's model" in README.md.
 [sentinel]
 
 # Set to true only with a vision-capable model (for example gemma3 or qwen2.5vl); Jig checks it with a real image.

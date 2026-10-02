@@ -6,7 +6,8 @@ Jig is built for local models. A cloud endpoint (``jig.endpoints.classify``) is 
    true`` for the safety checker (never inherited), and
 2. the user has confirmed it once with ``jig model cloud confirm``, which records ``model.cloud_consent.given``
    in the audit log for that role and that exact origin (``https://host:port``). A new provider needs a new
-   confirmation; ``jig model cloud revoke`` withdraws it.
+   confirmation; ``jig model cloud revoke`` withdraws it. When the safety checker uses the same endpoint as
+   the agent (the default), one confirmation covers both roles and is recorded once, with ``roles`` naming both.
 
 Otherwise Jig refuses to start, before it contacts the endpoint, and says what would leave the machine.
 """
@@ -75,24 +76,61 @@ def cloud_uses(config: Config) -> list[CloudUse]:
     return out
 
 
+def consent_groups(uses: list[CloudUse]) -> list[list[CloudUse]]:
+    """Cloud uses grouped by endpoint origin: the agent and a safety checker on the same endpoint form one group."""
+    groups: dict[str, list[CloudUse]] = {}
+    for use in uses:
+        groups.setdefault(use.origin, []).append(use)
+    return list(groups.values())
+
+
+def _roles_text(roles: list[str]) -> str:
+    text = " and ".join(ROLES[r] for r in roles)
+    return text[0].upper() + text[1:]
+
+
 def disclosure(uses: list[CloudUse]) -> str:
     lines = []
-    for use in uses:
-        lines.append(f"{ROLES[use.role][0].upper() + ROLES[use.role][1:]} would use a cloud model: "
-                     f"{use.provider_label} at {use.location.host}.")
-        lines.append(f"  Sent to {use.location.host} with every request:")
-        lines += [f"    - {s}" for s in use.sends]
+    for group in consent_groups(uses):
+        first = group[0]
+        roles = [u.role for u in group]
+        if len(group) > 1:
+            lines.append(f"{_roles_text(roles)} would use the same cloud model: {first.provider_label} at "
+                         f"{first.location.host}.")
+        else:
+            lines.append(f"{_roles_text(roles)} would use a cloud model: {first.provider_label} at "
+                         f"{first.location.host}.")
+        lines.append(f"  Sent to {first.location.host} with every request:")
+        lines += [f"    - {s}" for u in group for s in u.sends]
     lines.append(STAYS_LOCAL)
     return "\n".join(lines)
+
+
+def _roles_of(data: dict[str, Any]) -> list[str]:
+    return list(data.get("roles") or [data.get("role")])
 
 
 def consent_state(audit: AuditLog, role: str, endpoint_origin: str) -> dict[str, Any] | None:
     """The latest consent record for this role and origin (given or revoked), or None."""
     for row in audit.query(kind=CONSENT_KIND, newest_first=True, limit=5000):
         data = json.loads(row["data_json"])
-        if data.get("role") == role and data.get("origin") == endpoint_origin:
+        if role in _roles_of(data) and data.get("origin") == endpoint_origin:
             return {"kind": row["kind"], "ts": row["ts"], "id": row["id"], **data}
     return None
+
+
+def active_consents(audit: AuditLog) -> dict[str, list[str]]:
+    """Origins with a consent currently given, and the roles it is given for."""
+    latest: dict[tuple[str, str], str] = {}
+    for row in audit.query(kind=CONSENT_KIND, newest_first=True, limit=5000):
+        data = json.loads(row["data_json"])
+        for role in _roles_of(data):
+            latest.setdefault((role, data["origin"]), row["kind"])
+    out: dict[str, list[str]] = {}
+    for (role, endpoint_origin), kind in latest.items():
+        if kind == GIVEN:
+            out.setdefault(endpoint_origin, []).append(role)
+    return {o: sorted(r, key=list(ROLES).index) for o, r in out.items()}
 
 
 def has_consent(audit: AuditLog, use: CloudUse) -> bool:
@@ -111,9 +149,10 @@ def require_consent(config: Config, audit: AuditLog) -> list[CloudUse]:
     for u in not_allowed:
         section = "model" if u.role == "agent" else "sentinel"
         if u.role == "sentinel" and u.endpoint.base_url == config.model.base_url:
-            steps.append("The safety checker inherits [model], so it would use the same cloud endpoint. Recommended: "
-                         "keep it on a local model by setting [sentinel] base_url (and name) to your local server. Or, "
-                         "to send safety checks to the cloud too, add allow_cloud = true under [sentinel].")
+            steps.append("The safety checker uses the same model as the agent (the default), so its checks go to the "
+                         "same cloud endpoint. Add allow_cloud = true under [sentinel] to accept that; one "
+                         "confirmation then covers both. Or, to keep safety checks on this machine, set [sentinel] "
+                         "base_url (and name) to a local model server.")
         else:
             steps.append(f"Add allow_cloud = true under [{section}] in {config.source} to accept this.")
     if unconfirmed or not_allowed:
@@ -124,15 +163,23 @@ def require_consent(config: Config, audit: AuditLog) -> list[CloudUse]:
         + "\n\nOr point base_url at a local model server to keep everything on this machine.")
 
 
-def record_consent(audit: AuditLog, use: CloudUse, *, via: str) -> int:
-    return audit.record(GIVEN, f"cloud model confirmed for {use.role}: {use.provider_label} at {use.location.host}",
-                        actor="user", role=use.role, origin=use.origin, host=use.location.host,
-                        provider=use.endpoint.provider or None, sends=use.sends, via=via)
+def record_consent(audit: AuditLog, group: CloudUse | list[CloudUse], *, via: str) -> int:
+    """One record per endpoint: a group of uses on the same origin (agent and safety checker) is confirmed once."""
+    uses = [group] if isinstance(group, CloudUse) else group
+    first, roles = uses[0], [u.role for u in uses]
+    if len({u.origin for u in uses}) != 1:
+        raise ValueError("one consent record covers one endpoint origin")
+    shared = " (same endpoint)" if len(roles) > 1 else ""
+    return audit.record(GIVEN, f"cloud model confirmed for {' and '.join(roles)}{shared}: {first.provider_label} at "
+                        f"{first.location.host}", actor="user", role=roles[0], roles=roles,
+                        same_endpoint=len(roles) > 1, origin=first.origin, host=first.location.host,
+                        provider=first.endpoint.provider or None, sends=[s for u in uses for s in u.sends], via=via)
 
 
-def record_revocation(audit: AuditLog, role: str, endpoint_origin: str, *, via: str) -> int:
-    return audit.record(REVOKED, f"cloud model consent withdrawn for {role} ({endpoint_origin})", actor="user",
-                        role=role, origin=endpoint_origin, via=via)
+def record_revocation(audit: AuditLog, roles: str | list[str], endpoint_origin: str, *, via: str) -> int:
+    roles = [roles] if isinstance(roles, str) else roles
+    return audit.record(REVOKED, f"cloud model consent withdrawn for {' and '.join(roles)} ({endpoint_origin})",
+                        actor="user", role=roles[0], roles=roles, origin=endpoint_origin, via=via)
 
 
 # Model API keys -------------------------------------------------------------------------------------------

@@ -33,12 +33,18 @@ require_parameters = true
 # Only providers that don't collect your data. Add zdr = true for zero-data-retention endpoints only.
 data_collection = "deny"
 
-# Recommended: the safety checker (Sentinel) stays on a LOCAL model, so its reviews never leave this machine.
-# Point base_url at your local server (llama.cpp's default is shown). To send safety checks to OpenRouter as
-# well, delete base_url and name below and add allow_cloud = true instead.
+# The safety checker (Sentinel) uses the same model as the agent by default, so no second model is needed.
+# Its checks then go to OpenRouter too: each action Jig wants to take, with its details. allow_cloud below
+# accepts that for the safety checker; 'jig model cloud confirm' covers both roles in one confirmation.
 [sentinel]
-base_url = "http://127.0.0.1:8080/v1"
-name = ""
+allow_cloud = true
+
+# Optional: run the safety checker on a LOCAL model instead, so its reviews never leave this computer and it
+# is independent of OpenRouter. You then need a local model server running, with the memory that model takes.
+# Replace the [sentinel] section above with (llama.cpp's default address shown):
+# [sentinel]
+# base_url = "http://127.0.0.1:8080/v1"
+# name = ""
 
 # Set to true with a vision-capable model; Jig checks it with a real image at start-up.
 [vision]

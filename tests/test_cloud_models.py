@@ -147,9 +147,13 @@ def test_cloud_profiles(profile, tmp_path):
     assert (m.provider, m.base_url, m.api_key_secret, m.allow_cloud) == (
         profile, provider.base_url, f"model-key.{profile}", True)
     assert m.location.is_cloud and m.base_url.startswith("https://") and m.name
-    # Recommended: the safety checker stays on a local model, with no cloud key.
-    assert cfg.sentinel.location.kind == "local"
-    assert (cfg.sentinel.api_key_secret, cfg.sentinel.provider, cfg.sentinel.allow_cloud) == ("", "", False)
+    # Default: the safety checker is the agent's own model (no second model), acknowledged for the cloud explicitly.
+    s = cfg.sentinel
+    assert (s.base_url, s.name, s.provider, s.api_key_secret, s.allow_cloud) == (
+        m.base_url, m.name, m.provider, m.api_key_secret, True)
+    text = (REPO / "profiles" / f"{profile}.toml").read_text(encoding="utf-8")
+    assert "# [sentinel]\n# base_url = \"http://127.0.0.1:8080/v1\"" in text  # the optional local safety checker
+    assert "never leave this computer" in text
     if profile == "anthropic":
         assert m.structured_output_mode == "tool_call"
     if profile == "openrouter":
@@ -259,6 +263,55 @@ async def test_cloud_agent_with_local_sentinel_end_to_end(tls, tmp_path, monkeyp
         Jig(cfg)
     rows = load_rows(data, "model.cloud_consent")
     assert [k for k, _ in rows] == [GIVEN, REVOKED]
+
+
+@needs_llama
+async def test_safety_checker_on_the_agents_cloud_model_needs_one_confirmation(tls, tmp_path):
+    """The default (safety checker = agent's model) on a cloud endpoint: the Sentinel still needs its own
+    allow_cloud, but a single 'jig model cloud confirm' covers both roles and is recorded once, as shared."""
+    data = tmp_path / "data"
+    model = (f"base_url = '{tls.url(tls_llama.CLOUD_NAME)}'\nname = '{tls_llama.ALIAS}'\nca_file = '{tls.ca_file}'\n"
+             "api_key_secret = 'model-key.tlstest'\nmax_tokens = 4096\nallow_cloud = true")
+    no_ack = write_config(tmp_path / "no-ack.toml", model)
+    with pytest.raises(CloudConsentRequired) as refused:
+        Jig(load_config(no_ack, data_dir=data, sandbox_dir=tmp_path / "sb"))
+    assert "uses the same model as the agent (the default)" in str(refused.value)
+    assert "allow_cloud = true under [sentinel]" in str(refused.value)
+    out = cli(no_ack, data, "model", "cloud", "confirm", "--yes")
+    assert out.returncode == 1 and "[sentinel] allow_cloud is not set" in out.stderr
+
+    cfg_path = write_config(tmp_path / "jig.toml", model, "allow_cloud = true")
+    assert cli(cfg_path, data, "model", "key", "set", "tlstest", "--stdin", stdin=tls.api_key).returncode == 0
+    confirmed = cli(cfg_path, data, "model", "cloud", "confirm", "--yes")
+    assert confirmed.returncode == 0, confirmed.stderr
+    assert confirmed.stdout.count("would use") == 1
+    assert ("The agent and the safety checker (Sentinel) would use the same cloud model" in confirmed.stdout)
+    assert "each action Jig wants to take" in confirmed.stdout and "your conversation" in confirmed.stdout
+    rows = load_rows(data, "model.cloud_consent")
+    assert [k for k, _ in rows] == [GIVEN]
+    given = rows[0][1]
+    assert given["roles"] == ["agent", "sentinel"] and given["same_endpoint"] is True
+    assert given["origin"] == f"https://{tls_llama.CLOUD_NAME}:{tls.port}"
+
+    cfg = load_config(cfg_path, data_dir=data, sandbox_dir=tmp_path / "sb")
+    runtime = Jig(cfg)
+    await runtime.start(run_scheduler=False)  # real capability probes over TLS, once for the shared model
+    try:
+        conn = runtime.connection()
+        assert conn["agent"]["kind"] == conn["sentinel"]["kind"] == "cloud"
+        assert conn["sentinel"]["same_endpoint_as_agent"]
+        assert conn["agent"]["confirmed_at"] and conn["sentinel"]["confirmed_at"] == conn["agent"]["confirmed_at"]
+        assert runtime.capabilities["sentinel"] == {"same_as_agent": True}
+    finally:
+        await runtime.stop()
+
+    revoked = cli(cfg_path, data, "model", "cloud", "revoke")
+    assert revoked.returncode == 0 and revoked.stdout.count("Withdrawn") == 1
+    assert "the agent and the safety checker (Sentinel)" in revoked.stdout
+    rows = load_rows(data, "model.cloud_consent")
+    assert [k for k, _ in rows] == [GIVEN, REVOKED] and rows[1][1]["roles"] == ["agent", "sentinel"]
+    with pytest.raises(CloudConsentRequired):
+        Jig(cfg)
 
 
 def load_rows(data: Path, kind: str) -> list[tuple[str, dict]]:
@@ -437,7 +490,7 @@ def test_ui_shows_where_the_models_run(tls, tmp_path, monkeypatch):
                 page.goto(f"http://127.0.0.1:{local_port}/#settings/model")
                 page.wait_for_function("document.getElementById('st-agent-where').textContent === 'Local'",
                                        timeout=60_000)
-                assert page.get_by_test_id("sentinel-where").inner_text() == "Local"
+                assert page.get_by_test_id("sentinel-where").inner_text() == "Local (same model as the agent)"
                 assert not page.get_by_test_id("cloud-indicator").is_visible()
                 assert not page.get_by_test_id("cloud-note").is_visible()
                 context.close()
