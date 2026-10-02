@@ -1,12 +1,14 @@
 /*
  * Jig web UI. Dependency-free; talks only to the Jig runtime that serves it.
  * Authentication is a same-origin HttpOnly session cookie, so this script never sees the API token.
- * Model output and web-derived text are always inserted as text, never as HTML.
+ * Model output and web-derived text are never parsed as HTML: replies are shown with markdown.js, which builds
+ * elements and text nodes itself, and everything else is inserted as text.
  *
  * The main screen is Jig and the conversation. Approvals appear in the conversation, background work is one
  * line ("What Jig's up to") with the detail a tap away, and everything else lives in Settings (#settings/...).
  */
 import { STATES } from '/avatar/jig-avatar.js';
+import { renderMarkdown } from './markdown.js';
 
 const $ = (id) => document.getElementById(id);
 const TERMINAL_TASK = new Set(['done', 'failed', 'cancelled', 'blocked']);
@@ -869,7 +871,9 @@ async function sendChat(message) {
   $('chat-send').disabled = true;
   addMessage('user', message);
   const { msg, content } = addMessage('jig');
-  content.classList.add('typing');
+  content.classList.add('typing', 'md');
+  let replyText = '';
+  const showReply = () => content.replaceChildren(...renderMarkdown(replyText));
   let thinking = null;
   let working = null;
   let finished = false;
@@ -902,7 +906,8 @@ async function sendChat(message) {
       }
       thinking.pre.textContent += item.text;
     } else if (item.type === 'content') {
-      content.textContent += item.text;
+      replyText += item.text;
+      showReply();
     } else if (item.type === 'event') {
       const ev = item.event;
       if (ev.type === 'approval.requested') {
@@ -925,7 +930,10 @@ async function sendChat(message) {
     } else if (item.type === 'done') {
       finished = true;
       sessionId = item.session_id;
-      if (!content.textContent) content.textContent = item.final;
+      if (!replyText && item.final) {
+        replyText = item.final;
+        showReply();
+      }
     } else if (item.type === 'error') {
       finished = true;
       sessionId = item.session_id;
