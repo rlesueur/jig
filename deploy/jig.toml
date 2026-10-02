@@ -19,7 +19,6 @@ name = ""
 api_key_env = ""
 connect_timeout_s = 5.0
 read_timeout_s = 600.0
-max_tokens = 8192
 
 # Sent as-is with every request; include only keys your server accepts.
 [model.sampling]

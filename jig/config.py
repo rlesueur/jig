@@ -47,7 +47,9 @@ class EndpointConfig:
     headers: dict[str, str] = field(default_factory=dict)
     connect_timeout_s: float = 5.0
     read_timeout_s: float = 600.0
-    max_tokens: int = 8192
+    # Output limit per request (reasoning counts towards it). Unset: Jig sends none, so the server's context
+    # window is the only bound. Required only where the provider's API requires it (Anthropic).
+    max_tokens: int | None = None
     # Sent verbatim in each request body. Keys the server does not support should be left out.
     sampling: dict[str, Any] = field(default_factory=dict)
 
@@ -299,7 +301,8 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         if _same_origin(sentinel_raw["base_url"], model.base_url) is False:
             # A different server never gets the agent's API key, headers or provider-specific settings.
             defaults = EndpointConfig(base_url="")
-            for key in ("api_key_env", "api_key_secret", "provider", "structured_output", "ca_file", "headers"):
+            for key in ("api_key_env", "api_key_secret", "provider", "structured_output", "ca_file", "headers",
+                        "max_tokens"):
                 inherited[key] = getattr(defaults, key)
             if model.provider or model.location.is_cloud:
                 inherited["sampling"] = {}
@@ -395,6 +398,10 @@ def _check_endpoint(ep: EndpointConfig, section: str, base: Path) -> EndpointCon
     if reserved := sorted(RESERVED_REQUEST_KEYS & set(ep.sampling)):
         raise ConfigError(f"[{section}.sampling] must not set {reserved}: Jig sets these itself (the output limit is "
                           f"[{section}] max_tokens)")
+    if ep.max_tokens is not None and (not isinstance(ep.max_tokens, int) or isinstance(ep.max_tokens, bool)
+                                      or ep.max_tokens < 1):
+        raise ConfigError(f"[{section}] max_tokens must be a whole number of at least 1, not {ep.max_tokens!r}; "
+                          "leave it out for no output limit")
     if provider and provider.sampling_keys is not None:
         if unsupported := sorted(set(ep.sampling) - provider.sampling_keys):
             raise ConfigError(
@@ -407,6 +414,10 @@ def _check_endpoint(ep: EndpointConfig, section: str, base: Path) -> EndpointCon
             raise ConfigError(f"[{section}.sampling] temperature = {temperature} is above {provider.label}'s maximum "
                               f"of {provider.temperature_max}, which it would silently cap; set it to "
                               f"{provider.temperature_max} or less")
+    if provider and provider.max_tokens_required and ep.max_tokens is None:
+        raise ConfigError(f"[{section}] max_tokens is required: {provider.label}'s API rejects a request without an "
+                          "output limit. Set it to the maximum output documented for your model (thinking counts "
+                          f"towards it); profiles/{provider.id}.toml shows the value for its model. See {provider.docs}")
     if any(h.lower() in ("authorization", "x-api-key", "api-key") for h in ep.headers):
         raise ConfigError(f"[{section}.headers] must not carry the API key; use api_key_secret (the vault) or "
                           "api_key_env")

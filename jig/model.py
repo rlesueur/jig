@@ -230,8 +230,9 @@ class ModelClient:
             "model": self._require_name(model),
             "messages": messages,
             "stream": stream,
-            provider.max_tokens_field if provider else "max_tokens": max_tokens or self.config.max_tokens,
         }
+        if (limit := max_tokens or self.config.max_tokens) is not None:
+            body[provider.max_tokens_field if provider else "max_tokens"] = limit
         if tools:
             body["tools"] = tools
         if response_schema is not None:
@@ -290,18 +291,34 @@ class ModelClient:
             raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}")) from exc
         result.elapsed_s = time.perf_counter() - started
         if result.finish_reason == "length":
-            field_name = next(k for k in ("max_completion_tokens", "max_tokens") if k in body)
-            raise ModelError(
-                f"{self.label} output was cut off at {field_name} ({body[field_name]}); "
-                "raise max_tokens or shorten the task"
-            )
+            raise ModelError(self._cut_off_message(body, result))
         if response_schema is not None and self.config.structured_output_mode == "tool_call":
             result = self._structured(result)
         return result
 
+    def _cut_off_message(self, body: dict[str, Any], result: ChatResult) -> str:
+        """Why the reply stopped early (finish_reason "length"): the configured output limit, or the context window."""
+        used = _token_counts(result)
+        field_name = next((k for k in ("max_completion_tokens", "max_tokens") if k in body), None)
+        if field_name is not None:
+            return (f"{self.label} output was cut off at the output limit set in the config ({field_name} = "
+                    f"{body[field_name]}{used}); raise or remove max_tokens"
+                    + (", up to the model's documented maximum" if self.config.provider_info
+                       and self.config.provider_info.max_tokens_required else "")
+                    + ". Reasoning models' thinking counts towards it.")
+        context = self.server_info.get("context_tokens")
+        size = f" of {context} tokens" if context else ""
+        return (f"{self.label} output stopped because the conversation filled the model's context window{size}{used}. "
+                "Start the model server with a larger context, or split the task into smaller ones.")
+
     def _http_error(self, status: int, text: str) -> ModelError:
         text = self.redact(text)
         hint = " (the API key was refused: check it with 'jig model key status')" if status in (401, 403) else ""
+        if overflow := _context_overflow(text):
+            return ModelError(f"{self.label}: the conversation ({overflow[0]} tokens) no longer fits the model's "
+                              f"context window ({overflow[1]} tokens), so the server refused it. Start the model "
+                              "server with a larger context, or split the task into smaller ones.",
+                              status=status, body=text)
         return ModelError(f"{self.label} server returned HTTP {status}{hint}: {text[:500]}", status=status, body=text)
 
     async def _complete(self, body: dict[str, Any]) -> ChatResult:
@@ -487,6 +504,26 @@ def _merge_details(details: list[dict[str, Any]], chunk: list[Any]) -> None:
                 slot[key] += value
             elif value is not None:
                 slot[key] = value
+
+
+def _token_counts(result: ChatResult) -> str:
+    """", prompt N tokens, output M tokens" from the usage or llama.cpp timings the server reported, or ""."""
+    prompt = result.usage.get("prompt_tokens") or result.timings.get("prompt_n")
+    output = result.usage.get("completion_tokens") or result.timings.get("predicted_n")
+    parts = [f"prompt {prompt} tokens" if prompt else "", f"output {output} tokens" if output else ""]
+    return "".join(f", {p}" for p in parts if p)
+
+
+def _context_overflow(text: str) -> tuple[int, int] | None:
+    """(prompt tokens, context size) from llama.cpp's exceed_context_size_error, which reports both."""
+    try:
+        error = json.loads(text).get("error")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(error, dict) or error.get("type") != "exceed_context_size_error":
+        return None
+    prompt, context = error.get("n_prompt_tokens"), error.get("n_ctx")
+    return (prompt, context) if isinstance(prompt, int) and isinstance(context, int) else None
 
 
 def _arguments_text(value: Any) -> str:

@@ -30,7 +30,12 @@ name = "claude-sonnet-5-5"
 api_key_secret = "model-key.anthropic"
 # You accept that your conversation, memory snippets in prompts, tool results and images are sent to Anthropic.
 allow_cloud = true
-max_tokens = 8192
+# Required: the Messages API behind this endpoint needs max_tokens on every request
+# (https://platform.claude.com/docs/en/api/messages/create), and Jig refuses to start without it. 128000 is the
+# documented maximum output of claude-sonnet-5-5 ("Max output: 128K tokens",
+# https://platform.claude.com/docs/en/models/overview); thinking counts towards it. If you change name, set the
+# maximum documented for that model.
+max_tokens = 128000
 
 # The safety checker (Sentinel) uses the same model as the agent by default, so no second model is needed.
 # Its checks then go to Anthropic too: each action Jig wants to take, with its details. allow_cloud below

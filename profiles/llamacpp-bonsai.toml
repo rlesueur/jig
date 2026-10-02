@@ -6,8 +6,6 @@
 [model]
 base_url = "http://127.0.0.1:8080/v1"
 name = "bonsai-2-27b"
-max_tokens = 8192
-
 [model.sampling]
 temperature = 1.0
 top_p = 0.95

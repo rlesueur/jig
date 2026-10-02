@@ -13,7 +13,8 @@
 #   structured output (response_format) and reasoning_effort are documented. Other parameters "will be
 #   silently ignored", so Jig refuses any [model.sampling] key outside temperature, top_p, stop,
 #   reasoning_effort and extra_body. Gemini-only options go in extra_body.
-# - Reasoning "cannot be turned off for Gemini 2.5 Pro or 3 models"; thinking counts towards max_tokens.
+# - Reasoning "cannot be turned off for Gemini 2.5 Pro or 3 models"; thinking counts towards any max_tokens. The
+#   output limit is optional, so none is set here and Jig sends none.
 # - https://ai.google.dev/gemini-api/docs/generate-content/thinking#signatures: Gemini 3 needs its thought
 #   signatures sent back with function calls. Jig keeps every extra field of a tool call and sends it back.
 
@@ -24,7 +25,6 @@ name = "gemini-3.8-flash"
 api_key_secret = "model-key.gemini"
 # You accept that your conversation, memory snippets in prompts, tool results and images are sent to Google.
 allow_cloud = true
-max_tokens = 8192
 
 # [model.sampling]
 # reasoning_effort = "low"   # documented: maps to Gemini's thinking level

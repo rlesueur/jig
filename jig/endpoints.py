@@ -98,8 +98,10 @@ class Provider:
     label: str
     base_url: str
     docs: str
-    # The request field that limits output length.
+    # The request field that limits output length, sent only when an output limit is configured.
     max_tokens_field: str = "max_tokens"
+    # The provider rejects a request without an output limit, so [model] max_tokens must be set.
+    max_tokens_required: bool = False
     # "json_schema": response_format with a JSON schema. "tool_call": a single forced tool call whose
     # arguments are the answer, for APIs that ignore response_format.
     structured_output: str = "json_schema"
@@ -143,10 +145,13 @@ PROVIDERS: dict[str, Provider] = {
     # "Ignored", tool "strict" is ignored, temperature above 1 "capped at 1", and "most unsupported fields are
     # silently ignored". So structured output uses a forced tool call (tool_choice is "Fully supported"), and
     # only the documented sampling keys are accepted. GET /v1/models pages 20 at a time by default (limit up
-    # to 1000; https://platform.claude.com/docs/en/api/models/list).
+    # to 1000; https://platform.claude.com/docs/en/api/models/list). max_tokens is a required body parameter of
+    # the Messages API behind this layer (https://platform.claude.com/docs/en/api/messages/create), and each
+    # model has its own documented maximum (https://platform.claude.com/docs/en/models/overview).
     "anthropic": Provider(
         id="anthropic", label="Anthropic", base_url="https://api.anthropic.com/v1",
         docs="https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk",
+        max_tokens_required=True,
         structured_output="tool_call",
         sampling_keys=frozenset({"temperature", "top_p", "stop", "parallel_tool_calls", "thinking"}),
         temperature_max=1.0,

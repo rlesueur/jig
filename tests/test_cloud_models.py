@@ -126,7 +126,7 @@ def test_model_launch_refused_for_a_cloud_endpoint(tmp_path):
 
 def test_sentinel_never_inherits_cloud_consent_key_or_provider_settings(tmp_path):
     agent = ('base_url = "https://api.anthropic.com/v1"\nprovider = "anthropic"\nname = "claude-sonnet-5-5"\n'
-             'api_key_secret = "model-key.anthropic"\nallow_cloud = true\n[model.headers]\n'
+             'api_key_secret = "model-key.anthropic"\nallow_cloud = true\nmax_tokens = 128000\n[model.headers]\n'
              'anthropic-workspace-id = "wrkspc_1"\n[model.sampling]\ntemperature = 0.5')
     local = load_config(write_config(tmp_path / "a.toml", agent, 'base_url = "http://127.0.0.1:8080/v1"'))
     assert local.model.location.is_cloud and local.model.allow_cloud

@@ -8,7 +8,9 @@
 # Get a key at https://openrouter.ai/settings/keys
 #
 # Checked against OpenRouter's documentation (October 2026):
-# - https://openrouter.ai/docs/api_reference/overview: OpenAI-shaped requests at /api/v1; max_tokens; tools.
+# - https://openrouter.ai/docs/api_reference/overview: OpenAI-shaped requests at /api/v1; tools.
+# - https://openrouter.ai/docs/api_reference/parameters: max_tokens is optional (at most the context length minus
+#   the prompt), so Jig sends none unless you set max_tokens here; reasoning counts towards it.
 # - https://openrouter.ai/docs/guides/features/tool-calling: pick a model listed at
 #   https://openrouter.ai/models?supported_parameters=tools
 # - https://openrouter.ai/docs/guides/routing/provider-selection: by default, providers that don't support a
@@ -25,7 +27,6 @@ api_key_secret = "model-key.openrouter"
 # You accept that your conversation, memory snippets in prompts, tool results and images are sent to
 # OpenRouter and the provider it routes to.
 allow_cloud = true
-max_tokens = 8192
 
 # Sent with every request (OpenRouter's provider routing preferences).
 [model.sampling.provider]

@@ -24,7 +24,9 @@ api_key_env = ""
 # provider's documented differences; anything it doesn't support is an error.
 connect_timeout_s = 5.0
 read_timeout_s = 600.0
-max_tokens = 8192
+# No output limit is sent unless you set one: local servers are bounded by their
+# context window, and a reasoning model's thinking would count towards a limit.
+# Set max_tokens = <tokens> only if you want a cap.
 
 # Sent as-is with every request. Tune per model and only include keys your server accepts.
 [model.sampling]

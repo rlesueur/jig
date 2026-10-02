@@ -10,7 +10,8 @@
 # Checked against OpenAI's documentation (October 2026):
 # - https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
 #   max_tokens "is now deprecated in favor of max_completion_tokens, and is not compatible with o-series
-#   models", so with provider = "openai" Jig sends max_completion_tokens. Reasoning tokens count towards it.
+#   models", so with provider = "openai" a max_tokens you set is sent as max_completion_tokens. It is optional,
+#   so none is set here and Jig sends no limit. Reasoning tokens count towards it.
 # - https://developers.openai.com/api/docs/guides/reasoning: "Chat Completions does not support function
 #   calling with GPT-6 Astra or GPT-6.1 Sol". Pick a model that supports it there (the function-calling guide's
 #   Chat Completions examples use GPT-5.6); Jig's tool-calling check at start-up refuses one that doesn't.
@@ -23,7 +24,6 @@ name = "gpt-5.6-terra"
 api_key_secret = "model-key.openai"
 # You accept that your conversation, memory snippets in prompts, tool results and images are sent to OpenAI.
 allow_cloud = true
-max_tokens = 8192
 # OpenAI's reasoning models only accept their default sampling settings, so none are set.
 
 # The safety checker (Sentinel) uses the same model as the agent by default, so no second model is needed.
