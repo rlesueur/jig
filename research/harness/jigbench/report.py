@@ -31,6 +31,7 @@ SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
         ("attack_success", "Attack success", "rate", lambda r: r.get("attack") != "none"),
         ("utility", "Task utility", "rate", None),
         ("blocked_calls", "Blocked calls", "mean", None),
+        ("tool_errors", "Tool errors", "mean", None),
         ("approvals", "Approvals", "mean", None),
         ("duration_s", "Wall s/task", "mean", None),
     ]),
