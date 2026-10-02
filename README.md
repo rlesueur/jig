@@ -132,9 +132,11 @@ python -m venv .venv
 .\.venv\Scripts\jig chat --url http://127.0.0.1:8766
 ```
 
+**Running code needs Docker.** Out of the box (`[sandbox] backend = "directory"`), Jig chats, reads the web, remembers, runs schedules and works with files in its own folder, but it **cannot run code, shell commands or a web browser**. Those run only inside an isolated Docker container. To turn them on, install and start Docker, run `jig sandbox build` once, set `[sandbox] backend = "container"` and restart Jig (details in [Container sandbox and headless browser](#container-sandbox-and-headless-browser)). `jig sandbox status` tells you what is missing, and so does Settings > Model and connection > Running code in the web UI. When code is off, the agent is told so and says so plainly rather than pretending.
+
 ### Web UI
 
-`jig serve` also serves a dependency-free web UI at `http://127.0.0.1:8766/`. It has the live avatar (on the real `/events` stream), streaming chat with collapsed thinking, activity (goals, tasks and runs, with create, cancel, pause and resume), the approvals inbox with the Sentinel's verdict and reason, memory (list, search, edit, forget), the custom rules editor (core rules are read-only), the audit log and the model status. The avatar is served from `avatar/jig-avatar.js` in this repository, not copied, so the UI needs an editable install (`pip install -e .`) or a source checkout.
+`jig serve` also serves a dependency-free web UI at `http://127.0.0.1:8766/`. It has the live avatar (on the real `/events` stream), streaming chat with collapsed thinking, activity (goals, tasks and runs, with create, cancel, pause and resume), the approvals inbox with the Sentinel's verdict and reason, memory (list, search, edit, forget one, or forget everything), schedules (list, add, pause, resume and delete, with the next run and the last result), the custom rules editor (core rules are read-only), the audit log, the model status and whether Jig can run code. The avatar is served from `avatar/jig-avatar.js` in this repository, not copied, so the UI needs an editable install (`pip install -e .`) or a source checkout.
 
 Run `jig ui` to open it signed in (see [Access and the API token](#access-and-the-api-token)). `jig ui --print-url` prints the one-time link instead of opening a browser.
 
@@ -379,13 +381,41 @@ You can use the Jig on your computer from your phone, tablet or laptop, at home 
 - **Never Tailscale Funnel.** Funnel would put Jig on the public internet. Jig refuses to start if `tailscale serve status --json` shows a funnel to its port. `jig remote enable` refuses as well, and every request that tailscaled marks as funnelled (`Tailscale-Funnel-Request`) is rejected. Do not run `tailscale funnel` for Jig's port.
 - **In container mode**, see [docs/container.md](docs/container.md#use-jig-from-your-other-devices-tailscale): Jig cannot see which process owns a connection, so the tailnet name is configured explicitly and a paired device session is what grants access.
 
+## Schedules
+
+A schedule is a job Jig does by itself at set times, in the background: "every weekday at 08:00, summarise the technology headlines". Each run is an ordinary task, so the usual rules, the Sentinel and approvals apply, and research schedules (the default) can only read and take notes. Manage them in Settings > Schedules, which shows each schedule's next run and the outcome of its last one, or through `/schedules`.
+
+A schedule repeats in one of these ways. Calendar times are wall-clock times in the schedule's own timezone (the web UI uses your browser's; the API and the agent default to `[runtime] timezone`), so 08:00 stays 08:00 when the clocks change. A time that a spring change skips runs an hour later that day, and a time that an autumn change repeats runs once.
+
+| `repeat` | Example |
+| --- | --- |
+| `{"kind": "daily", "at": "08:00"}` | every day at 08:00 |
+| `{"kind": "weekdays", "at": "08:00"}` | Monday to Friday at 08:00 |
+| `{"kind": "weekly", "days": ["mon", "thu"], "at": "18:30"}` | Mondays and Thursdays at 18:30 |
+| `{"kind": "interval", "interval_s": 3600}` | every hour, counted from the last run (the original `interval_s` field still works) |
+| `{"kind": "cron", "cron": "*/15 9-17 * * mon-fri"}` | a five-field cron expression: lists, ranges, steps, month and day names, `@daily` and the like |
+
+```powershell
+$h = @{ Authorization = "Bearer $(.\.venv\Scripts\jig token show)" }
+$body = @{ name = "Tech headlines"; prompt = "Summarise the BBC technology headlines"
+           repeat = @{ kind = "weekdays"; at = "08:00" }; timezone = "Europe/London" } | ConvertTo-Json
+Invoke-RestMethod -Method Post http://127.0.0.1:8766/schedules -Headers $h -ContentType application/json -Body $body
+```
+
+**Asking Jig.** Say "every weekday at 8am, summarise X" in the chat and the agent proposes it with the `schedule_create` tool. That tool is human-only: a core rule means it always asks you first, with a card that shows the schedule's name, what it will do, how it repeats and its next three runs. Nothing is saved unless you say yes. The agent can also list the schedules (`schedule_list`), but only you can change or delete them.
+
+Paused schedules don't run. When you resume a calendar schedule that missed its time while paused, it waits for its next time; an overdue interval schedule runs straight away. While the whole agent is paused, no schedule runs. After sleep or a clock change, each overdue schedule runs once (see [Running Jig always-on](#running-jig-always-on)).
+
 ## Container sandbox and headless browser
 
 By default (`[sandbox] backend = "directory"`), the file tools are confined to a folder and Jig cannot run code or use a browser. To run code, shell commands and a headless Chromium in an isolated Linux container, use the container backend:
 
 ```powershell
+.\.venv\Scripts\jig sandbox status     # is Docker running, is the image built, what is left to do
 .\.venv\Scripts\jig sandbox build      # docker build -t jig-sandbox:0.1.0 jig/sandbox_container/image
 ```
+
+**Why it isn't the default.** The container backend refuses to start without a running Docker and the built image, and Jig never falls back to the directory sandbox. As the default, it would stop Jig starting at all on a machine without Docker, or whenever Docker Desktop is not running yet at sign-in. So the directory backend stays the default and Jig says plainly what is missing: `jig sandbox status`, `GET /sandbox` and Settings > Model and connection > Running code all list the steps.
 
 ```toml
 [sandbox]
@@ -479,7 +509,7 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 
 **Audit.** Every model-call summary, tool call and result, policy decision, Sentinel verdict, approval, vault use, state change, and rule or memory change is appended to an audit log that SQLite triggers make append-only. Query it with `GET /audit?kind=tool&task_id=...`. Forgetting a memory deletes it from the table and the search index, and the audit log records only its id, never its content.
 
-**Memory.** Memory is fully inspectable and editable: `GET /memory`, `GET /memory?q=...`, `POST /memory`, `PATCH /memory/{id}` and `DELETE /memory/{id}`, which really forgets it.
+**Memory.** Memory is fully inspectable and editable: `GET /memory`, `GET /memory?q=...`, `POST /memory`, `PATCH /memory/{id}` and `DELETE /memory/{id}`, which really forgets it. `POST /memory/wipe` `{"confirm": true}` (Settings > What Jig remembers about you > Forget everything) forgets every memory at once: the rows and the whole FTS5 index are deleted (there are no embeddings), SQLite overwrites the freed pages with zeros (`secure_delete`), and the write-ahead log is checkpointed and truncated, so the text is no longer in the database files. The audit log records `memory.wiped` with the count, never the content. Past conversations, task results and the audit log's record of earlier tool calls are not changed: wiping memory stops Jig remembering, it does not rewrite history.
 
 **Sandbox.** Every file tool is confined to `sandbox/<agent_id>/`. Absolute paths, drive letters, UNC paths, `..`, alternate data streams, reserved device names, and symlinks or junctions that lead out are all rejected. This is a directory jail, not an OS-level sandbox. Code execution and the browser exist only with the container backend (see above), which adds OS-level isolation and gated egress.
 
@@ -499,17 +529,17 @@ Each tool category maps to a variant: web to `browsing`, files and email to `wri
 
 | Area | Endpoints |
 | --- | --- |
-| Health | `GET /health` (public, `{"status": "ok"}` only), `GET /status`, `GET /state`, `GET /tools` |
+| Health | `GET /health` (public, `{"status": "ok"}` only), `GET /status`, `GET /state`, `GET /tools`, `GET /sandbox` (can Jig run code, and if not, what's missing) |
 | Auth | `POST /auth/login-code`, `GET/POST /auth/session`, `POST /auth/logout`, `POST /auth/pair` `{code, name}` (public, a pairing code is the credential), `POST /auth/token/rotate` `{confirm: true}` (host only; revokes every device) |
 | Agent | `GET /agent`, `POST /agent/pause`, `POST /agent/resume` |
 | Events | `WS /events`, `GET /events/sse`, `GET /events/recent?after=` |
 | Chat | `POST /chat` (NDJSON stream: `start`, `reasoning`, `content`, `event`, `done` / `error`), `GET /sessions/{id}` |
 | Goals | `POST /goals`, `GET /goals`, `GET /goals/{id}`, `POST /goals/{id}/cancel` |
 | Tasks | `POST /tasks`, `GET /tasks?newest_first=&limit=`, `GET /tasks/{id}`, `POST /tasks/{id}/cancel`, `POST /tasks/{id}/pause`, `POST /tasks/{id}/resume`, `GET /runs?task_id=&kind=`, `GET /runs/{id}` |
-| Schedules | `POST /schedules`, `GET /schedules`, `PATCH /schedules/{id}`, `DELETE /schedules/{id}` |
+| Schedules | `POST /schedules` `{name, prompt, mode, repeat \| interval_s, timezone}`, `GET /schedules` (with `next_run_at`, `repeat_text` and `last_task`), `PATCH /schedules/{id}` `{enabled, name, prompt, mode, repeat, timezone}`, `DELETE /schedules/{id}` |
 | Approvals | `GET /approvals?status=pending`, `GET /approvals/{id}`, `POST /approvals/{id}` `{approve, note}` |
 | Rules | `GET/POST /rules`, `GET/PATCH/DELETE /rules/{id}`, `GET /rules/core` |
-| Memory | `GET/POST /memory`, `GET/PATCH/DELETE /memory/{id}`, `GET /notes` |
+| Memory | `GET/POST /memory`, `GET/PATCH/DELETE /memory/{id}`, `POST /memory/wipe` `{confirm: true}`, `GET /notes` |
 | Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&before_id=&newest_first=&limit=` |
 | Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` (not for `connector.*` secrets) |
 | Connections | `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only), `POST /connections/{provider}/disconnect` `{confirm: true}` |
@@ -539,7 +569,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - **Smaller-GPU support**: measured setups for 8 GB cards, with one model as both agent and safety checker (a different safety checker model stays optional via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
-- Embeddings-backed memory search and cron-style schedules.
+- Embeddings-backed memory search.
 
 ## Licence
 
