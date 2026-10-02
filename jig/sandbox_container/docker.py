@@ -6,6 +6,7 @@ import asyncio
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from ..errors import SandboxUnavailable
 
@@ -46,6 +47,30 @@ def require_daemon() -> str:
             f"Docker said: {err[:400]}"
         )
     return proc.stdout.decode().strip()
+
+
+def docker_status(image: str, *, timeout: float = 10.0) -> dict[str, Any]:
+    """What is in place for the container sandbox: the CLI, a running daemon and the built image. Never raises."""
+    out: dict[str, Any] = {"cli": shutil.which("docker") is not None, "daemon": False, "version": None,
+                           "image": image, "image_built": False, "problem": None}
+    if not out["cli"]:
+        out["problem"] = "Docker is not installed (the docker command was not found)."
+        return out
+    try:
+        proc = docker("info", "--format", "{{.ServerVersion}}", timeout=timeout, check=False)
+    except SandboxUnavailable as exc:
+        out["problem"] = f"Docker did not answer: {exc}"
+        return out
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", "replace").strip()
+        out["problem"] = f"Docker is installed but not running. Docker said: {err[:300]}"
+        return out
+    out["daemon"], out["version"] = True, proc.stdout.decode().strip()
+    try:
+        out["image_built"] = docker("image", "inspect", image, timeout=timeout, check=False).returncode == 0
+    except SandboxUnavailable as exc:
+        out["problem"] = f"Docker did not answer: {exc}"
+    return out
 
 
 def build_image(tag: str) -> None:

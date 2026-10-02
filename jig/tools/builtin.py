@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from ..constants import Effect, TaskVariant, ToolCategory
-from ..errors import ToolError
+from ..constants import Effect, Mode, TaskVariant, ToolCategory
+from ..errors import ToolArgumentError, ToolError
+from ..recurrence import Recurrence
 from .registry import ToolContext, ToolRegistry
 from .web import ensure_public, extract_readable
 
@@ -202,7 +203,90 @@ def build_registry() -> ToolRegistry:
             "dst": bool(now.dst()),
         }
 
+    async def describe_schedule(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+        rec, _tz = _schedule_recurrence(ctx, args)
+        runs, t = [], datetime.now(UTC)
+        for _ in range(3):
+            t = rec.next_after(t)
+            runs.append(_local_words(t, rec.timezone or ctx.config.runtime.timezone))
+        repeats = rec.describe() + (f" ({rec.timezone})" if rec.timezone else "")
+        return {"repeats": repeats, "next_runs": "; ".join(runs)}
+
+    @tool(
+        description="Propose a schedule: a job Jig then runs by itself at set times, in the background, such as "
+        "'every weekday at 08:00, summarise the news about X'. The user must approve it before it is saved. "
+        "repeat is daily, weekdays (Monday to Friday), weekly (with days), interval (with every_minutes) or "
+        "cron (with a five-field cron expression). Times are local, 24-hour HH:MM.",
+        effect=Effect.SIDE_EFFECT,
+        category=ToolCategory.TIME,
+        human_only=True,
+        resolve=describe_schedule,
+        args={
+            "name": "Short name for the schedule, such as 'Morning news summary'.",
+            "prompt": "What to do each time, as complete, self-contained instructions.",
+            "repeat": "How often it runs.",
+            "at": "For daily, weekdays and weekly: the local time, HH:MM (24-hour), such as 08:00.",
+            "days": "For weekly: the days, such as [\"mon\", \"thu\"].",
+            "every_minutes": "For interval: minutes between runs (at least 1).",
+            "cron": "For cron: the expression, such as '0 8 * * 1-5'.",
+            "mode": "research (just looks things up and takes notes; the usual choice) or action (may act, asking "
+                    "the user when needed).",
+            "timezone": "IANA timezone for the times; leave empty for the user's timezone.",
+        },
+    )
+    async def schedule_create(ctx: ToolContext, name: str, prompt: str,
+                              repeat: Literal["daily", "weekdays", "weekly", "interval", "cron"], at: str = "",
+                              days: list | None = None, every_minutes: int = 0, cron: str = "",
+                              mode: Literal["research", "action"] = "research", timezone: str = "") -> dict[str, Any]:
+        rec, tz = _schedule_recurrence(ctx, {"repeat": repeat, "at": at, "days": days,
+                                             "every_minutes": every_minutes, "cron": cron, "timezone": timezone})
+        source = f"task:{ctx.task_id}" if ctx.task_id else f"run:{ctx.run_id}"
+        s = ctx.store.create_schedule(name=name.strip(), prompt=prompt.strip(), mode=Mode(mode), repeat=rec.repeat,
+                                      timezone=tz, created_by=f"agent ({source})")
+        return {"schedule_id": s["id"], "name": s["name"], "repeats": s["repeat_text"], "timezone": s["timezone"],
+                "first_run": _local_words(datetime.fromisoformat(s["next_run_at"]), tz), "mode": s["mode"]}
+
+    @tool(
+        description="List the schedules: what Jig does by itself and when it next runs.",
+        effect=Effect.READ,
+        category=ToolCategory.TIME,
+    )
+    async def schedule_list(ctx: ToolContext) -> dict[str, Any]:
+        default_tz = ctx.config.runtime.timezone
+        return {"schedules": [{
+            "id": s["id"], "name": s["name"], "prompt": s["prompt"], "mode": s["mode"], "enabled": s["enabled"],
+            "repeats": s["repeat_text"], "timezone": s["timezone"],
+            "next_run": _local_words(datetime.fromisoformat(s["next_run_at"]), s["timezone"] or default_tz),
+            "last_status": s["last_task"]["status"] if s["last_task"] else None,
+        } for s in ctx.store.list_schedules()]}
+
     return registry
+
+
+def _schedule_recurrence(ctx: ToolContext, args: dict[str, Any]) -> tuple[Recurrence, str]:
+    """The schedule_create arguments as a validated repeat, and the timezone its times are in."""
+    kind = args.get("repeat")
+    tz = args.get("timezone") or ctx.config.runtime.timezone
+    if kind == "interval":
+        minutes = args.get("every_minutes") or 0
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes < 1:
+            raise ToolArgumentError("schedule_create: an interval repeat needs every_minutes of at least 1")
+        repeat: dict[str, Any] = {"kind": "interval", "interval_s": minutes * 60}
+    elif kind == "cron":
+        repeat = {"kind": "cron", "cron": args.get("cron") or ""}
+    elif kind == "weekly":
+        repeat = {"kind": "weekly", "at": args.get("at") or "", "days": args.get("days") or []}
+    else:
+        repeat = {"kind": kind, "at": args.get("at") or ""}
+    try:
+        rec = Recurrence(repeat, tz)
+    except ValueError as exc:
+        raise ToolArgumentError(f"schedule_create: {exc}") from None
+    return rec, tz
+
+
+def _local_words(t: datetime, tz: str) -> str:
+    return t.astimezone(ZoneInfo(tz)).strftime("%a %d %b %Y, %H:%M")
 
 
 def http_client() -> httpx.AsyncClient:

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, TaskStatus
-from .db import later_iso, now, now_iso
+from .db import iso, now, now_iso
 
 if TYPE_CHECKING:
     from .runtime import Jig
@@ -107,9 +107,10 @@ class Scheduler:
     def _check_clock(self) -> None:
         """Detect sleep, hibernation or a clock change between ticks, and keep schedules sane afterwards.
 
-        Overdue schedules are not replayed once per missed interval: each fires once on the next tick
+        Overdue schedules are not replayed once per missed run: each fires once on the next tick
         (with the number of missed runs in its audit entry) and then continues from now. If the clock
-        went backwards, schedules that now look far in the future are brought back to one interval away.
+        went backwards, schedules that now look far in the future are brought back to their next run from
+        now (one interval away, or the next calendar time).
         """
         wall, mono = time.time(), time.monotonic()
         last, self._last_clock = self._last_clock, (wall, mono)
@@ -122,8 +123,11 @@ class Scheduler:
         overdue = [s["name"] for s in store.due_schedules()]
         pulled_back = []
         for s in store.list_schedules():
-            if s["enabled"] and _parse(s["next_run_at"]) > now() + timedelta(seconds=s["interval_s"]):
-                store.update_schedule(s["id"], next_run_at=later_iso(s["interval_s"]))
+            if not s["enabled"]:
+                continue
+            soonest = store.recurrence(s).next_after(now())
+            if _parse(s["next_run_at"]) > soonest:
+                store.update_schedule(s["id"], next_run_at=iso(soonest))
                 pulled_back.append(s["name"])
         # Wall time far ahead of monotonic time means the clock was changed rather than the machine sleeping;
         # on some platforms the monotonic clock also runs during sleep, so this is a hint, not a certainty.
@@ -147,8 +151,9 @@ class Scheduler:
         for s in store.due_schedules():
             task = store.create_task(title=s["name"], description=s["prompt"], mode=Mode(s["mode"]),
                                      schedule_id=s["id"])
-            missed = int((now() - _parse(s["next_run_at"])).total_seconds() // s["interval_s"])
-            store.update_schedule(s["id"], next_run_at=later_iso(s["interval_s"]), last_task_id=task["id"])
+            rec, at = store.recurrence(s), now()
+            missed = rec.missed_between(_parse(s["next_run_at"]), at)
+            store.update_schedule(s["id"], next_run_at=iso(rec.next_after(at)), last_task_id=task["id"])
             audit.record("schedule.fired", f"schedule {s['name']!r} queued a task", actor="scheduler",
                          task_id=task["id"], schedule_id=s["id"], missed_runs=missed)
             self.jig.publish_task(task)

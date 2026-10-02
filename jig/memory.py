@@ -4,6 +4,7 @@ Storage lives in SQLite. Search goes through a pluggable ``SearchBackend``;
 the default uses FTS5, and an embedding backend can be added later.
 Forgetting is a hard delete: the content is removed from the table and the
 index, and the audit log records only the memory's id, never its content.
+``wipe`` forgets everything at once. There are no embeddings; FTS5 is the only index.
 """
 
 from __future__ import annotations
@@ -45,14 +46,15 @@ class FTS5Backend:
 
 class MemoryStore:
     def __init__(self, db: Database, backend: SearchBackend | None = None,
-                 on_change: Callable[[int, str], None] | None = None):
+                 on_change: Callable[[int | None, str], None] | None = None):
         self.db = db
         self.backend = backend or FTS5Backend(db)
         # Called with (memory_id, "added" | "edited" | "forgotten") after every change, whoever made it
         # (the user through the API or the agent through its memory tools), so open UIs stay current.
+        # A wipe of everything is (None, "wiped").
         self.on_change = on_change
 
-    def _changed(self, memory_id: int, action: str) -> None:
+    def _changed(self, memory_id: int | None, action: str) -> None:
         if self.on_change:
             self.on_change(memory_id, action)
 
@@ -123,6 +125,27 @@ class MemoryStore:
         if cur.rowcount == 0:
             raise NotFound(f"memory {memory_id} does not exist")
         self._changed(memory_id, "forgotten")
+
+    def count(self) -> int:
+        return int(self.db.one("SELECT COUNT(*) AS n FROM memories")["n"])  # type: ignore[index]
+
+    def wipe(self) -> dict[str, Any]:
+        """Forget every memory: the rows, the whole search index, and the database pages that held them.
+
+        Deleted pages are zeroed (``secure_delete``) and the write-ahead log is checkpointed and truncated,
+        so the text is no longer in the database files. ``wal_cleared`` is False only if another connection
+        (for example a CLI command) was reading at that moment; the next checkpoint then clears it.
+        """
+        with self.db.transaction() as conn:
+            n = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+            conn.execute("DELETE FROM memories")
+            # The external-content index is kept in step by triggers; 'delete-all' also drops anything
+            # it might still hold, and 'optimize' rewrites it into fresh, empty segments.
+            conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')")
+            conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('optimize')")
+        busy, _log, _done = self.db.one("PRAGMA wal_checkpoint(TRUNCATE)").values()  # type: ignore[union-attr]
+        self._changed(None, "wiped")
+        return {"forgotten": n, "wal_cleared": busy == 0}
 
     @staticmethod
     def _out(row: dict[str, Any]) -> dict[str, Any]:

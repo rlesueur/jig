@@ -108,6 +108,24 @@ def _sandbox(args: argparse.Namespace) -> int:
     from .sandbox_container.docker import IMAGE_DIR, build_image
 
     config = load_config(args.config)
+    if args.action == "status":
+        from .code_execution import BROWSER_TOOLS, CODE_TOOLS, code_execution_status
+
+        # The container and compose backends register these tools when Jig starts (and refuse to start without
+        # Docker); the directory backend registers none.
+        names = set(CODE_TOOLS + BROWSER_TOOLS) if config.sandbox.backend in ("container", "compose") else set()
+        status = code_execution_status(config, names)
+        if args.json:
+            print(json.dumps(status, indent=2))
+            return 0
+        print(f"Sandbox backend: {status['backend']} ({config.source})")
+        print(f"Running code: {status['summary']}")
+        if docker := status.get("docker"):
+            print(f"Docker: {'running, ' + docker['version'] if docker['daemon'] else docker['problem']}")
+            print(f"Sandbox image {docker['image']}: {'built' if docker['image_built'] else 'not built'}")
+        for i, step in enumerate(status["steps"], 1):
+            print(f"  {i}. {step}")
+        return 0
     print(f"Building {config.sandbox.image} from {IMAGE_DIR}")
     build_image(config.sandbox.image)
     print(f"Built {config.sandbox.image}. Select it with [sandbox] backend = \"container\".")
@@ -534,7 +552,9 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--url", default="http://127.0.0.1:8766")
     u.add_argument("--print-url", action="store_true", help="print the one-time sign-in link instead of opening it")
     sb = sub.add_parser("sandbox", help="manage the container sandbox")
-    sb.add_argument("action", choices=["build"], help="build: build the sandbox Docker image")
+    sb.add_argument("action", choices=["build", "status"],
+                    help="build: build the sandbox Docker image; status: whether Jig can run code, and what it needs")
+    sb.add_argument("--json", action="store_true", help="'status': machine-readable output")
     m = sub.add_parser("model", help="the model server Jig launched ([model.launch]), model API keys, and cloud "
                                      "model consent")
     m.add_argument("action", choices=["status", "start", "stop", "key", "cloud"],

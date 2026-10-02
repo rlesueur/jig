@@ -61,7 +61,8 @@ class Jig:
         self.bus = EventBus()
         self.tracker = AvatarStateTracker(self.bus)
         self.audit = AuditLog(self.db)
-        self.store = Store(self.db)
+        self.store = Store(self.db, on_schedule_change=lambda schedule_id, action: self.bus.publish(
+            EventType.SCHEDULE_CHANGED, schedule_id=schedule_id, action=action))
         self.memory = MemoryStore(self.db, on_change=lambda memory_id, action: self.bus.publish(
             EventType.MEMORY_CHANGED, memory_id=memory_id, action=action))
         self.vault = Vault(self.db, config.vault)
@@ -107,7 +108,7 @@ class Jig:
         return connection_summary(self.config, self.audit)
 
     def _system_prompt(self, mode: Mode) -> str:
-        return (agent_system_prompt(mode, self.config.runtime.timezone)
+        return (agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
                 + memory_prompt(self.memory.list(limit=MEMORY_PROMPT_LIMIT)))
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:

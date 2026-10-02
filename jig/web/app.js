@@ -364,12 +364,14 @@ function refreshAll() {
   loadApprovals();
   loadMemory();
   loadRules();
+  loadSandbox();
   if (currentSection() === 'history') loadAudit(true);
+  if (currentSection() === 'schedules') loadSchedules();
 }
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'connections', 'memory', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'memory', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?$/);
@@ -399,6 +401,7 @@ function route(moveFocus = true) {
     }
     if (section === 'history') loadAudit(true);
     if (section === 'connections') loadConnections();
+    if (section === 'schedules') loadSchedules();
     if (section === 'devices') loadRemote();
     if (section === 'power') loadPower();
     if (moveFocus) {
@@ -551,7 +554,7 @@ function avatarWords(state, variant, background) {
 }
 
 const refreshers = { activity: loadActivity, approvals: loadApprovals, memory: loadMemory, rules: loadRules,
-  status: loadStatus, audit: () => loadAudit(true) };
+  status: loadStatus, audit: () => loadAudit(true), schedules: () => loadSchedules() };
 const pendingRefresh = {};
 function refreshSoon(area, delay = 300) {
   clearTimeout(pendingRefresh[area]);
@@ -576,6 +579,7 @@ function handleEvent(event) {
     refreshSoon('activity');
   }
   if (t === 'memory.changed') refreshSoon('memory');
+  if (currentSection() === 'schedules' && (t === 'schedule.changed' || t === 'task.status' || t === 'agent.status')) refreshSoon('schedules');
   if (t === 'rule.changed') refreshSoon('rules');
   if (t === 'agent.status') {
     setAgentPaused(d.paused);
@@ -682,7 +686,25 @@ async function loadStatus() {
     : null;
   renderHealth();
 }
-$('status-refresh').addEventListener('click', () => act($('status-refresh'), loadStatus));
+$('status-refresh').addEventListener('click', () => act($('status-refresh'), () => Promise.all([loadStatus(), loadSandbox()])));
+
+/* Running code needs the container sandbox (Docker). Say plainly when it's off, and what turns it on. */
+async function loadSandbox() {
+  let s;
+  try {
+    s = await api('/sandbox');
+  } catch (err) {
+    if (err.status !== 401) $('st-code').textContent = `Jig couldn\u2019t check: ${err.message}`;
+    return;
+  }
+  $('st-code').textContent = s.summary;
+  $('code-help').hidden = s.available;
+  $('no-code-note').hidden = s.available;
+  const problem = s.docker ? s.docker.problem : null;
+  $('code-problem').hidden = !problem;
+  $('code-problem').textContent = problem || '';
+  $('code-steps').replaceChildren(...s.steps.map((t) => el('li', { text: t })));
+}
 
 /* ---------- what Jig's up to ---------- */
 
@@ -701,6 +723,7 @@ const TOOL_DOING = {
   run_python: 'running some code', gmail_search: 'looking through your email', gmail_read_thread: 'reading an email',
   gmail_list_labels: 'looking at your email labels', gmail_create_draft: 'writing an email draft', gmail_send: 'sending an email',
   gmail_reply: 'replying to an email', gmail_modify_labels: 'labelling an email', gmail_archive: 'archiving an email',
+  schedule_create: 'setting up a schedule', schedule_list: 'looking at its schedules',
 };
 
 function setAgentPaused(paused) {
@@ -826,6 +849,7 @@ function renderDoingList(live, planning) {
 }
 
 $('doing-open').addEventListener('click', () => $('activity').showModal());
+$('goal-to-schedules').addEventListener('click', () => $('activity').close());
 $('activity-close').addEventListener('click', () => $('activity').close());
 $('activity').addEventListener('click', (e) => { if (e.target === $('activity')) $('activity').close(); });
 
@@ -1048,6 +1072,7 @@ const QUESTION = {
   gmail_create_draft: (x) => `Can I save a draft to ${joinList(x.to)} in your Gmail?`,
   gmail_modify_labels: () => 'Can I change the labels on this email?',
   gmail_archive: () => 'Can I archive this email?',
+  schedule_create: (x) => `Can I set up a schedule called ${q(x.name)}?`,
 };
 const joinList = (v) => (Array.isArray(v) ? v.join(', ') : String(v ?? ''));
 const ccText = (x) => (x.cc && x.cc.length ? `, copying ${joinList(x.cc)}` : '');
@@ -1071,13 +1096,15 @@ const WILL = {
   gmail_create_draft: (x) => `Jig will save (not send) a draft to ${joinList(x.to)}${ccText(x)}, subject ${q(x.subject)}:`,
   gmail_modify_labels: (x) => `Jig will${x.add && x.add.length ? ` add ${joinList(x.add)}` : ''}${x.add && x.add.length && x.remove && x.remove.length ? ' and' : ''}${x.remove && x.remove.length ? ` remove ${joinList(x.remove)}` : ''} on the thread described below. Nothing is deleted.`,
   gmail_archive: () => 'Jig will take the thread described below out of your inbox. Nothing is deleted.',
+  schedule_create: (x) => `Jig will save the schedule ${q(x.name)}. At the times below it will do this by itself, `
+    + `${x.mode === 'action' ? 'able to act (asking you when needed)' : 'just looking, without changing anything'}. You can pause or delete it at any time in Settings, Schedules.`,
 };
 /* The exact thing that will be written, sent or run, shown on the card itself. */
 const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'command', run_python: 'code',
-  gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body' };
+  gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body', schedule_create: 'prompt' };
 /* What a call refers to, looked up by Jig from your account (written by other people, so shown as text). */
 const RESOLVED_WORDS = { thread_subject: 'Subject', last_from: 'Last message from', last_date: 'Date',
-  messages_in_thread: 'Messages in the thread', labels: 'Labels' };
+  messages_in_thread: 'Messages in the thread', labels: 'Labels', repeats: 'Repeats', next_runs: 'Next runs' };
 const VERDICT_LABEL = { allow: 'Looks fine', ask_user: 'Ask you first', deny: 'Do not do this' };
 const RISK_MARK = { low: '\u25CF', medium: '\u25B2', high: '\u25A0' };
 
@@ -1434,6 +1461,133 @@ $('memory-add').addEventListener('submit', (e) => {
     await loadMemory();
   });
 });
+$('memory-wipe').addEventListener('click', async () => {
+  $('memory-saved').textContent = '';
+  const ok = await askConfirm({
+    title: 'Forget everything Jig remembers?',
+    body: [bullets([
+      'Every memory, and Jig\u2019s search index of them, is deleted from this computer. Jig starts again knowing nothing about you.',
+      'This can\u2019t be undone.',
+      'The History keeps a note that you did this and how many were forgotten, never what they said.',
+      'Past conversations and job results aren\u2019t changed. Jig just stops remembering.',
+    ])],
+    ok: 'Forget everything', danger: true,
+  });
+  if (!ok) return;
+  const out = await act($('memory-wipe'), () => api('/memory/wipe', { method: 'POST', body: { confirm: true } }));
+  if (!out) return;
+  $('memory-saved').textContent = out.forgotten ? `Jig forgot ${plural(out.forgotten, 'memory', 'memories')}.` : 'There was nothing to forget.';
+  memoryQuery = '';
+  $('memory-q').value = '';
+  await loadMemory();
+});
+
+/* ---------- schedules: jobs Jig does by itself at set times ---------- */
+
+const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const nextWhen = (iso) => new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const TASK_OUTCOME = { done: 'finished', failed: 'couldn\u2019t finish', blocked: 'couldn\u2019t start', cancelled: 'stopped',
+  running: 'running now', waiting_approval: 'waiting for your answer', queued: 'lined up to start', paused: 'paused' };
+
+function scheduleItem(s) {
+  const label = `schedule ${s.name}`;
+  const repeats = s.repeat_text + (s.timezone && s.timezone !== browserZone ? ` (${s.timezone})` : '');
+  const next = !s.enabled ? 'Paused: it won\u2019t run until you resume it.'
+    : agentPaused ? `Next: ${nextWhen(s.next_run_at)}, but Jig is paused, so nothing runs until you resume Jig.`
+      : `Next: ${nextWhen(s.next_run_at)}`;
+  const t = s.last_task;
+  const last = t ? `Last run: ${nextWhen(t.created_at)}, ${TASK_OUTCOME[t.status] || t.status.replace(/_/g, ' ')}.` : 'Hasn\u2019t run yet.';
+  const outcome = t && (t.error || t.result);
+  const toggle = el('button', { type: 'button', class: `btn btn-small${s.enabled ? '' : ' btn-approve'}`, 'data-testid': 'schedule-toggle',
+    text: s.enabled ? 'Pause' : 'Resume', 'aria-label': `${s.enabled ? 'Pause' : 'Resume'} ${label}`,
+    onclick: (e) => act(e.currentTarget, async () => {
+      const fresh = await api(`/schedules/${encodeURIComponent(s.id)}`, { method: 'PATCH', body: { enabled: !s.enabled } });
+      $('schedules-saved').textContent = fresh.enabled ? `${q(s.name)} is back on. Next: ${nextWhen(fresh.next_run_at)}.` : `${q(s.name)} is paused.`;
+      await loadSchedules();
+    }) });
+  const remove = el('button', { type: 'button', class: 'btn btn-small btn-danger', 'data-testid': 'schedule-delete', text: 'Delete\u2026',
+    'aria-label': `Delete ${label}`, onclick: (e) => deleteSchedule(e.currentTarget, s) });
+  return el('div', { class: 'item', 'data-testid': 'schedule', dataset: { id: s.id, enabled: String(s.enabled) } },
+    el('div', { class: 'item-head' },
+      el('span', { class: 'title', text: s.name }),
+      s.enabled ? null : statusBadge('paused'),
+      el('div', { class: 'item-actions' }, toggle, remove)),
+    el('p', { class: 'body', 'data-testid': 'schedule-when', text: repeats }),
+    el('p', { class: 'hint-quiet', 'data-testid': 'schedule-next', text: next }),
+    el('p', { class: t && (t.status === 'failed' || t.status === 'blocked') ? 'error-text' : 'hint-quiet', 'data-testid': 'schedule-last', text: last }),
+    outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'What went wrong' : 'Last result' }), el('pre', { text: outcome })) : null,
+    el('details', { class: 'body' }, el('summary', { text: 'What Jig does each time' }),
+      el('p', { text: s.prompt }),
+      el('p', { class: 'meta', text: `${s.mode === 'action' ? 'Can act (asks when needed)' : 'Just looks, doesn\u2019t touch'} \u00b7 `
+        + `${String(s.created_by || '').startsWith('agent') ? 'set up by Jig, with your OK' : 'set up by you'} \u00b7 ${s.id}` })));
+}
+
+async function deleteSchedule(button, s) {
+  const ok = await askConfirm({
+    title: `Delete ${q(s.name)}?`,
+    body: [bullets([
+      'It won\u2019t run again.',
+      'Jobs it already ran, and their results, are kept.',
+    ])],
+    ok: 'Delete', danger: true,
+  });
+  if (!ok) return;
+  const done = await act(button, async () => {
+    await api(`/schedules/${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+    return true;
+  });
+  if (done) $('schedules-saved').textContent = `${q(s.name)} is deleted.`;
+  await loadSchedules();
+}
+
+async function loadSchedules() {
+  let rows;
+  try {
+    rows = await api('/schedules');
+  } catch (err) {
+    if (err.status !== 401) $('schedule-list').replaceChildren(el('p', { class: 'error-text', text: err.message }));
+    return;
+  }
+  $('schedule-list').replaceChildren(...rows.map(scheduleItem));
+  if (!rows.length) {
+    $('schedule-list').append(empty('No schedules yet.', 'Add one below, or ask Jig in the chat, for example \u201cevery weekday at 8am, summarise the news about\u2026\u201d.'));
+  }
+}
+
+function showRepeatFields() {
+  const kind = $('schedule-repeat').value;
+  for (const node of $('schedule-form').querySelectorAll('[data-repeat]')) {
+    const on = node.dataset.repeat.split(' ').includes(kind);
+    node.hidden = !on;
+    for (const input of node.querySelectorAll('input, select')) input.disabled = !on;
+  }
+}
+$('schedule-repeat').addEventListener('change', showRepeatFields);
+showRepeatFields();
+$('schedule-tz').textContent = `Times are in your timezone, ${browserZone}.`;
+
+$('schedule-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  act(e.submitter, async () => {
+    const kind = $('schedule-repeat').value;
+    let repeat;
+    if (kind === 'interval') repeat = { kind, interval_s: Number($('schedule-every').value) * Number($('schedule-unit').value) };
+    else if (kind === 'cron') repeat = { kind, cron: $('schedule-cron').value.trim() };
+    else repeat = { kind, at: $('schedule-at').value };
+    if (kind === 'weekly') {
+      repeat.days = [...document.querySelectorAll('input[name="schedule-day"]:checked')].map((c) => c.value);
+      if (!repeat.days.length) throw new Error('Choose at least one day for this schedule.');
+    }
+    const s = await api('/schedules', { method: 'POST', body: {
+      name: $('schedule-name').value.trim(), prompt: $('schedule-prompt').value.trim(), mode: $('schedule-mode').value,
+      repeat, timezone: browserZone,
+    } });
+    $('schedules-saved').textContent = `Added ${q(s.name)}. First run: ${nextWhen(s.next_run_at)}.`;
+    $('schedule-name').value = '';
+    $('schedule-prompt').value = '';
+    await loadSchedules();
+  });
+});
 
 /* ---------- what Jig can do on its own (rules) ---------- */
 
@@ -1448,6 +1602,7 @@ const CAN = {
   gmail_search: 'Search your Gmail', gmail_read_thread: 'Read your emails', gmail_list_labels: 'See your Gmail labels',
   gmail_create_draft: 'Write Gmail drafts', gmail_send: 'Send emails', gmail_reply: 'Reply to emails',
   gmail_modify_labels: 'Change labels on emails', gmail_archive: 'Archive emails',
+  schedule_create: 'Set up schedules', schedule_list: 'Look at its schedules',
 };
 const CHOICE_TEXT = { allow: 'On its own', ask: 'Ask me first', block: 'Never' };
 const CORE_WORDS = { block: 'Never allowed', ask: 'Always asks you' };

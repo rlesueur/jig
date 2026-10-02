@@ -84,6 +84,7 @@
             <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
             <li><a href="#settings/connections" data-section="connections" data-testid="settings-nav-connections">Connections</a></li>
             <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">What Jig remembers about you</a></li>
+            <li><a href="#settings/schedules" data-section="schedules" data-testid="settings-nav-schedules">Schedules</a></li>
             <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
             <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
             <li><a href="#settings/devices" data-section="devices" data-testid="settings-nav-devices">Use Jig from your other devices</a></li>
@@ -113,13 +114,22 @@
               <dt>Safety checker</dt><dd id="st-sentinel">—</dd>
               <dt>Agent</dt><dd id="st-agent">—</dd>
               <dt>Passwords kept in</dt><dd id="st-vault">—</dd>
+              <dt>Running code</dt><dd id="st-code" data-testid="code-execution">—</dd>
             </dl>
+            <div class="card-soft code-help" id="code-help" data-testid="code-help" hidden>
+              <h4>To let Jig run code</h4>
+              <p class="hint">Jig runs code, shell commands and a web browser only inside an isolated Docker container, so nothing it runs can touch the rest of this computer. Without Docker, it still chats, reads the web, remembers and works with files in its own folder.</p>
+              <p class="hint warn-text" id="code-problem" data-testid="code-problem" hidden></p>
+              <ol class="steps" id="code-steps" data-testid="code-steps"></ol>
+              <p class="hint-quiet">Jig never changes this setting by itself. Each command or piece of code still asks you first.</p>
+            </div>
           </section>
 
           <!-- Rules -->
           <section class="set-section" id="set-rules" data-section="rules" aria-labelledby="rules-heading" data-testid="settings-rules" hidden>
             <h3 id="rules-heading">What Jig can do on its own</h3>
             <p class="hint">Choose what Jig may do without asking you first. Whatever you choose, the Sentinel still checks anything that changes or sends something, and the core rules below always apply.</p>
+            <p class="hint-quiet" id="no-code-note" data-testid="no-code-note" hidden>Running code and using a web browser are off, because they need Docker. <a href="#settings/model">How to turn them on</a></p>
             <div class="choices" id="tool-choices" data-testid="tool-choices"></div>
             <p class="saved" id="choices-saved" aria-live="polite" data-testid="tool-choice-saved"></p>
 
@@ -180,6 +190,66 @@
                   <label>Tags (comma-separated) <input id="memory-tags" type="text" data-testid="memory-tags"></label>
                 </div>
                 <button type="submit" class="btn btn-primary" data-testid="memory-add">Add</button>
+              </form>
+            </details>
+            <details class="advanced" data-testid="memory-wipe-details">
+              <summary>Forget everything</summary>
+              <p class="hint">Deletes every memory, with its search index, from this computer. Jig starts again knowing nothing about you. This can't be undone.</p>
+              <button type="button" class="btn btn-danger" id="memory-wipe" data-testid="memory-wipe">Forget everything…</button>
+            </details>
+            <p class="saved" id="memory-saved" aria-live="polite" data-testid="memory-saved"></p>
+          </section>
+
+          <!-- Schedules -->
+          <section class="set-section" id="set-schedules" data-section="schedules" aria-labelledby="schedules-heading" data-testid="settings-schedules" hidden>
+            <h3 id="schedules-heading">Schedules</h3>
+            <p class="hint">Jobs Jig does by itself at times you choose, such as a summary every weekday morning. Each runs in the background, and anything that needs your OK still asks you first.</p>
+            <div id="schedule-list" class="list" data-testid="schedule-list"></div>
+            <p class="saved" id="schedules-saved" aria-live="polite" data-testid="schedules-saved"></p>
+            <details class="advanced" id="schedule-add-details" data-testid="schedule-add-details">
+              <summary>Add a schedule</summary>
+              <form class="form" id="schedule-form">
+                <label for="schedule-name">Name</label>
+                <input id="schedule-name" type="text" required placeholder="Morning summary" data-testid="schedule-name">
+                <label for="schedule-prompt">What should Jig do each time?</label>
+                <textarea id="schedule-prompt" rows="2" required placeholder="Summarise the latest news about…" data-testid="schedule-prompt"></textarea>
+                <div class="row wrap">
+                  <label>Repeats
+                    <select id="schedule-repeat" data-testid="schedule-repeat">
+                      <option value="weekdays">Every weekday (Monday to Friday)</option>
+                      <option value="daily">Every day</option>
+                      <option value="weekly">On days I choose</option>
+                      <option value="interval">Every few minutes or hours</option>
+                      <option value="cron">Cron expression</option>
+                    </select>
+                  </label>
+                  <label data-repeat="weekdays daily weekly">At <input id="schedule-at" type="time" value="08:00" required data-testid="schedule-at"></label>
+                  <label data-repeat="interval" hidden>Every <input id="schedule-every" type="number" min="1" step="1" value="1" data-testid="schedule-every"></label>
+                  <label data-repeat="interval" hidden>Unit
+                    <select id="schedule-unit" data-testid="schedule-unit">
+                      <option value="60">minutes</option>
+                      <option value="3600" selected>hours</option>
+                    </select>
+                  </label>
+                  <label data-repeat="cron" hidden>Cron <input id="schedule-cron" type="text" placeholder="0 8 * * 1-5" spellcheck="false" data-testid="schedule-cron"></label>
+                </div>
+                <fieldset class="day-picks" data-repeat="weekly" data-testid="schedule-days" hidden>
+                  <legend>On</legend>
+                  <label><input type="checkbox" name="schedule-day" value="mon" checked> Mon</label>
+                  <label><input type="checkbox" name="schedule-day" value="tue"> Tue</label>
+                  <label><input type="checkbox" name="schedule-day" value="wed"> Wed</label>
+                  <label><input type="checkbox" name="schedule-day" value="thu"> Thu</label>
+                  <label><input type="checkbox" name="schedule-day" value="fri"> Fri</label>
+                  <label><input type="checkbox" name="schedule-day" value="sat"> Sat</label>
+                  <label><input type="checkbox" name="schedule-day" value="sun"> Sun</label>
+                </fieldset>
+                <label for="schedule-mode">While it runs</label>
+                <select id="schedule-mode" data-testid="schedule-mode">
+                  <option value="research">Just look, don't touch</option>
+                  <option value="action">Can act (asks when needed)</option>
+                </select>
+                <p class="hint-quiet" id="schedule-tz" data-testid="schedule-tz"></p>
+                <button type="submit" class="btn btn-primary" data-testid="schedule-add">Add schedule</button>
               </form>
             </details>
           </section>
@@ -339,6 +409,7 @@
       <label for="goal-title">Title (optional)</label>
       <input id="goal-title" type="text" data-testid="goal-title">
       <button type="submit" class="btn btn-primary" data-testid="goal-create">Create goal</button>
+      <p class="hint-quiet">Something Jig should do regularly? <a href="#settings/schedules" id="goal-to-schedules" data-testid="goal-to-schedules">Set up a schedule</a></p>
     </form>
 
     <details class="advanced" id="activity-more" data-testid="activity-more">

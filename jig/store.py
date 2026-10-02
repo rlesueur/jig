@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from .constants import GoalStatus, Mode, RunStatus, TaskStatus
-from .db import Database, dumps, later_iso, new_id, now_iso
+from .db import Database, dumps, iso, later_iso, new_id, now, now_iso
 from .errors import NotFound
+from .recurrence import Recurrence
 
 
 def _task_out(row: dict[str, Any]) -> dict[str, Any]:
@@ -16,8 +18,10 @@ def _task_out(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class Store:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, on_schedule_change: Callable[[str, str], None] | None = None):
         self.db = db
+        # Called with (schedule_id, "created" | "updated" | "deleted") after every change, whoever made it.
+        self.on_schedule_change = on_schedule_change
 
     # Runtime settings ------------------------------------------------------
     def get_meta(self, key: str) -> str | None:
@@ -115,41 +119,106 @@ class Store:
         return [_task_out(r) for r in rows]
 
     # Schedules -------------------------------------------------------------
-    def create_schedule(self, *, name: str, prompt: str, mode: Mode, interval_s: float,
-                        start_in_s: float = 0.0) -> dict[str, Any]:
-        if interval_s < 30:
-            raise ValueError("interval_s must be at least 30 seconds")
+    @staticmethod
+    def recurrence(schedule: dict[str, Any]) -> Recurrence:
+        """The repeat of a schedule, from ``get_schedule`` or a raw row."""
+        if "repeat" in schedule:
+            repeat = schedule["repeat"]
+        elif schedule.get("repeat_json"):
+            repeat = json.loads(schedule["repeat_json"])
+        else:
+            repeat = {"kind": "interval", "interval_s": schedule["interval_s"]}
+        return Recurrence(repeat, schedule.get("timezone"))
+
+    def create_schedule(self, *, name: str, prompt: str, mode: Mode, interval_s: float | None = None,
+                        repeat: dict[str, Any] | None = None, timezone: str | None = None,
+                        start_in_s: float = 0.0, created_by: str = "user") -> dict[str, Any]:
+        """``interval_s`` alone is the original interval schedule; ``repeat`` (see jig.recurrence) adds calendar
+        times. An interval schedule first runs after ``start_in_s``; a calendar one at its next matching time."""
+        if (interval_s is None) == (repeat is None):
+            raise ValueError("give either interval_s or repeat, not both or neither")
+        rec = Recurrence(repeat or {"kind": "interval", "interval_s": interval_s}, timezone)
+        if rec.interval_s is None and start_in_s:
+            raise ValueError("start_in_s only applies to interval schedules; a calendar schedule runs at its times")
+        first = later_iso(start_in_s) if rec.interval_s is not None else iso(rec.next_after(now()))
         ts = now_iso()
         sid = new_id("s")
         self.db.execute(
-            "INSERT INTO schedules(id, name, prompt, mode, interval_s, next_run_at, enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            (sid, name, prompt, Mode(mode), interval_s, later_iso(start_in_s), ts, ts),
+            "INSERT INTO schedules(id, name, prompt, mode, interval_s, next_run_at, enabled, created_at, updated_at, "
+            "repeat_json, timezone, created_by) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+            (sid, name, prompt, Mode(mode), rec.interval_s or 0.0, first, ts, ts, dumps(rec.repeat), rec.timezone,
+             created_by),
         )
+        self._schedule_changed(sid, "created")
         return self.get_schedule(sid)
 
     def get_schedule(self, schedule_id: str) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
         if row is None:
             raise NotFound(f"schedule {schedule_id} does not exist")
+        rec = self.recurrence(row)
+        row.pop("repeat_json")
         row["enabled"] = bool(row["enabled"])
+        row["repeat"] = rec.repeat
+        row["timezone"] = rec.timezone
+        row["repeat_text"] = rec.describe()
+        row["last_task"] = self.db.one(
+            "SELECT id, status, result, error, created_at, started_at, finished_at FROM tasks WHERE id = ?",
+            (row["last_task_id"],)) if row["last_task_id"] else None
         return row
 
     def list_schedules(self) -> list[dict[str, Any]]:
         return [self.get_schedule(r["id"]) for r in self.db.query("SELECT id FROM schedules ORDER BY created_at")]
 
     def update_schedule(self, schedule_id: str, **fields: Any) -> dict[str, Any]:
+        """Set columns as they are (the scheduler's bookkeeping). People's changes go through ``edit_schedule``."""
         self.get_schedule(schedule_id)
         if "enabled" in fields:
             fields["enabled"] = int(bool(fields["enabled"]))
         fields["updated_at"] = now_iso()
         cols = ", ".join(f"{k} = ?" for k in fields)
         self.db.execute(f"UPDATE schedules SET {cols} WHERE id = ?", (*fields.values(), schedule_id))
+        self._schedule_changed(schedule_id, "updated")
         return self.get_schedule(schedule_id)
 
+    def edit_schedule(self, schedule_id: str, *, name: str | None = None, prompt: str | None = None,
+                      mode: Mode | None = None, enabled: bool | None = None, interval_s: float | None = None,
+                      repeat: dict[str, Any] | None = None, timezone: str | None = None) -> dict[str, Any]:
+        """Change a schedule. A new repeat or timezone takes effect from now; resuming a calendar schedule that
+        missed its time while paused waits for its next time, while an overdue interval schedule runs at once."""
+        current = self.get_schedule(schedule_id)
+        if interval_s is not None and repeat is not None:
+            raise ValueError("give either interval_s or repeat, not both")
+        fields: dict[str, Any] = {k: v for k, v in (("name", name), ("prompt", prompt)) if v is not None}
+        if mode is not None:
+            fields["mode"] = Mode(mode)
+        if interval_s is not None:
+            repeat = {"kind": "interval", "interval_s": interval_s}
+        if repeat is not None or timezone is not None:
+            rec = Recurrence(repeat or current["repeat"], timezone or current["timezone"])
+            fields |= {"repeat_json": dumps(rec.repeat), "timezone": rec.timezone, "interval_s": rec.interval_s or 0.0,
+                       "next_run_at": iso(rec.next_after(now()))}
+        if enabled is not None:
+            fields["enabled"] = int(enabled)
+            if enabled and not current["enabled"] and "next_run_at" not in fields:
+                rec = self.recurrence(current)
+                if rec.interval_s is None and current["next_run_at"] <= now_iso():
+                    fields["next_run_at"] = iso(rec.next_after(now()))
+        if not fields:
+            return current
+        return self.update_schedule(schedule_id, **fields)
+
     def delete_schedule(self, schedule_id: str) -> None:
-        if self.db.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,)).rowcount == 0:
-            raise NotFound(f"schedule {schedule_id} does not exist")
+        with self.db.transaction() as conn:
+            # Jobs it already ran are kept; they just no longer point at a schedule that is gone.
+            conn.execute("UPDATE tasks SET schedule_id = NULL WHERE schedule_id = ?", (schedule_id,))
+            if conn.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,)).rowcount == 0:
+                raise NotFound(f"schedule {schedule_id} does not exist")
+        self._schedule_changed(schedule_id, "deleted")
+
+    def _schedule_changed(self, schedule_id: str, action: str) -> None:
+        if self.on_schedule_change:
+            self.on_schedule_change(schedule_id, action)
 
     def due_schedules(self) -> list[dict[str, Any]]:
         return self.db.query("SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ?", (now_iso(),))

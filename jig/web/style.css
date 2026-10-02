@@ -426,6 +426,12 @@ html[data-jig-state="error"] .avatar-says { color: var(--bad); }
 .radio-cards label { flex-direction: row; align-items: flex-start; gap: 10px; padding: 14px; border: 2px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; color: var(--text); }
 .radio-cards label:has(input:checked) { border-color: var(--queued); }
 .radio-cards strong { display: block; font-size: 16px; }
+.day-picks { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.day-picks legend { padding: 0; margin-bottom: 4px; font-size: 14px; color: var(--muted); font-weight: 700; }
+.day-picks label { flex-direction: row; align-items: center; gap: 6px; padding: 6px 12px; border: 2px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.day-picks label:has(input:checked) { border-color: var(--queued); }
+.code-help { display: flex; flex-direction: column; gap: 8px; }
+.code-help h4 { margin: 0; }
 .switch-row { display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; }
 .switch-row + .switch-row { border-top: 1px solid var(--line); }
 .switch-row label { color: var(--text); font-size: 16px; font-weight: 800; }

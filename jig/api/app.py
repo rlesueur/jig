@@ -23,6 +23,7 @@ from .. import __version__
 from ..auth import (Auth, AuthMiddleware, Principal, TokenStore, clear_cookie_headers, device_cookie_header,
                     session_cookie_header)
 from ..autostart.api import autostart_router
+from ..code_execution import code_execution_status
 from ..config import MODEL_KEY_PREFIX, Config
 from ..connectors import SECRET_PREFIX as CONNECTOR_SECRET_PREFIX
 from ..connectors import connect as connect_account
@@ -64,14 +65,22 @@ class ScheduleIn(BaseModel):
     name: str = Field(min_length=1)
     prompt: str = Field(min_length=1)
     mode: Mode = Mode.RESEARCH
-    interval_s: float
+    # Either interval_s (every so many seconds) or repeat (see jig.recurrence: interval, daily, weekdays,
+    # weekly or cron). Calendar times are in timezone, which defaults to [runtime] timezone.
+    interval_s: float | None = None
+    repeat: dict[str, Any] | None = None
+    timezone: str | None = None
     start_in_s: float = 0.0
 
 
 class SchedulePatch(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    prompt: str | None = Field(None, min_length=1)
+    mode: Mode | None = None
     enabled: bool | None = None
-    prompt: str | None = None
     interval_s: float | None = None
+    repeat: dict[str, Any] | None = None
+    timezone: str | None = None
 
 
 class ApprovalIn(BaseModel):
@@ -405,6 +414,12 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def tools(request: Request) -> list[dict[str, Any]]:
         return [t.describe() for t in J(request).registry.all()]
 
+    @app.get("/sandbox")
+    async def sandbox_status(request: Request) -> dict[str, Any]:
+        """Whether Jig can run code; if not, whether Docker is there and what to do to turn it on."""
+        names = {t.name for t in J(request).registry.all()}
+        return await asyncio.to_thread(code_execution_status, config, names)
+
     # Events ----------------------------------------------------------------
     @app.websocket("/events")
     async def events_ws(ws: WebSocket) -> None:
@@ -539,8 +554,12 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.post("/schedules", status_code=201)
     async def create_schedule(request: Request, body: ScheduleIn) -> dict[str, Any]:
         jig = J(request)
-        s = jig.store.create_schedule(**body.model_dump())
-        jig.audit.record("schedule.created", f"schedule {s['name']!r} created", actor="user", schedule_id=s["id"])
+        fields = body.model_dump()
+        if body.repeat is not None and body.repeat.get("kind") != "interval" and not body.timezone:
+            fields["timezone"] = config.runtime.timezone
+        s = jig.store.create_schedule(**fields, created_by="user")
+        jig.audit.record("schedule.created", f"schedule {s['name']!r} created", actor="user", schedule_id=s["id"],
+                         repeat=s["repeat"], timezone=s["timezone"], next_run_at=s["next_run_at"], **_who(request))
         jig.scheduler.wake()
         return s
 
@@ -551,16 +570,26 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.patch("/schedules/{schedule_id}")
     async def patch_schedule(request: Request, schedule_id: str, body: SchedulePatch) -> dict[str, Any]:
         jig = J(request)
-        s = jig.store.update_schedule(schedule_id, **_set(body))
-        jig.audit.record("schedule.updated", f"schedule {s['name']!r} updated", actor="user",
-                         schedule_id=schedule_id, changes=_set(body))
+        changes = _set(body)
+        if (changes.get("repeat") or {}).get("kind") not in (None, "interval") and not changes.get("timezone") \
+                and not jig.store.get_schedule(schedule_id)["timezone"]:
+            changes["timezone"] = config.runtime.timezone
+        s = jig.store.edit_schedule(schedule_id, **changes)
+        action = "updated"
+        if set(changes) == {"enabled"}:
+            action = "resumed" if changes["enabled"] else "paused"
+        jig.audit.record(f"schedule.{action}", f"schedule {s['name']!r} {action}", actor="user",
+                         schedule_id=schedule_id, changes=changes, next_run_at=s["next_run_at"], **_who(request))
+        jig.scheduler.wake()
         return s
 
     @app.delete("/schedules/{schedule_id}", status_code=204)
     async def delete_schedule(request: Request, schedule_id: str) -> None:
         jig = J(request)
+        name = jig.store.get_schedule(schedule_id)["name"]
         jig.store.delete_schedule(schedule_id)
-        jig.audit.record("schedule.deleted", "schedule deleted", actor="user", schedule_id=schedule_id)
+        jig.audit.record("schedule.deleted", f"schedule {name!r} deleted", actor="user", schedule_id=schedule_id,
+                         **_who(request))
 
     # Approvals -------------------------------------------------------------
     @app.get("/approvals")
@@ -644,6 +673,16 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig = J(request)
         jig.memory.forget(memory_id)
         jig.audit.record("memory.forgotten", f"memory {memory_id} forgotten", actor="user", memory_id=memory_id)
+
+    @app.post("/memory/wipe")
+    async def wipe_memory(request: Request, body: ConfirmIn) -> dict[str, Any]:
+        """Forget everything Jig remembers, with its search index. The audit entry has the count, never content."""
+        _require_confirm(body, "Nothing was forgotten")
+        jig = J(request)
+        out = jig.memory.wipe()
+        jig.audit.record("memory.wiped", f"all memories forgotten ({out['forgotten']})", actor="user",
+                         count=out["forgotten"], wal_cleared=out["wal_cleared"], **_who(request))
+        return out
 
     @app.get("/notes")
     async def notes(request: Request, limit: int = 50) -> list[dict[str, Any]]:

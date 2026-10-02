@@ -209,7 +209,11 @@ CREATE TABLE IF NOT EXISTS connections (
 """
 
 # Columns added after a table first shipped: (table, column, definition).
-_ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),)
+_ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),
+                  # A schedule's repeat (jig.recurrence); NULL for schedules made before calendar times.
+                  ("schedules", "repeat_json", "TEXT"),
+                  ("schedules", "timezone", "TEXT"),
+                  ("schedules", "created_by", "TEXT"))
 
 
 def now() -> datetime:
@@ -246,6 +250,8 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        # Deleted rows (a forgotten memory, say) are overwritten with zeros, not left in free pages.
+        self._conn.execute("PRAGMA secure_delete=ON")
         self._conn.executescript(SCHEMA)
         for table, column, definition in _ADDED_COLUMNS:
             existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
