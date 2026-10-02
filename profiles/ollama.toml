@@ -4,7 +4,9 @@
 # FIRST, raise Ollama's context length. Ollama gives a model only 4K tokens of context on graphics cards with
 # less than 24 GB of memory, and Jig needs 32K: with less, it quietly forgets the start of longer jobs.
 #   - Ollama app: Settings > Context length > 32k.
-#   - Or set the environment variable OLLAMA_CONTEXT_LENGTH=32768 before Ollama starts.
+#   - Or set the environment variable OLLAMA_CONTEXT_LENGTH=32768 before Ollama starts. (The app's own
+#     setting, when it is set, overrides the variable for the server the app starts.)
+# Jig asks Ollama what context the model really got and won't start the agent below 16K.
 # Allow parallel requests with OLLAMA_NUM_PARALLEL.
 #
 # The example model, Granite 4.2 8B at Q4_K_M, was measured at about 10.6 GB of graphics memory with a 32K

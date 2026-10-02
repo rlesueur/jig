@@ -92,9 +92,11 @@ const ADVISED_CONTEXT = 32768;
 /* ---------- the set-up page ---------- */
 
 const CHECK_STEPS = [
+  ['loading', 'Loading it in LM Studio with a 32K context'],
   ['reach', 'Reaching the model'],
   ['tools', 'Checking it can use tools'],
   ['structured', 'Checking it can answer in Jig\u2019s format'],
+  ['context', 'Checking how much it can keep in mind'],
   ['sentinel', 'Checking the safety checker\u2019s model'],
   ['vision', 'Checking it can see pictures'],
   ['starting', 'Starting Jig'],
@@ -236,21 +238,34 @@ async function chooseScreen() {
     runCheck('/setup/apply', choice, chooseScreen);
   });
 
-  function renderServers(servers) {
+  function renderServers(servers, installed = []) {
     list.replaceChildren();
     picked = null;
     useBtn.disabled = true;
     note.hidden = true;
     visionBox.hidden = true;
+    const off = installed.filter((a) => !a.running);
+    for (const app of off) {
+      const start = app.can_start ? el('button', { type: 'button', class: 'btn btn-primary', 'data-testid': `setup-start-${app.app}`, text: 'Start it for me', onclick: () => startApp(app, start) }) : null;
+      list.append(el('div', { class: 'setup-note', 'data-testid': `installed-${app.app}` }, el('p', { text: app.advice }),
+        el('div', { class: 'setup-actions' }, start, el('button', { type: 'button', class: 'btn', text: 'Look again', onclick: () => look('') }))));
+    }
     if (!servers.length) {
-      list.append(el('p', { class: 'hint', 'data-testid': 'no-servers', text: 'I didn\u2019t find a model app running. Start yours, or see below for how to get one, then choose Look again.' }),
-        el('div', { class: 'setup-actions' }, el('button', { type: 'button', class: 'btn', 'data-testid': 'setup-look-again', text: 'Look again', onclick: () => look('') })));
-      help.open = true;
+      if (!off.length) {
+        list.append(el('p', { class: 'hint', 'data-testid': 'no-servers', text: 'I didn\u2019t find a model app running. Start yours, or see below for how to get one, then choose Look again.' }),
+          el('div', { class: 'setup-actions' }, el('button', { type: 'button', class: 'btn', 'data-testid': 'setup-look-again', text: 'Look again', onclick: () => look('') })));
+        help.open = true;
+      }
       return;
     }
     for (const server of servers) {
       list.append(el('p', { class: 'hint-quiet', text: `${server.label}, at ${server.base_url}` }));
-      if (!server.models.length) list.append(el('p', { class: 'hint', text: `${server.label} is running but has no models yet.` }));
+      if (!server.models.length) {
+        list.append(el('p', { class: 'hint', 'data-testid': `no-models-${server.app}`, text: server.advice || `${server.label} is running but has no models yet.` }),
+          el('div', { class: 'setup-actions' }, el('button', { type: 'button', class: 'btn', text: 'Look again', onclick: () => look('') })));
+        help.open = true;
+        page.helpApp = server.app;
+      }
       for (const model of server.models) {
         const tags = [];
         const inUse = page.mode === 'change' && page.status && page.status.model
@@ -258,6 +273,7 @@ async function chooseScreen() {
         if (inUse) tags.push(el('span', { class: 'pick-tag', 'data-testid': 'model-in-use', text: 'In use now' }));
         if (model.loaded === true) tags.push(el('span', { class: 'pick-tag', text: 'Loaded' }));
         if (model.loaded === false) tags.push(el('span', { class: 'pick-tag warn', text: 'Not loaded' }));
+        if (model.tools === false) tags.push(el('span', { class: 'pick-tag warn', 'data-testid': 'no-tools', text: 'Can\u2019t use tools' }));
         if (model.context) {
           tags.push(el('span', { class: `pick-tag${model.context < ADVISED_CONTEXT ? ' warn' : ''}`, text: `${kTokens(model.context)} context` }));
         }
@@ -282,7 +298,10 @@ async function chooseScreen() {
     try {
       const found = await call(`/setup/discover${url ? `?url=${encodeURIComponent(url)}` : ''}`);
       page.servers = found.servers;
-      renderServers(found.servers);
+      page.installedApps = (found.installed || []).map((a) => a.app).concat(found.servers.map((s) => s.app));
+      page.helpApp = (found.installed || []).map((a) => a.app)[0] || page.helpApp;
+      renderServers(found.servers, found.installed || []);
+      help.querySelector(`[data-app="${page.helpApp}"]`)?.click();
       if (url && !found.servers.some((s) => s.base_url.startsWith(url.replace(/\/+$/, '').replace(/\/v1$/, '')))) {
         list.prepend(el('p', { class: 'setup-note', text: `Nothing answered like a model server at ${url}. Check the address and that the app\u2019s server is on.` }));
       }
@@ -291,12 +310,27 @@ async function chooseScreen() {
     }
   }
 
+  async function startApp(app, button) {
+    button.disabled = true;
+    button.textContent = `Starting ${app.label}\u2026`;
+    try {
+      const found = await call('/setup/start-app', { method: 'POST', body: { app: app.app } });
+      page.servers = found.servers;
+      renderServers(found.servers, found.installed || []);
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = 'Start it for me';
+      button.after(el('span', { class: 'hint warn-text', text: ` ${err.message}` }));
+    }
+  }
+
   look('');
   renderHelp(help, () => look(''));
 }
 
 function contextAdvice(server, model) {
-  if (model.loaded === false && server.app === 'lmstudio') return 'Load this model in LM Studio first (with Context Length set to 32768), then choose it here.';
+  if (model.tools === false) return `${server.label} says this model can\u2019t use tools, and Jig needs them to do anything for you. Choose one that can (on ollama.com, models that can are marked \u201ctools\u201d).`;
+  if (model.loaded === false && server.app === 'lmstudio') return 'LM Studio hasn\u2019t loaded this model yet. When you choose it, Jig loads it with a 32K context.';
   if (!model.context || model.context >= ADVISED_CONTEXT) return '';
   const fix = {
     ollama: 'In the Ollama app, open Settings and set Context length to 32k, then choose Look again.',
@@ -329,7 +363,10 @@ async function renderHelp(box, lookAgain) {
       for (const b of tabs.children) b.setAttribute('aria-pressed', String(b.dataset.app === app));
       const g = rec.get_it[app];
       const rows = [];
-      if (app === 'lmstudio') {
+      if (app !== 'llamacpp' && (page.installedApps || []).includes(app)) {
+        rows.push(el('p', { class: 'hint', text: `You already have ${app === 'ollama' ? 'Ollama' : 'LM Studio'}, so:` }));
+        rows.push(el('ol', { class: 'steps' }, g.steps.map((t) => el('li', { text: t }))));
+      } else if (app === 'lmstudio') {
         rows.push(el('p', { class: 'hint' }, 'The easiest to start with. Get it from ', el('a', { href: 'https://lmstudio.ai', target: '_blank', rel: 'noopener', text: 'lmstudio.ai' }), ', then:'));
         rows.push(el('ol', { class: 'steps' }, g.steps.map((t) => el('li', { text: t }))));
       } else if (app === 'ollama') {
@@ -345,7 +382,7 @@ async function renderHelp(box, lookAgain) {
       tabs.append(el('button', { type: 'button', class: 'btn btn-small', 'data-app': app, 'aria-pressed': 'false', text: label, onclick: () => showApp(app) }));
     }
     parts.push(tabs, body);
-    showApp('lmstudio');
+    showApp(page.helpApp && rec.get_it[page.helpApp] ? page.helpApp : 'lmstudio');
   }
   parts.push(el('div', { class: 'setup-actions' }, el('button', { type: 'button', class: 'btn', text: 'I\u2019ve started it: look again', onclick: lookAgain })));
   box.replaceChildren(...parts);
@@ -450,7 +487,7 @@ async function runCheck(path, body, back) {
   page.lastChoice = { path, body, back };
   const items = new Map(CHECK_STEPS.map(([id, text]) => [id, el('li', { 'data-s': 'todo', 'data-step': id, text })]));
   const list = el('ul', { class: 'check-list', 'data-testid': 'check-list' }, [...items.values()]);
-  for (const id of ['sentinel', 'vision']) items.get(id).hidden = true;
+  for (const id of ['loading', 'sentinel', 'vision']) items.get(id).hidden = true;
   const card = el('div', { class: 'setup-card', 'aria-live': 'polite' }, list);
   show(stage('thinking', 'Checking\u2026', 'I\u2019m trying the model out for real, the same way I do every time I start.'), card);
   let current = null;
@@ -499,6 +536,7 @@ function doneScreen(result) {
   const model = result.model && result.model.model;
   show(stage('success', 'All set!', model ? `I\u2019m using ${model}, and it passed every check.` : 'The model passed every check.'),
     el('div', { class: 'setup-card' },
+      ...(result.notes || []).map((t) => el('p', { class: 'setup-note', 'data-testid': 'setup-done-note', text: t })),
       el('p', { text: 'You can change the model, add a cloud key, or let Jig run code from Settings at any time.' }),
       el('div', { class: 'setup-actions' },
         el('button', { type: 'button', class: 'btn btn-primary', 'data-testid': 'setup-start-chatting', text: 'Start chatting', onclick: () => { location.hash = ''; location.reload(); } }))));

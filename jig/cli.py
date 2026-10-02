@@ -156,8 +156,8 @@ def _open_vault(config):
 async def _health(args: argparse.Namespace) -> int:
     """Check the configured endpoints and run the real capability probes."""
     from .cloud import require_consent, resolve_api_key
-
-    from .friendly import explain
+    from .discovery import check_context
+    from .friendly import context_note, explain
 
     config = load_config(args.config)
     if not config.model.base_url:
@@ -181,6 +181,7 @@ async def _health(args: argparse.Namespace) -> int:
                 report[label] |= await client.probe_structured_output()
                 if label == "agent":
                     report[label] |= await client.probe_tool_calling()
+                    report[label] |= await check_context(config, client)
                     if config.vision.enabled:
                         report[label] |= await probe_vision(client)
         except JigError as exc:
@@ -206,6 +207,10 @@ async def _health(args: argparse.Namespace) -> int:
             print(f"  Context: {r['context_tokens']:,} tokens"
                   + ("" if r["context_tokens"] >= config.runtime.min_context_tokens else
                      f" (Jig works best with {config.runtime.min_context_tokens:,} or more)"))
+        if (r.get("context_tokens") or 0) >= config.runtime.min_context_tokens and (
+                note := context_note(r["context_tokens"], r.get("context_app"), config.runtime.min_context_tokens,
+                                     r.get("reload_context"))):
+            print(f"  {note}")
     if failed:
         print(f"\n{explain(failed, config)}")
         return 1

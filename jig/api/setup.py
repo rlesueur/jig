@@ -25,10 +25,10 @@ from ..cloud import (GIVEN, cloud_uses, consent_groups, consent_state, disclosur
                      record_revocation, active_consents)
 from ..code_execution import code_execution_status
 from ..config import Config, load_config
-from ..discovery import find_gpu, find_model_servers
+from ..discovery import LABELS, find_gpu, find_model_servers, load_in_lmstudio, start_app
 from ..endpoints import PROVIDERS
 from ..errors import ConfigError, ModelServerUnavailable, SandboxUnavailable, SecretNotFound
-from ..friendly import Explained, explain
+from ..friendly import Explained, context_note, explain
 from ..instance import InstanceLock
 from ..recommend import recommend
 from ..runtime import Jig
@@ -38,9 +38,11 @@ log = logging.getLogger(__name__)
 
 STEP_TEXT = {
     "consent": "Checking your choices",
+    "loading": "Loading it in LM Studio with a 32K context",
     "reach": "Reaching the model",
     "tools": "Checking it can use tools",
     "structured": "Checking it can answer in Jig's format",
+    "context": "Checking how much it can keep in mind",
     "sentinel": "Checking the safety checker's model",
     "vision": "Checking it can see pictures",
     "saving": "Saving",
@@ -49,6 +51,7 @@ STEP_TEXT = {
 
 DOCKER_URL = "https://www.docker.com/products/docker-desktop/"
 RECHECK_S = 15.0
+START_WAIT_S = 60.0
 
 
 class Controller:
@@ -194,7 +197,11 @@ class Controller:
             await self._start(config, capabilities=result["capabilities"])
             if self.setup is not None:
                 raise CheckFailed(self.setup.problem, self.setup.detail)
-            return {"model": result["models"]["agent"], "capabilities": result["capabilities"]}
+            agent = result["capabilities"]["agent"]
+            note = context_note(agent.get("context_tokens"), agent.get("context_app"),
+                                config.runtime.min_context_tokens, agent.get("reload_context"))
+            return {"model": result["models"]["agent"], "capabilities": result["capabilities"],
+                    "notes": [note] if note else []}
 
     async def set_timezone(self, name: str, who: dict[str, Any]) -> dict[str, Any]:
         """Save Jig's timezone ("" for this computer's) and use it from now on, without restarting the agent.
@@ -258,6 +265,10 @@ class KeyIn(BaseModel):
     key: str
 
 
+class AppIn(BaseModel):
+    app: str
+
+
 class SandboxIn(BaseModel):
     enable: bool
     confirm: bool = False
@@ -296,10 +307,36 @@ def setup_router(controller: Controller, who: Callable[[Request], dict[str, Any]
             url = model.base_url  # the model in use now, even on a port that isn't a usual one
         return await find_model_servers(url, skip_port=controller.base.server.port)
 
+    @router.post("/start-app")
+    async def start_model_app(request: Request, body: AppIn) -> dict[str, Any]:
+        """Start an installed model app's server in the background (the person chose Start it for me), then
+        wait until it answers."""
+        if body.app not in ("ollama", "lmstudio"):
+            raise HTTPException(400, f"Jig can't start {body.app!r}")
+        try:
+            ran = await asyncio.to_thread(start_app, body.app)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(502, str(exc)) from exc
+        controller.current.audit.record("setup.app_started", f"started {LABELS[body.app]} for the set-up page",
+                                        actor="user", app=body.app, command=ran, via="web", **who(request))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + START_WAIT_S
+        while True:
+            found = await find_model_servers(skip_port=controller.base.server.port)
+            if any(s["app"] == body.app for s in found["servers"]) or loop.time() > deadline:
+                break
+            await asyncio.sleep(1.0)
+        running = any(s["app"] == body.app for s in found["servers"])
+        if not running:
+            raise HTTPException(504, f"{LABELS[body.app]} was started, but its server didn't answer within "
+                                     f"{START_WAIT_S:.0f} seconds. Give it a moment, then choose Look again.")
+        return {"started": ran, **found}
+
     @router.get("/gpu")
     async def gpu() -> dict[str, Any]:
         found = await asyncio.to_thread(find_gpu)
-        return {"gpu": found, "recommendation": recommend(found.get("total_gb") if found["found"] else None)}
+        return {"gpu": found, "recommendation": recommend(found.get("total_gb") if found["found"] else None,
+                                                          found.get("used_gb"))}
 
     @router.get("/providers")
     async def providers() -> list[dict[str, Any]]:
@@ -410,7 +447,28 @@ def setup_router(controller: Controller, who: Callable[[Request], dict[str, Any]
 
         # Consent is checked before the stream starts, so a missing OK is a plain 400.
         consent(controller.config_with(sections), controller.current)
-        return stream(lambda progress: controller.apply(sections, progress))
+
+        async def work(progress: Callable[[str], None]) -> dict[str, Any]:
+            # LM Studio would otherwise load a model it hasn't loaded yet with its own default context (8K),
+            # too small for Jig. One that is already loaded is left as it is, and checked like any other.
+            if body.kind == "local" and body.app == "lmstudio" and body.name:
+                progress("loading")
+                context = controller.config.runtime.min_context_tokens
+                try:
+                    loaded = await load_in_lmstudio(sections["model"]["base_url"], body.name, context)
+                except RuntimeError as exc:
+                    raise CheckFailed(Explained(
+                        "LM Studio didn't load the model.",
+                        f"Load {body.name} in LM Studio yourself, with Context Length set to {context}, then choose "
+                        "Try again. (Its reason is under Details.)", "model"), str(exc)) from exc
+                if loaded["loaded"]:
+                    controller.current.audit.record(
+                        "setup.model_loaded", f"loaded {body.name} in LM Studio with a {loaded['context']}-token "
+                        "context", actor="user", model=body.name, context=loaded["context"], via="web",
+                        **who(request))
+            return await controller.apply(sections, progress)
+
+        return stream(work)
 
     @router.post("/retry")
     async def retry() -> StreamingResponse:

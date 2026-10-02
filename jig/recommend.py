@@ -14,6 +14,9 @@ from typing import Any
 HEADROOM_GB = 1.5
 # Jig warns below this many tokens of context ([runtime] min_context_tokens in the shipped jig.toml).
 ADVISED_CONTEXT = 32768
+# Below this, Jig's checks fail: the instructions, tools and one fetched page alone come to about 6,000 tokens,
+# so a 4K or 8K context overflows on the first real task. It is the smallest measured set-up offered below.
+MIN_WORKING_CONTEXT = 16384
 
 
 @dataclass(frozen=True)
@@ -43,19 +46,21 @@ GET_IT = {
         "search": "lmstudio-community/granite-4.2-8b-GGUF",
         "file": "granite-4.2-8b-Q4_K_M.gguf",
         "steps": ["In LM Studio, search for granite-4.2-8b and download the Q4_K_M version from lmstudio-community.",
-                  "Load it with the context length set to {context}.",
-                  "Start the server in the Developer tab."],
+                  "Come back here and choose Look again. If LM Studio's server is off, Jig offers to start it, and "
+                  "when you choose the model Jig loads it with a {context}-token context for you."],
     },
     "ollama": {
         "command": "ollama pull granite4.2:8b-q4_K_M",
         "steps": ["In the Ollama app, open Settings and set Context length to {context_k}.",
-                  "Run: ollama pull granite4.2:8b-q4_K_M"],
+                  "Open PowerShell (or Terminal) and run: ollama pull granite4.2:8b-q4_K_M",
+                  "When it has finished downloading, come back here and choose Look again."],
     },
 }
 
 
-def recommend(gpu_total_gb: float | None) -> dict[str, Any]:
-    """What to suggest for a card with ``gpu_total_gb`` of memory (None: no graphics card found)."""
+def recommend(gpu_total_gb: float | None, gpu_used_gb: float | None = None) -> dict[str, Any]:
+    """What to suggest for a card with ``gpu_total_gb`` of memory (None: no graphics card found). With
+    ``gpu_used_gb`` (what other programs use now), say so when the suggestion wouldn't fit beside them."""
     if gpu_total_gb is None:
         return {"fits": None, "measured": False,
                 "text": "Jig didn't find a graphics card it can measure, so it has no measured suggestion for this "
@@ -65,6 +70,10 @@ def recommend(gpu_total_gb: float | None) -> dict[str, Any]:
             caveat = "" if m.context >= ADVISED_CONTEXT else (
                 f" That's a {m.context // 1024}K context: Jig works best with {ADVISED_CONTEXT // 1024}K, which "
                 f"measured {MEASUREMENTS[0].gpu_gb} GB, more than this card has to spare.")
+            if gpu_used_gb is not None and gpu_total_gb - gpu_used_gb < m.gpu_gb:
+                caveat += (f" Other programs are using {gpu_used_gb:.0f} GB of it right now, which leaves "
+                           f"{gpu_total_gb - gpu_used_gb:.0f} GB, so close the ones you don't need first. Otherwise "
+                           "part of the model runs on the processor instead, which is much slower.")
             return {"fits": asdict(m), "measured": True, "get_it": _get_it(m.context),
                     "text": f"{m.model} ({m.quant}, a {m.file_gb} GB download) fits your {gpu_total_gb:.0f} GB card. "
                             f"With a {m.context // 1024}K context it used about {m.gpu_gb} GB when we measured it."

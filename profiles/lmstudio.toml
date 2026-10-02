@@ -3,7 +3,10 @@
 #
 # Load a model with tool-use support and set its context length to 32768 (or more) in the model loader's
 # settings before loading it: Jig needs 32K. If several models are loaded, set 'name' to the identifier
-# LM Studio shows; otherwise it is discovered from /v1/models.
+# LM Studio shows; otherwise it is discovered from /v1/models. (Jig's set-up page and 'jig health' load the
+# model at 32K themselves if LM Studio has it loaded with less, or not at all.)
+# Also set Settings > Model Defaults > Default Context Length to a custom 32768: LM Studio uses it whenever it
+# loads a model by itself, such as after putting away one that hasn't been used for a while.
 #
 # A measured choice: Granite 4.2 8B at Q4_K_M (search "granite-4.2-8b" in LM Studio, from
 # lmstudio-community) used about 10.6 GB of graphics memory with a 32K context (about 8.1 GB at 16K), so it

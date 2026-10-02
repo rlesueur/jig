@@ -20,6 +20,7 @@ from .connectors import ConnectionStore, Connectors
 from .connectors import register_tools as register_connector_tools
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
+from .discovery import check_context
 from .errors import CannotDelete, JigError, ModelCapabilityError, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
@@ -116,6 +117,7 @@ async def probe_capabilities(config: Config, model: ModelClient, sentinel_model:
 
     agent = await check("tools", model.probe_tool_calling)
     agent |= await check("structured", model.probe_structured_output)
+    agent |= await check("context", lambda: check_context(config, model))
     caps: dict[str, Any] = {"agent": agent}
     same = (config.sentinel.base_url.rstrip("/") == config.model.base_url.rstrip("/")
             and sentinel_model.model_name == model.model_name)
@@ -269,6 +271,8 @@ class Jig:
             self.capabilities = await self.check_capabilities()
         for client in (self.model, self.sentinel_model):
             ctx = client.server_info.get("context_tokens")
+            if client is self.model:
+                ctx = self.capabilities.get("agent", {}).get("context_tokens") or ctx
             if ctx is not None and ctx < self.config.runtime.min_context_tokens:
                 log.warning("%s %s has a %d-token context; %d or more is advisable", client.label,
                             client.model_name, ctx, self.config.runtime.min_context_tokens)
