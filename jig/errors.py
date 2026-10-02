@@ -82,3 +82,15 @@ class NotFound(JigError):
 
 class StepLimitExceeded(JigError):
     pass
+
+
+class ConnectorError(JigError):
+    """A connected account (Gmail and so on) refused or failed a request. Never retried as something else."""
+
+
+class ConnectorNotConnected(ConnectorError):
+    """The account is not connected, or not with the access this tool needs."""
+
+
+class ConnectorAuthError(ConnectorError):
+    """The provider rejected Jig's grant (expired, revoked or missing scopes); the user has to reconnect."""

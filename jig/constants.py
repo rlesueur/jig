@@ -43,6 +43,7 @@ class ToolCategory(StrEnum):
     COMMERCE = "commerce"
     TIME = "time"
     CREDENTIALS = "credentials"
+    MESSAGES = "messages"  # mail and chat in a connected account
 
 
 CATEGORY_TO_VARIANT: dict[ToolCategory, TaskVariant] = {
@@ -54,6 +55,7 @@ CATEGORY_TO_VARIANT: dict[ToolCategory, TaskVariant] = {
     ToolCategory.COMMERCE: TaskVariant.SHOPPING,
     ToolCategory.TIME: TaskVariant.SCHEDULING,
     ToolCategory.CREDENTIALS: TaskVariant.WRITING,
+    ToolCategory.MESSAGES: TaskVariant.WRITING,
 }
 
 # Transient states (success / error) are shown for this long before the

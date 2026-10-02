@@ -38,9 +38,18 @@ class ToolContext:
     vision: Any = None
     # The container sandbox (jig.sandbox_container.ContainerSandbox) when that backend is selected.
     container: Any = None
+    # Connected accounts (jig.connectors.Connectors). It sends authorised requests for a tool and never
+    # hands a token to the tool or the model.
+    connectors: Any = None
 
 
 ToolFn = Callable[..., Awaitable[Any]]
+# Looks up, read-only, what a call refers to (the thread a reply goes to, the event it changes), so the
+# Sentinel and the approval card can show it. Returns a short JSON-able dict.
+ResolveFn = Callable[[ToolContext, dict[str, Any]], Awaitable[dict[str, Any]]]
+# Checks fixed limits from the config (a recipient allow-list, a required subject prefix) before review.
+# Returns why the call is refused, or None.
+PrecheckFn = Callable[[Any, dict[str, Any], dict[str, Any] | None], str | None]
 
 
 @dataclass
@@ -58,6 +67,14 @@ class ToolSpec:
     human_only: bool = False
     # Decision used when no custom rule matches.
     default_decision: Decision = Decision.ALLOW
+    # When set, the tool is offered to the model only while this returns True (a connected account).
+    # The gate still finds it, and the tool fails clearly, if the model calls it anyway.
+    available: Callable[[], bool] | None = None
+    resolve: ResolveFn | None = None
+    precheck: PrecheckFn | None = None
+
+    def is_available(self) -> bool:
+        return self.available is None or bool(self.available())
 
     @property
     def read_only(self) -> bool:
@@ -88,6 +105,7 @@ class ToolSpec:
             "avatar_variant": self.avatar_variant.value,
             "human_only": self.human_only,
             "default_decision": self.default_decision.value,
+            "available": self.is_available(),
         }
 
     def validate(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +173,9 @@ class ToolRegistry:
         variant: TaskVariant | None = None,
         human_only: bool = False,
         default_decision: Decision = Decision.ALLOW,
+        available: Callable[[], bool] | None = None,
+        resolve: ResolveFn | None = None,
+        precheck: PrecheckFn | None = None,
     ) -> Callable[[ToolFn], ToolFn]:
         def decorator(fn: ToolFn) -> ToolFn:
             if not inspect.iscoroutinefunction(fn):
@@ -193,6 +214,9 @@ class ToolRegistry:
                 variant=variant,
                 human_only=human_only,
                 default_decision=default_decision,
+                available=available,
+                resolve=resolve,
+                precheck=precheck,
             )
             return fn
 
@@ -207,8 +231,11 @@ class ToolRegistry:
     def all(self) -> list[ToolSpec]:
         return list(self._tools.values())
 
+    def available(self) -> list[ToolSpec]:
+        return [t for t in self._tools.values() if t.is_available()]
+
     def for_mode(self, mode: Mode) -> list[ToolSpec]:
-        return [t for t in self._tools.values() if t.allowed_in(mode)]
+        return [t for t in self.available() if t.allowed_in(mode)]
 
     def schemas_for_mode(self, mode: Mode) -> list[dict[str, Any]]:
         return [t.schema() for t in self.for_mode(mode)]

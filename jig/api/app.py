@@ -24,9 +24,13 @@ from ..auth import (Auth, AuthMiddleware, Principal, TokenStore, clear_cookie_he
                     session_cookie_header)
 from ..autostart.api import autostart_router
 from ..config import MODEL_KEY_PREFIX, Config
+from ..connectors import SECRET_PREFIX as CONNECTOR_SECRET_PREFIX
+from ..connectors import connect as connect_account
+from ..connectors import provider as connector_provider
 from ..constants import EventType, Mode
+from ..db import now_iso
 from ..devices import DeviceStore, PairingError
-from ..errors import ConfigError
+from ..errors import ConfigError, ConnectorError, JigError
 from ..errors import ModelServerUnavailable, NotFound, SecretNotFound, ToolArgumentError
 from ..events import SubscriberOverflow
 from ..instance import take_stop_request
@@ -124,6 +128,10 @@ class ConfirmIn(BaseModel):
 
 class PowerStopIn(ConfirmIn):
     scope: str
+
+
+class ConnectIn(ConfirmIn):
+    access: str | None = None
 
 
 class PairingIn(BaseModel):
@@ -660,6 +668,9 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.put("/vault/{name}")
     async def vault_set(request: Request, name: str, body: SecretIn) -> dict[str, Any]:
         jig = J(request)
+        if name.startswith(CONNECTOR_SECRET_PREFIX):
+            raise HTTPException(400, f"{name!r} belongs to a connected account; use 'jig connect' or Settings > "
+                                     "Connections, which store it with the connection")
         if name.startswith(MODEL_KEY_PREFIX) and body.allowed_tools:
             raise HTTPException(400, f"{name!r} is a model API key: it is only for Jig's connection to the model, "
                                      "so no tool may use it. Store it without allowed_tools.")
@@ -671,8 +682,71 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.delete("/vault/{name}", status_code=204)
     async def vault_delete(request: Request, name: str) -> None:
         jig = J(request)
+        if name.startswith(CONNECTOR_SECRET_PREFIX):
+            raise HTTPException(400, f"{name!r} belongs to a connected account; disconnect it with 'jig disconnect' "
+                                     "or Settings > Connections, which also revokes it at the provider")
         jig.vault.delete(name)
         jig.audit.record("vault.deleted", f"secret {name!r} deleted", actor="user", secret=name)
+
+    # Connected accounts ------------------------------------------------------------------------
+    connect_attempts: dict[str, dict[str, Any]] = {}
+
+    @app.get("/connections")
+    async def connections(request: Request) -> list[dict[str, Any]]:
+        rows = J(request).connections.status()
+        for r in rows:
+            r["attempt"] = connect_attempts.get(r["provider"])
+        return rows
+
+    @app.post("/connections/{name}/connect")
+    async def connection_connect(request: Request, name: str, body: ConnectIn) -> dict[str, Any]:
+        """Start the provider's sign-in on this computer. Returns the link for the UI to open; the
+        connection completes in the background when the browser comes back to Jig's loopback listener."""
+        _require_local(request, "Connecting an account")
+        _require_confirm(body, "Connecting an account")
+        jig = J(request)
+        try:
+            spec = connector_provider(name)
+        except ConnectorError as exc:
+            raise HTTPException(404, str(exc)) from None
+        if not jig.connections.has_client(spec.family):
+            raise HTTPException(409, f"no {spec.family} app client is stored yet; follow docs/connectors-setup.md, "
+                                     f"then run 'jig connect {name} --client-json <file>' once")
+        link: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        connect_attempts[name] = {"status": "waiting", "started": now_iso(), "error": None}
+
+        async def flow() -> None:
+            try:
+                await connect_account(name, access=body.access, store=jig.connections, http=jig.http,
+                                      open_browser=lambda _url: None, ready=link.set_result, via="api")
+                connect_attempts[name] = {"status": "connected", "started": connect_attempts[name]["started"],
+                                          "error": None}
+            except Exception as exc:  # reported to the UI and the audit log, never swallowed
+                message = f"{type(exc).__name__}: {exc}"
+                connect_attempts[name] = {"status": "failed", "started": connect_attempts[name]["started"],
+                                          "error": message}
+                jig.audit.record("connector.connect_failed", f"{spec.label}: {message}", actor="user",
+                                 provider=name, error=message, via="api")
+                if not link.done():
+                    link.set_exception(exc)
+
+        jig._spawn(flow())
+        try:
+            url = await asyncio.wait_for(asyncio.shield(link), 15)
+        except (JigError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from None
+        return {"provider": name, "auth_url": url}
+
+    @app.post("/connections/{name}/disconnect")
+    async def connection_disconnect(request: Request, name: str, body: ConfirmIn) -> dict[str, Any]:
+        _require_confirm(body, "Disconnecting an account")
+        jig = J(request)
+        try:
+            connector_provider(name)
+        except ConnectorError as exc:
+            raise HTTPException(404, str(exc)) from None
+        connect_attempts.pop(name, None)
+        return await jig.connectors.disconnect(name, via="api")
 
     # Turning Jig off ---------------------------------------------------------------------------
     @app.exception_handler(PowerRefused)

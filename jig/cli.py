@@ -1,5 +1,6 @@
 """Command-line entry point: ``jig serve``, ``jig chat``, ``jig health``, ``jig token``, ``jig ui``,
-``jig autostart``, ``jig stop [--model]``, ``jig model`` and ``jig remote``."""
+``jig autostart``, ``jig stop [--model]``, ``jig model``, ``jig remote`` and ``jig connect`` /
+``jig connections`` / ``jig disconnect``."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import httpx
 
 from .autostart import cli as autostart_cli
 from .config import load_config
+from .connectors import cli as connectors_cli
 from .errors import JigError
 from .model import ModelClient
 from .vision import probe_vision
@@ -552,10 +554,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--json", action="store_true", help="machine-readable output")
     r.add_argument("--port", type=int, help="Jig's port (default: [server] port)")
     r.add_argument("--data-dir", help="data directory (default: from the config)")
+    connectors_cli.add_parsers(sub)
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
             return _serve(args)
+        if args.command in ("connect", "connections", "disconnect"):
+            return connectors_cli.run(args)
         if args.command == "model":
             return _model(args)
         if args.command == "remote":

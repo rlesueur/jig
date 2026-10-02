@@ -21,6 +21,8 @@ def _out(row: dict[str, Any]) -> dict[str, Any]:
     row["args"] = json.loads(row.pop("args_json"))
     row["reasons"] = json.loads(row.pop("reasons_json"))
     row["sentinel"] = json.loads(row.pop("sentinel_json")) if row["sentinel_json"] else None
+    resolved = row.pop("resolved_json", None)
+    row["resolved"] = json.loads(resolved) if resolved else None
     return row
 
 
@@ -41,6 +43,7 @@ class ApprovalQueue:
         args: dict[str, Any],
         reasons: list[dict[str, Any]],
         sentinel: dict[str, Any] | None,
+        resolved: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create (or, when resuming a run, re-use) the approval for a tool call."""
         existing = self.db.one("SELECT * FROM approvals WHERE run_id = ? AND tool_call_id = ?", (run_id, tool_call_id))
@@ -53,14 +56,15 @@ class ApprovalQueue:
         aid = new_id("ap")
         self.db.execute(
             "INSERT INTO approvals(id, task_id, run_id, tool_call_id, tool, args_json, reasons_json, sentinel_json, "
-            "status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "status, created_at, resolved_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (aid, task_id, run_id, tool_call_id, tool, dumps(args), dumps(reasons),
-             dumps(sentinel) if sentinel else None, ApprovalStatus.PENDING, now_iso()),
+             dumps(sentinel) if sentinel else None, ApprovalStatus.PENDING, now_iso(),
+             dumps(resolved) if resolved else None),
         )
         self.audit.record("approval.requested", f"approval needed for {tool}", task_id=task_id, run_id=run_id,
-                          approval_id=aid, tool=tool, args=args, reasons=reasons, sentinel=sentinel)
+                          approval_id=aid, tool=tool, args=args, reasons=reasons, sentinel=sentinel, resolved=resolved)
         self.bus.publish(EventType.APPROVAL_REQUESTED, approval_id=aid, run_id=run_id, task_id=task_id, tool=tool,
-                         args=args, reasons=reasons, sentinel=sentinel)
+                         args=args, reasons=reasons, sentinel=sentinel, resolved=resolved)
         return self.get(aid)
 
     def get(self, approval_id: str) -> dict[str, Any]:

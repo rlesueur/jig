@@ -5,7 +5,9 @@ Order of checks for one call:
      address such as ``www.example.com`` in a URL argument is first completed to ``https://``, see urls.py,
      so every later check sees the complete URL);
   2. mode: research mode refuses anything that is not read-only or a private write;
-  3. core rules (non-overridable): block, or force a human approval;
+  3. core rules (non-overridable): block, or force a human approval; then, for tools that declare them,
+     a read-only lookup of what the call refers to (shown to the Sentinel and on the approval card) and
+     the fixed limits from the config (for example a connector's recipient allow-list), which block;
   4. the user's custom rule for this tool (allow / ask / block);
   5. the Sentinel, for every outbound or side-effecting action (deny cannot be overridden);
   6. an approval, if any of the above asked for one; the run pauses until answered;
@@ -74,10 +76,12 @@ class ToolOutcome:
 class ToolExecutor:
     def __init__(self, *, registry: ToolRegistry, rules: RuleStore, sentinel: Sentinel, approvals: ApprovalQueue,
                  vault: Vault, audit: AuditLog, bus: EventBus, context_factory: Callable[[CallContext], ToolContext],
-                 always_redact: dict[str, str] | None = None):
+                 always_redact: dict[str, str] | None = None, config: Any = None):
         self.registry = registry
-        # Values redacted from every tool result and error even when no secret was referenced (model API keys).
-        self.always_redact = always_redact or {}
+        self.config = config
+        # Values redacted from every tool result and error even when no secret was referenced (model API keys,
+        # connector tokens). Shared by reference: the connectors add tokens to it as they use them.
+        self.always_redact = always_redact if always_redact is not None else {}
         self.rules = rules
         self.sentinel = sentinel
         self.approvals = approvals
@@ -140,6 +144,23 @@ class ToolExecutor:
             )
 
         findings = await evaluate_core(spec, args, self.vault)
+        blocks = [f for f in findings if f.decision == Decision.BLOCK]
+        resolved: dict[str, Any] | None = None
+        if spec.resolve and not blocks:
+            # Read-only lookup of what the call refers to (the thread a reply goes to), before any review.
+            try:
+                resolved = await spec.resolve(self.context_factory(ctx), args)
+            except (JigError, OSError) as exc:
+                raise ToolError(Vault.redact(f"could not look up what {spec.name} refers to: {exc}",
+                                             self.always_redact)) from None
+            policy["resolved"] = resolved
+            self.audit.record("policy.resolved", f"{spec.name}: looked up what it refers to", task_id=ctx.task_id,
+                              run_id=ctx.run_id, tool=spec.name, call_id=call.id, resolved=resolved)
+        if spec.precheck and not blocks:
+            if problem := spec.precheck(self.config, args, resolved):
+                self.audit.record("policy.connector_limit", f"{spec.name} refused: {problem}", task_id=ctx.task_id,
+                                  run_id=ctx.run_id, tool=spec.name, call_id=call.id, reason=problem)
+                raise PolicyBlocked(problem)
         rule = self.rules.match(spec.name, args)
         policy["core"] = [f.as_dict() for f in findings]
         policy["rule"] = {"id": rule["id"], "decision": rule["decision"]} if rule else None
@@ -148,7 +169,6 @@ class ToolExecutor:
                           task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, core=policy["core"],
                           rule=policy["rule"], default_decision=spec.default_decision.value)
 
-        blocks = [f for f in findings if f.decision == Decision.BLOCK]
         if blocks:
             raise PolicyBlocked("; ".join(f"core rule {f.rule_id}: {f.reason}" for f in blocks))
         if rule_decision == Decision.BLOCK:
@@ -164,7 +184,7 @@ class ToolExecutor:
             try:
                 verdict = await self.sentinel.review(
                     intent=ctx.intent, mode=ctx.mode.value, spec=spec, args=args,
-                    policy={"core": policy["core"], "custom_rule": rule_decision.value},
+                    policy={"core": policy["core"], "custom_rule": rule_decision.value}, resolved=resolved,
                 )
             except SentinelError as exc:
                 self.audit.record("sentinel.error", f"Sentinel failed on {spec.name}", actor="sentinel",
@@ -184,7 +204,7 @@ class ToolExecutor:
         if reasons:
             approval = self.approvals.request(
                 run_id=ctx.run_id, task_id=ctx.task_id, tool_call_id=call.id, tool=spec.name, args=args,
-                reasons=reasons + url_notes, sentinel=verdict.as_dict() if verdict else None,
+                reasons=reasons + url_notes, sentinel=verdict.as_dict() if verdict else None, resolved=resolved,
             )
             if approval["status"] == ApprovalStatus.PENDING:
                 if ctx.on_wait:

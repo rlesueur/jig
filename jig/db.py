@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     status TEXT NOT NULL,
     note TEXT,
     created_at TEXT NOT NULL,
-    resolved_at TEXT
+    resolved_at TEXT,
+    resolved_json TEXT
 );
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status);
 CREATE UNIQUE INDEX IF NOT EXISTS approvals_call ON approvals(run_id, tool_call_id);
@@ -193,7 +194,22 @@ CREATE TABLE IF NOT EXISTS secrets (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Connected accounts (jig.connectors). Tokens live only in the vault; this is the metadata.
+CREATE TABLE IF NOT EXISTS connections (
+    provider TEXT PRIMARY KEY,
+    account TEXT,
+    access TEXT NOT NULL,
+    scopes_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    last_error TEXT,
+    connected_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
+
+# Columns added after a table first shipped: (table, column, definition).
+_ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),)
 
 
 def now() -> datetime:
@@ -231,6 +247,10 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
+        for table, column, definition in _ADDED_COLUMNS:
+            existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         self._conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),

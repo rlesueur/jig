@@ -13,6 +13,8 @@ from .agent.prompts import agent_system_prompt
 from .audit import AuditLog
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
+from .connectors import ConnectionStore, Connectors
+from .connectors import register_tools as register_connector_tools
 from .constants import EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
 from .errors import JigError, NotFound
@@ -70,10 +72,14 @@ class Jig:
         sentinel_key = resolve_api_key(config.sentinel, self.vault, role="sentinel")
         self.model = ModelClient(config.model, label="agent model", api_key=agent_key)
         self.sentinel_model = ModelClient(config.sentinel, label="Sentinel model", api_key=sentinel_key)
-        model_keys = {name: key for name, key in (("model API key", agent_key), ("Sentinel API key", sentinel_key))
-                      if key}
+        # Redacted from every tool result and error. The connectors add each token they use to this same dict.
+        self.redactions = {name: key for name, key in (("model API key", agent_key), ("Sentinel API key", sentinel_key))
+                           if key}
         self.http = http_client()
         self.registry = build_registry()
+        self.connections = ConnectionStore(self.db, self.vault, self.audit)
+        self.connectors = Connectors(self.connections, self.http, self.redactions)
+        register_connector_tools(self.registry, self.connectors)
         self.vision = VisionService(self.model, config.vision)
         self.rules = RuleStore(self.db)
         self.container = self._container_backend()
@@ -81,7 +87,8 @@ class Jig:
         self.approvals = ApprovalQueue(self.db, self.bus, self.audit)
         self.executor = ToolExecutor(registry=self.registry, rules=self.rules, sentinel=self.sentinel,
                                      approvals=self.approvals, vault=self.vault, audit=self.audit, bus=self.bus,
-                                     context_factory=self._tool_context, always_redact=model_keys)
+                                     context_factory=self._tool_context, always_redact=self.redactions,
+                                     config=config)
         self.agent = Agent(model=self.model, registry=self.registry, executor=self.executor, store=self.store,
                            bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps)
         self.planner = Planner(model=self.model, registry=self.registry, store=self.store, bus=self.bus,
@@ -102,7 +109,7 @@ class Jig:
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
                            http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id,
-                           vision=self.vision, container=self.container)
+                           vision=self.vision, container=self.container, connectors=self.connectors)
 
     def _container_backend(self) -> Any:
         """With ``[sandbox] backend = "container"`` (per-agent Docker) or ``"compose"`` (sandbox services next

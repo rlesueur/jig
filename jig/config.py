@@ -174,6 +174,21 @@ class RemoteConfig:
 
 
 @dataclass(frozen=True)
+class ConnectorLimits:
+    """``[connectors.<provider>]``: fixed limits on what Jig may send through a connected account, checked by
+    the gate before the safety checker or an approval. Used for testing with your own address only."""
+
+    # Exact addresses (case-insensitive) Jig may send to. Empty: anyone, and every send still needs approval.
+    allowed_recipients: list[str] = field(default_factory=list)
+    # When set, every outgoing subject (after any "Re: ") must start with this, for example "[Jig test]".
+    required_prefix: str = ""
+
+
+# Connectors that read [connectors.<id>]; see jig.connectors.
+CONNECTOR_IDS = ("gmail",)
+
+
+@dataclass(frozen=True)
 class Config:
     model: EndpointConfig
     sentinel: EndpointConfig
@@ -188,6 +203,7 @@ class Config:
     model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
+    connectors: dict[str, ConnectorLimits] = field(default_factory=dict)
     # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
     # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
     deployment: str = "host"
@@ -304,8 +320,24 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         model_launch=model_launch,
         vault=_vault_config(_section(raw, "vault")),
         remote=_remote_config(_section(raw, "remote"), deployment),
+        connectors=_connectors_config(_section(raw, "connectors")),
         deployment=deployment,
     )
+
+
+def _connectors_config(values: dict[str, Any]) -> dict[str, ConnectorLimits]:
+    out: dict[str, ConnectorLimits] = {}
+    for name, table in values.items():
+        if name not in CONNECTOR_IDS:
+            raise ConfigError(f"[connectors.{name}]: unknown connector; known: {list(CONNECTOR_IDS)}")
+        if not isinstance(table, dict):
+            raise ConfigError(f"[connectors.{name}] must be a table")
+        cfg = _build(ConnectorLimits, table, f"connectors.{name}")
+        recipients = [str(r).strip().lower() for r in cfg.allowed_recipients]
+        if any(not r or "@" not in r or "*" in r or any(c.isspace() for c in r) for r in recipients):
+            raise ConfigError(f"[connectors.{name}] allowed_recipients must list exact addresses, without wildcards")
+        out[name] = replace(cfg, allowed_recipients=recipients)
+    return out
 
 
 def _same_origin(a: str, b: str) -> bool | None:
