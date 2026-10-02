@@ -19,6 +19,7 @@
   <header class="top">
     <h1 class="wordmark">Jig</h1>
     <div class="top-actions">
+      <a class="cloud-chip" id="cloud-chip" href="#settings/model" data-testid="cloud-indicator" hidden>Cloud model</a>
       <span class="health" id="conn" role="status" aria-live="polite" data-tone="muted" data-testid="connection"><span class="health-dot" aria-hidden="true"></span><span class="sr-only" id="conn-text">Not connected</span></span>
       <a class="icon-btn" id="open-settings" href="#settings" aria-label="Settings" data-testid="open-settings">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm8.6-2.3.1-1.2-.1-1.2 2-1.6c.2-.1.2-.4.1-.6l-1.9-3.3c-.1-.2-.4-.3-.6-.2l-2.4 1a7 7 0 0 0-2-1.2L15.4 2c0-.2-.2-.4-.5-.4h-3.8c-.2 0-.4.2-.5.4l-.4 2.6c-.7.3-1.4.7-2 1.2l-2.4-1c-.2-.1-.5 0-.6.2L3.3 8.3c-.1.2-.1.5.1.6l2 1.6-.1 1.2.1 1.2-2 1.6c-.2.1-.2.4-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.6.5 1.3.9 2 1.2l.4 2.6c0 .2.2.4.5.4h3.8c.2 0 .4-.2.5-.4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.4 1c.2.1.5 0 .6-.2l1.9-3.3c.1-.2.1-.5-.1-.6l-2-1.6Z"/></svg>
@@ -98,9 +99,12 @@
               <h3 id="status-heading">Model and connection</h3>
               <button type="button" class="btn btn-small" id="status-refresh" data-testid="status-refresh">Refresh</button>
             </div>
-            <p class="hint">Jig runs only on local models. This is what it's using right now.</p>
+            <p class="hint">Jig is built for local models, and can use a cloud model if you set one up. This is what it's using right now.</p>
+            <p class="cloud-note" id="st-cloud-note" data-testid="cloud-note" hidden></p>
             <dl class="kv" id="status-list">
               <dt>Connection</dt><dd id="st-conn">—</dd>
+              <dt>Agent runs on</dt><dd id="st-agent-where" data-testid="agent-where">—</dd>
+              <dt>Safety checker runs on</dt><dd id="st-sentinel-where" data-testid="sentinel-where">—</dd>
               <dt>Model endpoint</dt><dd id="st-endpoint">—</dd>
               <dt>Model</dt><dd id="st-model">—</dd>
               <dt>Context</dt><dd id="st-context">—</dd>

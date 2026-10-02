@@ -181,6 +181,13 @@ h4 { font-size: 15px; font-weight: 800; }
 .health[data-tone="ok"] .health-dot { background: var(--dot-ok); color: var(--dot-ok); }
 .health[data-tone="warn"] .health-dot { background: var(--dot-warn); color: var(--dot-warn); }
 .health[data-tone="bad"] .health-dot { background: var(--dot-bad); color: var(--dot-bad); }
+/* Shown only while the agent uses a cloud model: small and calm, but always there. */
+.cloud-chip {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 2px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 800; color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line-strong); text-decoration: none; white-space: nowrap;
+}
+.cloud-chip:hover { color: var(--text); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%;
   color: var(--muted); border: 1px solid transparent; text-decoration: none;
@@ -374,6 +381,7 @@ html[data-jig-state="error"] .avatar-says { color: var(--bad); }
 .set-section h4 { margin-top: 8px; color: var(--text); }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hint { color: var(--muted); font-size: 15px; margin: 0; }
+.cloud-note { margin: 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text); font-size: 15px; }
 
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; font-size: 15px; }
 .kv dt { color: var(--muted); font-weight: 700; }

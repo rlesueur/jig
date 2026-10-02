@@ -59,9 +59,10 @@ function showError(message) {
 }
 
 class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, data = null) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -98,7 +99,7 @@ async function api(path, { method = 'GET', body } = {}) {
       throw new ApiError(r.status, `${method} ${path}: the server sent a response that is not JSON (HTTP ${r.status})`);
     }
   }
-  if (!r.ok) throw new ApiError(r.status, `${method} ${path}: ${errorText(data, r.status)}`);
+  if (!r.ok) throw new ApiError(r.status, `${method} ${path}: ${errorText(data, r.status)}`, data);
   return data;
 }
 
@@ -604,6 +605,46 @@ function capsText(c) {
   return parts.join(', ') || 'not run';
 }
 
+/* Where the agent and the safety checker run: "Local", or "Cloud: <host>" with a plain line about what is sent. */
+function whereText(c) {
+  return c.kind === 'cloud' ? `Cloud: ${c.host}` : 'Local';
+}
+
+function showConnection(conn) {
+  if (!conn) return;
+  const agent = conn.agent;
+  const sentinel = conn.sentinel;
+  $('st-agent-where').textContent = whereText(agent);
+  $('st-sentinel-where').textContent = whereText(sentinel);
+  const lines = [];
+  if (agent.kind === 'cloud') {
+    lines.push(`The agent uses a cloud model, so your conversation, the memory and tool results it works with, and any images you share are sent to ${agent.host}.`);
+  }
+  if (sentinel.kind === 'cloud') {
+    lines.push(`The safety checker uses a cloud model, so each action Jig wants to take, with its details, is sent to ${sentinel.host}.`);
+  } else if (agent.kind === 'cloud') {
+    lines.push('The safety checker runs locally, so its checks stay on this computer.');
+  }
+  if (lines.length) lines.push('Your memory, history, rules and passwords stay on this computer.');
+  $('st-cloud-note').textContent = lines.join(' ');
+  $('st-cloud-note').hidden = !lines.length;
+  const chip = $('cloud-chip');
+  chip.hidden = agent.kind !== 'cloud';
+  if (agent.kind === 'cloud') {
+    chip.title = `The agent uses a cloud model at ${agent.host}. See Settings, Model and connection.`;
+    chip.setAttribute('aria-label', `Cloud model: ${agent.host}. Open Model and connection`);
+  }
+}
+
+let lastConnection = null;
+
+function unreachableFix(conn) {
+  if (conn && conn.agent.kind === 'cloud') {
+    return `Check this computer\u2019s internet connection and that the API key for ${conn.agent.host} is valid (jig model key status), then choose Check again.`;
+  }
+  return 'Check that your local model server is running and reachable at the address in Settings, Model and connection, then choose Check again.';
+}
+
 async function loadStatus() {
   let s;
   try {
@@ -611,12 +652,16 @@ async function loadStatus() {
   } catch (err) {
     if (err.status === 401) return;
     $('st-model').textContent = 'unavailable';
+    const conn = (err.data && err.data.connection) || lastConnection;
+    showConnection(conn);
     health.model = err.status === 0
       ? { title: 'Jig isn\u2019t answering.', fix: 'Check that Jig is running on this computer, then choose Check again.', detail: err.message }
-      : { title: 'Jig can\u2019t reach its model.', fix: 'Check that your local model server is running and reachable at the address in Settings, Model and connection, then choose Check again.', detail: err.message };
+      : { title: 'Jig can\u2019t reach its model.', fix: unreachableFix(conn), detail: err.message };
     renderHealth();
     return;
   }
+  lastConnection = s.connection;
+  showConnection(s.connection);
   $('st-endpoint').textContent = s.model_endpoint;
   $('st-model').textContent = s.model.model;
   $('st-context').textContent = s.model.context_tokens ? `${s.model.context_tokens.toLocaleString('en-GB')} tokens` : 'not reported';
@@ -626,7 +671,9 @@ async function loadStatus() {
   setAgentPaused(s.agent.paused);
   const caps = s.capabilities.agent;
   health.model = caps && caps.tool_calling === false
-    ? { title: 'Jig\u2019s model can\u2019t use tools.', fix: 'Jig needs a model that passes the tool-calling check. Load one that does in your model server, then restart Jig.', detail: `${s.model.model}: ${capsText(caps)}` }
+    ? { title: 'Jig\u2019s model can\u2019t use tools.', fix: s.connection.agent.kind === 'cloud'
+      ? 'Jig needs a model that passes the tool-calling check. Choose one that does in [model] name, then restart Jig.'
+      : 'Jig needs a model that passes the tool-calling check. Load one that does in your model server, then restart Jig.', detail: `${s.model.model}: ${capsText(caps)}` }
     : null;
   renderHealth();
 }
