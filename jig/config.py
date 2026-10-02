@@ -219,8 +219,13 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     config_path = Path(path or os.environ.get("JIG_CONFIG") or DEFAULT_CONFIG_PATH)
     if not config_path.is_file():
         raise ConfigError(f"Config file not found: {config_path}")
-    with config_path.open("rb") as fh:
-        raw = tomllib.load(fh)
+    # utf-8-sig: Windows PowerShell and some editors save UTF-8 with a byte-order mark, which TOML rejects.
+    try:
+        raw = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{config_path} is not valid UTF-8: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{config_path} is not valid TOML: {exc}") from exc
     base = config_path.resolve().parent
 
     model_raw = dict(_section(raw, "model"))
