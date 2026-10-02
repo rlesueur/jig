@@ -78,6 +78,28 @@ def test_an_unknown_timezone_is_refused_with_where_it_came_from(tmp_path):
         load_config(write_config(tmp_path, 'timezone = "Mars/Olympus"'), data_dir=tmp_path / "data")
 
 
+def test_a_jig_on_a_computer_in_india_schedules_in_indian_time(tmp_path):
+    """Nothing set anywhere: a real `jig serve` whose system timezone is Asia/Kolkata (UTC+05:30, given to it with
+    TZ as in the test above) reports it, and a schedule made without a timezone runs at 07:30 there."""
+    data = tmp_path / "data"
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    proc, log = start_jig(data, port, env={"JIG_SANDBOX_DIR": str(tmp_path / "sandbox"), "TZ": "Asia/Kolkata"})
+    try:
+        wait_health(port, proc=proc, log=log)
+        h = token(data)
+        assert httpx.get(f"{base}/status", headers=h, timeout=60).json()["timezone"] == {"name": "Asia/Kolkata",
+                                                                                       "from": "system"}
+        s = httpx.post(f"{base}/schedules", headers=h, timeout=30, json={
+            "name": "Chai", "prompt": "Say good morning", "repeat": {"kind": "daily", "at": "07:30"}}).json()
+        assert s["timezone"] == "Asia/Kolkata"
+        next_run = datetime.fromisoformat(s["next_run_at"])
+        assert next_run.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%H:%M") == "07:30"
+        assert next_run.astimezone(ZoneInfo("UTC")).strftime("%H:%M") == "02:00"
+    finally:
+        kill(proc)
+
+
 def test_schedules_follow_jigs_timezone(tmp_path):
     """A non-London timezone set explicitly (in Settings' settings.toml): schedules made without a timezone use
     it, /status reports it, and changing it in Settings moves the schedules that were on it."""
