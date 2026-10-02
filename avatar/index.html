@@ -94,6 +94,28 @@
       </section>
 
       <section>
+        <h2>Dance</h2>
+        <div class="row">
+          <button id="flourish" type="button">Play a flourish</button>
+          <label>Tempo <input id="tempo" type="range" min="80" max="160" step="1" value="120" aria-label="Dance tempo in beats per minute"></label>
+          <output id="tempo-out">120 bpm</output>
+        </div>
+        <p class="note" id="dance-note">The <strong>Dance</strong> state loops a 16-beat routine (side-steps, a wave, a spin and a ta-da). <code>dance()</code> plays a short flourish over any state; idle does one by itself every minute or two. It dances livelier to <code>audio-level</code>.</p>
+      </section>
+
+      <section>
+        <h2>Gaze</h2>
+        <div class="row">
+          <label for="message">Message box</label>
+          <input id="message" type="text" placeholder="Type here: Jig won't dance while you type" style="flex: 1; min-width: 220px; font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text)">
+        </div>
+        <div class="row" style="margin-top: 10px">
+          <label><input type="checkbox" id="look-message"> Look at the message box (<code>look-at="#message"</code>)</label>
+        </div>
+        <p class="note">Jig's eyes follow your pointer while it is over the avatar. While the box has focus and text is changing, the avatar gets <code>user-typing</code>.</p>
+      </section>
+
+      <section>
         <h2>Working task</h2>
         <div class="buttons" id="task-buttons"></div>
         <div class="row" style="margin-top: 12px">
@@ -156,7 +178,7 @@
 
     const STATE_LABELS = {
       idle: 'Idle', monitoring: 'Monitoring', thinking: 'Thinking', working: 'Working', talking: 'On a call',
-      approval: 'Needs approval', success: 'Success', error: 'Blocked', paused: 'Paused',
+      approval: 'Needs approval', success: 'Success', error: 'Blocked', paused: 'Paused', dance: 'Dance',
     };
     const TASK_LABELS = {
       browsing: 'Browsing / research', writing: 'Writing / email', coding: 'Coding', shopping: 'Shopping / payments',
@@ -218,6 +240,35 @@
     addIcon('Success', 'success');
     addIcon('Blocked', 'error');
     addIcon('Paused', 'paused');
+    addIcon('Dance', 'dance');
+
+    const danceNote = document.getElementById('dance-note');
+    document.getElementById('flourish').addEventListener('click', async () => {
+      try {
+        const danced = await hero.dance();
+        if (!danced) danceNote.textContent = 'Reduced motion is on, so Jig does not dance.';
+      } catch (err) {
+        danceNote.textContent = err.message;
+        danceNote.classList.add('error');
+      }
+    });
+    const tempo = document.getElementById('tempo');
+    tempo.addEventListener('input', () => {
+      for (const el of document.querySelectorAll('jig-avatar')) el.setAttribute('tempo', tempo.value);
+      document.getElementById('tempo-out').value = `${tempo.value} bpm`;
+    });
+
+    const message = document.getElementById('message');
+    let typingTimer = 0;
+    message.addEventListener('input', () => {
+      hero.setAttribute('user-typing', '');
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => hero.removeAttribute('user-typing'), 1500);
+    });
+    document.getElementById('look-message').addEventListener('change', (e) => {
+      if (e.target.checked) hero.setAttribute('look-at', '#message');
+      else hero.removeAttribute('look-at');
+    });
 
     const themeButtons = document.getElementById('theme-buttons');
     function setTheme(theme) {

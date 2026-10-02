@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <title>Jig avatar — browser tests</title>
+  <style>
+    body { font: 14px/1.5 "Segoe UI", system-ui, sans-serif; margin: 24px; background: #fffaf2; color: #2d2219; }
+    .pass { color: #1f6b2e; }
+    .fail { color: #b0241c; font-weight: 600; }
+    #stage jig-avatar { width: 160px; height: 160px; }
+  </style>
+</head>
+<body>
+  <h1>Jig avatar tests</h1>
+  <p id="summary">Running…</p>
+  <ol id="results"></ol>
+  <div id="stage"></div>
+  <script type="module">
+    /* Real browser tests for <jig-avatar>: open this page (served over http) and read the summary.
+       window.__results holds { passed, failed, results } for automation. */
+    import { STATES, DEFAULT_TEMPO } from './jig-avatar.js';
+
+    const stage = document.getElementById('stage');
+    const results = [];
+    const tests = [];
+    const test = (name, fn) => tests.push({ name, fn });
+    const assert = (cond, msg) => {
+      if (!cond) throw new Error(msg);
+    };
+    const throws = (fn, Type, msg) => {
+      try {
+        fn();
+      } catch (err) {
+        assert(!Type || err instanceof Type, `${msg}: threw ${err.name}, expected ${Type.name}`);
+        return err;
+      }
+      throw new Error(`${msg}: did not throw`);
+    };
+    const make = (attrs = {}) => {
+      const el = document.createElement('jig-avatar');
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      stage.append(el);
+      return el;
+    };
+    const pixels = (el) => {
+      const c = el.shadowRoot.querySelector('canvas');
+      return c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    };
+    const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+    /* errors thrown from attribute callbacks are reported to the window rather than to setAttribute's caller */
+    const reported = (fn) => {
+      const seen = [];
+      const onErr = (e) => {
+        seen.push(e.error || e.message);
+        e.preventDefault();
+      };
+      window.addEventListener('error', onErr);
+      try {
+        fn();
+      } finally {
+        window.removeEventListener('error', onErr);
+      }
+      return seen;
+    };
+
+    test('dance is a state, with friendly aliases', () => {
+      assert(STATES.includes('dance'), 'STATES lists dance');
+      const el = make({ clock: 'manual', seed: '1' });
+      el.setState('dance');
+      assert(el.state === 'dance', 'state is dance');
+      assert(el.getAttribute('aria-label') === 'Jig is dancing', `label is "${el.getAttribute('aria-label')}"`);
+      el.setState('jig');
+      assert(el.state === 'dance', 'jig is an alias of dance');
+      throws(() => el.setState('dance', { task: 'coding' }), TypeError, 'dance takes no task');
+    });
+
+    test('the dance state really moves Jig in time with the beat', () => {
+      const el = make({ clock: 'manual', seed: '2' });
+      el.setState('dance');
+      el.advance(1, 60);
+      assert(el.dancing, 'dancing while in the dance state');
+      const hops = [];
+      for (let i = 0; i < 60; i++) {
+        el.step(1 / 60);
+        hops.push(el._pose.hop);
+      }
+      assert(Math.max(...hops) > 12, `hops off the ground (max ${Math.max(...hops).toFixed(1)})`);
+      assert(Math.min(...hops) < 4, 'lands between hops');
+      assert(el.tempo === DEFAULT_TEMPO, 'default tempo');
+    });
+
+    test('dance() plays a flourish and resolves true when it finishes', async () => {
+      const el = make({ clock: 'manual', seed: '3' });
+      el.step(1 / 60);
+      let done = null;
+      el.dance().then((v) => (done = v));
+      el.advance(1, 60);
+      assert(el.dancing, 'dancing during the flourish');
+      el.advance(3.5, 60);
+      await Promise.resolve();
+      assert(done === true, `resolved ${done}`);
+      assert(!el.dancing, 'stopped after the flourish');
+      assert(el.state === 'idle', 'state unchanged by dance()');
+    });
+
+    test('dance() checks its arguments and refuses while paused', () => {
+      const el = make({ clock: 'manual', seed: '4' });
+      throws(() => el.dance({ routine: 'waltz' }), RangeError, 'unknown routine');
+      el.setState('paused');
+      throws(() => el.dance(), Error, 'cannot dance while paused');
+    });
+
+    test('reduced motion: no dancing at all, dance() resolves false', async () => {
+      const el = make({ clock: 'manual', seed: '5', 'reduced-motion': '' });
+      el.setState('dance');
+      el.advance(2, 60);
+      assert(!el.dancing, 'not dancing in the dance state');
+      assert(Math.abs(el._pose.hop) < 0.01, 'no hop');
+      assert((await el.dance()) === false, 'dance() resolves false');
+      el.setState('success');
+      el.advance(0.5, 60);
+      assert(!el.dancing, 'no success celebration dance');
+    });
+
+    test('success starts a celebration dance', () => {
+      const el = make({ clock: 'manual', seed: '6' });
+      el.setState('success');
+      el.advance(0.5, 60);
+      assert(el.dancing, 'celebrating');
+      el.advance(4, 60);
+      assert(!el.dancing, 'celebration ends');
+    });
+
+    test('step() needs the manual clock and a sensible time step', () => {
+      const auto = make();
+      throws(() => auto.step(1 / 60), Error, 'step on the shared ticker');
+      const el = make({ clock: 'manual' });
+      throws(() => el.step(0), RangeError, 'zero step');
+      throws(() => el.step(2), RangeError, 'two-second step');
+      const before = el.time;
+      el.advance(0.5, 60);
+      assert(Math.abs(el.time - before - 0.5) < 1e-9, `time advanced by ${el.time - before}`);
+    });
+
+    test('the manual clock with a seed renders identical frames every time', () => {
+      const run = (seed) => {
+        const el = make({ clock: 'manual', seed: String(seed) });
+        el.setState('idle');
+        el.advance(2, 60);
+        el.setState('dance');
+        el.advance(3.3, 60);
+        el.setState('working', { task: 'writing' });
+        el.advance(1.2, 60);
+        return pixels(el);
+      };
+      const a = run(42);
+      const b = run(42);
+      const c = run(43);
+      assert(same(a, b), 'same seed, same pixels');
+      assert(!same(a, c), 'a different seed gives a different performance');
+    });
+
+    test('the shared ticker leaves manual avatars alone', async () => {
+      const el = make({ clock: 'manual', seed: '7' });
+      el.step(1 / 60);
+      const t = el.time;
+      await nextFrame();
+      await nextFrame();
+      assert(el.time === t, 'time did not move without step()');
+      el.setAttribute('clock', 'auto');
+      await nextFrame();
+      await nextFrame();
+      await nextFrame();
+      assert(el.time > t, 'auto clock resumes ticking');
+    });
+
+    test('idle breaks into a flourish now and then, but never while the user types', () => {
+      const el = make({ clock: 'manual', seed: '8' });
+      el.setState('idle');
+      let flourishes = 0;
+      let was = false;
+      for (let i = 0; i < 150 * 20; i++) {
+        el.step(1 / 20);
+        if (el.dancing && !was) flourishes++;
+        was = el.dancing;
+      }
+      assert(flourishes >= 1 && flourishes <= 3, `${flourishes} flourishes in 150 s`);
+      const typing = make({ clock: 'manual', seed: '8', 'user-typing': '' });
+      typing.setState('idle');
+      for (let i = 0; i < 150 * 20; i++) {
+        typing.step(1 / 20);
+        assert(!typing.dancing, `danced while the user typed (at ${typing.time.toFixed(1)} s)`);
+      }
+    });
+
+    test('blinks are irregular and sometimes double', () => {
+      const el = make({ clock: 'manual', seed: '9' });
+      const starts = [];
+      let closed = false;
+      for (let i = 0; i < 120 * 60; i++) {
+        el.step(1 / 60);
+        const c = el._blink > 0.5;
+        if (c && !closed) starts.push(el.time);
+        closed = c;
+      }
+      const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+      assert(starts.length > 15, `${starts.length} blinks in two minutes`);
+      assert(gaps.some((g) => g < 0.45), 'at least one double blink');
+      assert(Math.max(...gaps) - Math.min(...gaps) > 2, 'gaps vary');
+    });
+
+    test('look-at accepts a point or a selector and reports a selector that matches nothing', () => {
+      const el = make({ clock: 'manual', seed: '10' });
+      el.setAttribute('look-at', '0.95,0.95');
+      el.advance(1, 60);
+      assert(el._sp.gazeX.x > 0.5 && el._sp.gazeY.x > 0.5, 'looks down and to the right');
+      el.setAttribute('look-at', '0.05,0.05');
+      el.advance(1, 60);
+      assert(el._sp.gazeX.x < -0.5, 'looks left');
+      const bad = reported(() => el.setAttribute('look-at', '[[['));
+      assert(bad.length === 1 && /look-at/.test(String(bad[0])), 'an invalid selector is reported');
+      el.setAttribute('look-at', '#no-such-element');
+      const missing = reported(() => el.step(1 / 60));
+      assert(missing.length === 1 && /matches no element/.test(String(missing[0])), 'a missing target is reported');
+    });
+
+    test('tempo and seed attributes are validated', () => {
+      const el = make({ clock: 'manual' });
+      assert(reported(() => el.setAttribute('tempo', '500')).length === 1, 'tempo 500 is reported');
+      throws(() => el.tempo, RangeError, 'reading a bad tempo');
+      el.setAttribute('tempo', '90');
+      assert(el.tempo === 90, 'tempo 90');
+      assert(reported(() => el.setAttribute('seed', '-1')).length === 1, 'negative seed is reported');
+      assert(reported(() => el.setAttribute('clock', 'sometimes')).length === 1, 'unknown clock is reported');
+    });
+
+    test('every state draws in both themes at large and icon sizes', () => {
+      for (const theme of ['dark', 'light']) {
+        for (const size of [160, 40]) {
+          for (const state of STATES) {
+            const el = make({ clock: 'manual', seed: '11', theme });
+            el.style.width = el.style.height = `${size}px`;
+            el.setState(state, state === 'working' ? { task: 'coding' } : {});
+            el.advance(0.5, 30);
+            const px = pixels(el);
+            let ink = 0;
+            for (let i = 3; i < px.length; i += 4) if (px[i] > 0) ink++;
+            assert(ink > px.length / 40, `${state} ${theme} ${size}px drew something`);
+            el.remove();
+          }
+        }
+      }
+    });
+
+    let passed = 0;
+    let failed = 0;
+    const list = document.getElementById('results');
+    for (const t of tests) {
+      const li = document.createElement('li');
+      try {
+        await t.fn();
+        passed++;
+        li.className = 'pass';
+        li.textContent = `✓ ${t.name}`;
+        results.push({ name: t.name, ok: true });
+      } catch (err) {
+        failed++;
+        li.className = 'fail';
+        li.textContent = `✗ ${t.name}: ${err.message}`;
+        results.push({ name: t.name, ok: false, error: err.message });
+      }
+      list.append(li);
+      stage.replaceChildren();
+    }
+    document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
+    document.getElementById('summary').className = failed ? 'fail' : 'pass';
+    window.__results = { passed, failed, results };
+  </script>
+</body>
+</html>

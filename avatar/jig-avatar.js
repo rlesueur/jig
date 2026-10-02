@@ -1,7 +1,7 @@
 /*
- * <jig-avatar> — animated neon mascot for Jig.
+ * <jig-avatar> â€” animated neon mascot for Jig.
  * Dependency-free custom element drawn on a single Canvas 2D context.
- * All instances share one requestAnimationFrame ticker.
+ * All instances share one requestAnimationFrame ticker, unless clock="manual" (then call step() yourself).
  */
 
 const TAU = Math.PI * 2;
@@ -12,6 +12,59 @@ const ease = (t) => t * t * (3 - 2 * t);
 const frac = (v) => v - Math.floor(v);
 const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${clamp(a, 0, 1)})`;
 const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+
+function hash1(n) {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function noise1(x) {
+  const i = Math.floor(x);
+  return lerp(hash1(i), hash1(i + 1), ease(x - i)) * 2 - 1;
+}
+/* layered value noise: smooth, irregular, never visibly periodic */
+const fbm = (x) => noise1(x) * 0.6 + noise1(x * 2.13 + 7.1) * 0.3 + noise1(x * 4.37 + 3.3) * 0.1;
+
+/* damped spring: movements overshoot a little and settle instead of stopping dead */
+class Spring {
+  constructor(x = 0, k = 80, d = 10) {
+    this.x = x;
+    this.v = 0;
+    this.k = k;
+    this.d = d;
+  }
+  step(target, dt) {
+    const n = dt > 1 / 50 ? 2 : 1;
+    const h = dt / n;
+    for (let i = 0; i < n; i++) {
+      this.v += (this.k * (target - this.x) - this.d * this.v) * h;
+      this.x += this.v * h;
+    }
+    return this.x;
+  }
+}
+
+export const DEFAULT_TEMPO = 120;
+
+/* Dance routines, in beats. A section's kind picks the move; `until` is the beat it ends on. */
+const ROUTINES = {
+  dance: [
+    { until: 8, kind: 'step' },
+    { until: 12, kind: 'wave' },
+    { until: 14, kind: 'spin' },
+    { until: 16, kind: 'tada' },
+  ],
+  flourish: [
+    { until: 4, kind: 'step' },
+    { until: 6, kind: 'spin' },
+    { until: 8, kind: 'tada' },
+  ],
+  celebrate: [
+    { until: 4, kind: 'wave' },
+    { until: 6, kind: 'spin' },
+    { until: 8, kind: 'tada' },
+  ],
+};
+const routineLength = (r) => r[r.length - 1].until;
 
 export const THEMES = ['dark', 'light'];
 
@@ -54,7 +107,7 @@ const C = {
   mint: [120, 255, 214],
 };
 
-/* World space is a 1000 × 1000 square laid out to match the reference artwork. */
+/* World space is a 1000 Ã— 1000 square laid out to match the reference artwork. */
 const HEAD = { x: 505, y: 318, rx: 162, ry: 150 };
 const SHOULDER_L = { x: 452, y: 470 };
 const SHOULDER_R = { x: 566, y: 478 };
@@ -62,7 +115,7 @@ const TAIL_TOP = 462;
 const TAIL_TIP = { x: 498, y: 908 };
 const CENTRE = { x: 508, y: 500 };
 
-export const STATES = ['idle', 'monitoring', 'thinking', 'working', 'talking', 'approval', 'success', 'error', 'paused'];
+export const STATES = ['idle', 'monitoring', 'thinking', 'working', 'talking', 'approval', 'success', 'error', 'paused', 'dance'];
 export const TASKS = ['browsing', 'writing', 'coding', 'shopping', 'scheduling'];
 
 const STATE_ALIASES = {
@@ -73,6 +126,8 @@ const STATE_ALIASES = {
   call: 'talking',
   'on-call': 'talking',
   blocked: 'error',
+  dancing: 'dance',
+  jig: 'dance',
 };
 const TASK_ALIASES = {
   research: 'browsing',
@@ -90,7 +145,9 @@ const BASE_POSE = {
   tilt: -0.1, drop: 0,
   aL: 208, lL: 222, bL: -42, aR: 8, lR: 215, bR: 34, spreadL: 1, spreadR: 0.85, waveR: 0, typing: 0,
   cool: 0, amber: 0, desat: 0, timeScale: 1, dim: 0,
-  wThink: 0, wWatch: 0, wTalk: 0, wApprove: 0, wSuccess: 0, wError: 0, wPause: 0,
+  /* expression and life: cheek blush, happy squint, worried brows, ear droop (+) or perk (-), rhythmic groove */
+  blush: 0.55, squint: 0.12, brow: 0, earDroop: 0, groove: 0, fidget: 1,
+  wThink: 0, wWatch: 0, wTalk: 0, wApprove: 0, wSuccess: 0, wError: 0, wPause: 0, wDance: 0,
   wBrowse: 0, wWrite: 0, wCode: 0, wShop: 0, wCal: 0,
 };
 const POSE_KEYS = Object.keys(BASE_POSE);
@@ -99,29 +156,44 @@ const STATE_POSES = {
   idle: {},
   monitoring: {
     energy: 0.55, bobAmp: 4, bobFreq: 0.26, breath: 0.7, swirl: 0.03, sway: 14, swayFreq: 0.16, orbit: 0.016, wave: 8,
-    eyeOpen: 0, smile: 0.55, tilt: -0.04, drop: 14, aL: 166, lL: 186, bL: -26, aR: 18, lR: 188, bR: 26,
-    spreadL: 0.5, spreadR: 0.5, desat: 0.12, wWatch: 1,
+    eyeOpen: 0, smile: 0.7, tilt: -0.04, drop: 14, aL: 166, lL: 186, bL: -26, aR: 18, lR: 188, bR: 26,
+    spreadL: 0.5, spreadR: 0.5, desat: 0.12, wWatch: 1, blush: 0.4, earDroop: 0.12, fidget: 0.4,
   },
   thinking: {
     energy: 1.1, bobFreq: 0.75, swirl: 0.42, sway: 36, swayFreq: 0.8, wave: 22, orbit: 0.22, lookX: 0.3, lookY: -1,
-    smile: 0.35, tilt: 0.12, aL: 228, lL: 172, bL: -60, aR: 24, lR: 178, bR: 36, wThink: 1,
+    smile: 0.55, tilt: 0.16, aL: 228, lL: 172, bL: -60, aR: 24, lR: 178, bR: 36, wThink: 1, earDroop: -0.06, squint: 0,
   },
-  working: { energy: 1.05, swirl: 0.2, orbit: 0.1, sway: 30, swayFreq: 0.6, wave: 18, bobFreq: 0.7 },
-  talking: { energy: 1.05, swirl: 0.12, sway: 30, swayFreq: 0.5, smile: 0.8, aL: 200, aR: 12, spreadL: 1.1, wTalk: 1 },
+  working: { energy: 1.05, swirl: 0.2, orbit: 0.1, sway: 30, swayFreq: 0.6, wave: 18, bobFreq: 0.7, groove: 1, fidget: 0.5 },
+  talking: {
+    energy: 1.05, swirl: 0.12, sway: 30, swayFreq: 0.5, smile: 1.05, aL: 200, aR: 12, spreadL: 1.1, wTalk: 1, groove: 0.4,
+    blush: 0.7, squint: 0.2,
+  },
   approval: {
     energy: 1.15, bobAmp: 14, bobFreq: 1.05, swirl: 0.14, eyeOpen: 1.08, smile: 1.15, tilt: 0.16,
-    aL: 196, lL: 200, aR: -34, lR: 232, bR: 46, spreadR: 1.25, waveR: 1, amber: 1, wApprove: 1,
+    aL: 196, lL: 200, aR: -34, lR: 232, bR: 46, spreadR: 1.25, waveR: 1, amber: 1, wApprove: 1, earDroop: -0.14, squint: 0,
   },
   success: {
     energy: 1.25, bobAmp: 12, bobFreq: 1.2, swirl: 0.32, orbit: 0.2, sway: 40, swayFreq: 0.9, happy: 1, smile: 1.4,
-    tilt: 0, aL: 224, lL: 232, aR: -44, lR: 232, spreadL: 1.3, spreadR: 1.3, wSuccess: 1,
+    mouthOpen: 0.32, tilt: 0, aL: 224, lL: 232, aR: -44, lR: 232, spreadL: 1.3, spreadR: 1.3, wSuccess: 1, blush: 1,
+    squint: 0.5, earDroop: -0.1,
   },
+  /* error is worried and apologetic, never cross: soft frown, brows raised in the middle, ears drooping */
   error: {
-    energy: 0.72, bobAmp: 3, bobFreq: 0.28, swirl: 0.025, sway: 10, swayFreq: 0.16, flare: 0.7, orbit: 0.012, wave: 7,
-    eyeOpen: 0.7, lookY: 0.75, sad: 1, smile: -0.8, tilt: 0.2, drop: 46,
-    aL: 116, lL: 176, bL: 32, aR: 64, lR: 176, bR: -32, spreadL: 0.45, spreadR: 0.45, cool: 1, wError: 1,
+    energy: 0.78, bobAmp: 3, bobFreq: 0.28, swirl: 0.025, sway: 10, swayFreq: 0.16, flare: 0.75, orbit: 0.012, wave: 7,
+    eyeOpen: 1.02, lookY: 0.45, sad: 0.45, smile: -0.35, tilt: 0.2, drop: 34, brow: 1, blush: 0.65, squint: 0,
+    aL: 132, lL: 186, bL: 32, aR: 52, lR: 186, bR: -32, spreadL: 0.6, spreadR: 0.6, cool: 0.6, wError: 1,
+    earDroop: 0.42, fidget: 0.3,
   },
-  paused: { energy: 0.62, desat: 0.82, timeScale: 0.08, smile: 0.5, eyeOpen: 0.85, wPause: 1 },
+  /* paused is peacefully asleep */
+  paused: {
+    energy: 0.66, desat: 0.62, timeScale: 0.14, smile: 0.75, eyeOpen: 0, wPause: 1, blush: 0.35, earDroop: 0.26,
+    fidget: 0, tilt: 0.06,
+  },
+  dance: {
+    energy: 1.25, bobAmp: 4, bobFreq: 0.6, swirl: 0.28, orbit: 0.16, sway: 22, swayFreq: 0.5, wave: 18, smile: 1.35,
+    mouthOpen: 0.15, tilt: 0, aL: 214, lL: 228, aR: -6, lR: 226, spreadL: 1.25, spreadR: 1.2, blush: 1, squint: 0.45,
+    wDance: 1, fidget: 0,
+  },
 };
 
 const TASK_POSES = {
@@ -300,7 +372,10 @@ const TEMPLATE = `
 
 export class JigAvatar extends HTMLElement {
   static get observedAttributes() {
-    return ['state', 'task', 'background', 'audio-level', 'shape', 'framing', 'reduced-motion', 'theme'];
+    return [
+      'state', 'task', 'background', 'audio-level', 'shape', 'framing', 'reduced-motion', 'theme',
+      'seed', 'clock', 'tempo', 'look-at', 'user-typing',
+    ];
   }
 
   constructor() {
@@ -316,13 +391,34 @@ export class JigAvatar extends HTMLElement {
     this._cur = { ...BASE_POSE };
     this._audio = 0;
     this._audioS = 0;
+    this._audioSlow = 0;
     this._t = 0;
     this._rt = 0;
-    this._ph = { bob: 0, breath: 0, swirl: 0, sway: 0, orbit: 0, wave: 0, pulse: 0, type: 0 };
-    this._blinkAt = 2 + Math.random() * 3;
-    this._blink = 1;
-    this._spinStart = -10;
-    this._shakeStart = -10;
+    this._ph = { bob: 0, breath: 0, swirl: 0, sway: 0, orbit: 0, wave: 0, pulse: 0, type: 0, groove: 0 };
+    this._reseed((Math.random() * 4294967296) >>> 0);
+    this._sp = {
+      aL: new Spring(BASE_POSE.aL, 110, 12), aR: new Spring(BASE_POSE.aR, 110, 12),
+      earL: new Spring(0, 95, 6.5), earR: new Spring(0, 95, 6.5),
+      tilt: new Spring(0, 60, 7), hop: new Spring(0, 120, 9), sq: new Spring(0, 170, 9),
+      foot: new Spring(0, 120, 13), lag: new Spring(0, 34, 6.5), headX: new Spring(0, 70, 11),
+      gazeX: new Spring(0, 300, 26), gazeY: new Spring(0, 300, 26),
+      fingerL: new Spring(0, 70, 6), fingerR: new Spring(0, 70, 6),
+    };
+    this._prevHeadY = 0;
+    this._prevVy = 0;
+    this._blinkStart = -10;
+    this._doubleBlink = false;
+    this._gaze = { x: 0, y: 0, next: 0, microX: 0, microY: 0, microNext: 0 };
+    this._pointer = { x: 0, y: 0, at: -100 };
+    this._lookAt = null;
+    this._lookAtMissing = false;
+    this._wiggle = 0;
+    this._fl = null; /* the one-off dance flourish in progress, if any */
+    this._danceBeat = 0;
+    this._lastBeat = -1;
+    this._splash = 0;
+    this._onsetCool = 0;
+    this._idleFor = 0;
     this._burst = [];
     this._browseLook = 0;
     this._shards = buildShards();
@@ -351,23 +447,68 @@ export class JigAvatar extends HTMLElement {
       this._visible = entries[entries.length - 1].isIntersecting;
     });
     this._io.observe(this);
+    this._onPointer = (e) => {
+      const r = this.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      this._pointer.x = (e.clientX - r.left) / r.width;
+      this._pointer.y = (e.clientY - r.top) / r.height;
+      this._pointer.at = this._rt;
+    };
+    this._onLeave = () => {
+      this._pointer.at = -100;
+    };
+    this.addEventListener('pointermove', this._onPointer);
+    this.addEventListener('pointerleave', this._onLeave);
     if (!this.hasAttribute('role')) this.setAttribute('role', 'img');
     this._updateLabel();
     if (!this._lightSettled) {
       this._lightK = this.theme === 'light' ? 1 : 0; /* the first frame starts in the right theme, no fade */
       this._lightSettled = true;
     }
-    track(this);
+    if (!this.manualClock) track(this);
   }
 
   disconnectedCallback() {
     this._ro.disconnect();
     this._io.disconnect();
+    this.removeEventListener('pointermove', this._onPointer);
+    this.removeEventListener('pointerleave', this._onLeave);
     untrack(this);
   }
 
   attributeChangedCallback(name, oldValue, value) {
     if (this._reflecting || oldValue === value) return;
+    if (name === 'seed') {
+      if (value === null) return;
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 0) throw new RangeError(`jig-avatar: seed must be a whole number of 0 or more, received "${value}"`);
+      this._reseed(n);
+      return;
+    }
+    if (name === 'clock') {
+      if (value !== null && !['auto', 'manual'].includes(value)) {
+        throw new RangeError(`jig-avatar: unknown clock "${value}". Expected auto or manual`);
+      }
+      if (this.isConnected) {
+        if (this.manualClock) untrack(this);
+        else track(this);
+      }
+      return;
+    }
+    if (name === 'tempo') {
+      if (value !== null) this._parseTempo(value);
+      return;
+    }
+    if (name === 'look-at') {
+      this._lookAt = value === null || value === '' ? null : this._parseLookAt(value);
+      this._lookAtMissing = false;
+      return;
+    }
+    if (name === 'user-typing') {
+      /* stop a flourish politely at the next beat rather than mid-step */
+      if (this._userTyping && this._fl && !this._fl.held) this._fl.len = Math.min(this._fl.len, Math.ceil(this._fl.beat) + 1);
+      return;
+    }
     if (name === 'state' || name === 'task' || name === 'background') {
       /* state, task and background may arrive as separate attribute writes, so apply them together once settled */
       if (this._pendingAttr) return;
@@ -425,6 +566,109 @@ export class JigAvatar extends HTMLElement {
     return this._audio;
   }
 
+  /** True when clock="manual": the shared ticker leaves this avatar alone and step() drives it. */
+  get manualClock() {
+    return this.getAttribute('clock') === 'manual';
+  }
+
+  /** Seconds of animation time this avatar has run (render time, independent of state slow-downs). */
+  get time() {
+    return this._rt;
+  }
+
+  /** Dance tempo in beats per minute (tempo attribute, default 120). */
+  get tempo() {
+    const value = this.getAttribute('tempo');
+    return value === null ? DEFAULT_TEMPO : this._parseTempo(value);
+  }
+
+  /** True while the dance state or a flourish (dance() or the success celebration) is moving Jig. */
+  get dancing() {
+    return !!this._fl || (this._state === 'dance' && !this._reduced);
+  }
+
+  get _userTyping() {
+    return this.hasAttribute('user-typing') && this.getAttribute('user-typing') !== 'false';
+  }
+
+  _parseTempo(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 40 || n > 220) {
+      throw new RangeError(`jig-avatar: tempo must be between 40 and 220 beats per minute, received "${value}"`);
+    }
+    return n;
+  }
+
+  /* look-at is either "x,y" in fractions of the avatar's own box (so "0.5,1.6" is below it) or a CSS selector */
+  _parseLookAt(value) {
+    const parts = value.split(',');
+    if (parts.length === 2 && parts.every((p) => p.trim() !== '' && Number.isFinite(Number(p)))) {
+      return { x: Number(parts[0]), y: Number(parts[1]) };
+    }
+    try {
+      document.querySelector(value);
+    } catch (err) {
+      throw new RangeError(`jig-avatar: look-at must be "x,y" or a CSS selector, received "${value}" (${err.message})`);
+    }
+    return { selector: value };
+  }
+
+  _reseed(seed) {
+    this._seed = seed;
+    this._rng = seeded(seed ^ 0x9e3779b9);
+    const rnd = this._rng;
+    this._nextBlink = 1.2 + rnd() * 2.5;
+    this._nextFidget = 2.5 + rnd() * 4;
+    this._nextFlourish = 60 + rnd() * 60;
+  }
+
+  /**
+   * Advance the animation by dt seconds and draw one frame. For clock="manual" (frame-by-frame video
+   * rendering): with a fixed seed and fixed steps the output is identical on every run.
+   */
+  step(dt = 1 / 60) {
+    if (typeof dt !== 'number' || !(dt > 0) || dt > 1) {
+      throw new RangeError(`jig-avatar: step() takes a time step between 0 and 1 second, received ${dt}`);
+    }
+    if (!this.manualClock) throw new Error('jig-avatar: step() needs clock="manual"; the shared ticker drives this avatar');
+    if (!this._cssW || !this._cssH) {
+      const r = this.getBoundingClientRect();
+      if (!r.width || !r.height) throw new Error('jig-avatar: cannot step an avatar with no size (is it in the document and visible?)');
+      this._resize(r.width, r.height);
+    }
+    this._tick(dt, true);
+  }
+
+  /** Step through `seconds` in fixed 1/fps increments (manual clock only). */
+  advance(seconds, fps = 60) {
+    const n = Math.round(seconds * fps);
+    for (let i = 0; i < n; i++) this.step(1 / fps);
+  }
+
+  /**
+   * Play a short dance flourish over the current state: a few jig steps, a spin and a ta-da.
+   * Resolves true when it finishes, false if it is cut short (a newer dance, or a state change that ends it),
+   * and false straight away when reduced motion is on (no dancing then).
+   * @param {{routine?: 'flourish'|'celebrate'|'dance'}} [options] 'dance' plays the full 16-beat routine once
+   */
+  dance(options = {}) {
+    const routine = options.routine || 'flourish';
+    if (!ROUTINES[routine]) {
+      throw new RangeError(`jig-avatar: unknown dance routine "${routine}". Expected ${Object.keys(ROUTINES).join(', ')}`);
+    }
+    if (this._state === 'paused') throw new Error('jig-avatar: Jig is paused, so it cannot dance');
+    if (this._reduced) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      this._startFlourish(routine, resolve);
+    });
+  }
+
+  _startFlourish(routine, resolve) {
+    if (this._fl && this._fl.resolve) this._fl.resolve(false);
+    this._fl = { routine: ROUTINES[routine], name: routine, beat: 0, len: routineLength(ROUTINES[routine]), resolve, lastBeat: -1 };
+    this._sp.sq.v += 2.2;
+  }
+
   /**
    * Switch animation state. Throws on unknown states or tasks rather than guessing.
    * @param {string} name one of STATES (or an alias such as 'sleeping', 'needs-approval', 'blocked')
@@ -460,11 +704,25 @@ export class JigAvatar extends HTMLElement {
     const pose = { ...BASE_POSE, ...STATE_POSES[state], ...(task ? TASK_POSES[task] : {}) };
     this._target = background ? backgroundPose(pose) : pose;
 
-    if (changed && state === 'success' && previous !== 'success') {
-      this._spinStart = this._rt;
-      this._spawnBurst();
+    if (changed && state !== previous) {
+      /* squash and stretch on every change of state, a little hop, and often a blink */
+      const m = this._reduced ? 0 : 1;
+      this._sp.sq.v += (state === 'success' ? 5 : state === 'error' ? -2.5 : 3) * m;
+      if (state !== 'paused' && state !== 'monitoring') this._sp.hop.v += (state === 'error' ? 0 : 60) * m;
+      this._sp.earL.v += 2.5 * m;
+      this._sp.earR.v += 2.5 * m;
+      if (this._rng() < 0.6) this._blinkStart = this._rt;
+      if (state === 'dance') {
+        this._danceBeat = 0;
+        this._lastBeat = -1;
+      }
+      if (this._fl && state !== 'success' && this._fl.name === 'celebrate') this._endFlourish();
+      if (this._fl && (state === 'paused' || state === 'dance')) this._endFlourish();
     }
-    if (changed && state === 'error' && previous !== 'error') this._shakeStart = this._rt;
+    if (changed && state === 'success' && previous !== 'success') {
+      this._spawnBurst();
+      if (!this._reduced) this._startFlourish('celebrate', null);
+    }
 
     this._reflecting = true;
     this.setAttribute('state', state);
@@ -488,17 +746,28 @@ export class JigAvatar extends HTMLElement {
     this._audio = level;
   }
 
+  _endFlourish(finished = false) {
+    const fl = this._fl;
+    this._fl = null;
+    if (fl && fl.resolve) fl.resolve(finished);
+  }
+
   _updateLabel() {
-    const label = this._task ? `Jig is ${this._state}: ${this._task}` : `Jig is ${this._state}`;
+    const name = this._state === 'dance' ? 'dancing' : this._state;
+    const label = this._task ? `Jig is ${name}: ${this._task}` : `Jig is ${name}`;
     this.setAttribute('aria-label', this._background ? `${label}, in the background` : label);
   }
 
   _resize(w, h) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (w === this._cssW && h === this._cssH && dpr === this._dpr) return;
     this._cssW = w;
     this._cssH = h;
-    this._dpr = Math.min(2, window.devicePixelRatio || 1);
+    this._dpr = dpr;
     this._canvas.width = Math.max(1, Math.round(w * this._dpr));
     this._canvas.height = Math.max(1, Math.round(h * this._dpr));
+    /* resizing clears the canvas; a manually clocked avatar would otherwise stay blank until its next step */
+    if (this.manualClock && this._pose && w && h) this._render(this._reduced ? 0.15 : 1);
   }
 
   get _reduced() {
@@ -508,7 +777,7 @@ export class JigAvatar extends HTMLElement {
 
   _spawnBurst() {
     if (this._reduced) return;
-    const rnd = Math.random;
+    const rnd = this._rng;
     const cols = [C.amber, C.magenta, C.cyan, C.violet, C.pink, C.white];
     for (let i = 0; i < 70; i++) {
       const a = rnd() * TAU;
@@ -524,8 +793,8 @@ export class JigAvatar extends HTMLElement {
 
   /* ---------- per-frame update ---------- */
 
-  _tick(dt) {
-    if (!this._visible || !this._cssW || !this._cssH) return;
+  _tick(dt, manual = false) {
+    if (!manual && (!this._visible || !this._cssW || !this._cssH)) return;
     const reduced = this._reduced;
     const cur = this._cur;
     const tgt = this._target;
@@ -536,26 +805,36 @@ export class JigAvatar extends HTMLElement {
     const ts = cur.timeScale * (reduced ? 0.35 : 1);
     this._rt += dt;
     this._t += dt * ts;
+    const t = this._t;
     const ph = this._ph;
     ph.bob += dt * ts * cur.bobFreq * TAU;
-    ph.breath += dt * ts * 0.28 * TAU;
+    /* breathing never stops, even when paused, and its rate wanders so it never looks like a loop */
+    ph.breath += dt * (0.35 + 0.65 * ts) * TAU * 0.25 * (1 + 0.3 * fbm(this._rt * 0.17 + 4));
     ph.swirl += dt * ts * cur.swirl * TAU * m;
     ph.sway += dt * ts * cur.swayFreq * TAU;
     ph.orbit += dt * ts * cur.orbit * TAU * (reduced ? 0.3 : 1);
     ph.wave += dt * ts * 2.1 * TAU;
     ph.pulse += dt * ts * 0.9 * TAU;
     ph.type += dt * ts * 3.2 * TAU;
+    ph.groove += dt * ts * 0.85 * Math.PI * (1 + 0.08 * fbm(this._rt * 0.1));
 
     const target = this._audio;
     const ak = 1 - Math.exp(-dt * (target > this._audioS ? 28 : 9));
     this._audioS += (target - this._audioS) * ak;
+    this._audioSlow += (this._audioS - this._audioSlow) * (1 - Math.exp(-dt * 2.5));
 
-    this._blinkAt -= dt;
-    if (this._blinkAt <= 0) {
-      const p = -this._blinkAt / 0.17;
-      this._blink = p >= 1 ? 1 : 1 - Math.sin(Math.PI * p);
-      if (p >= 1) this._blinkAt = 2.2 + Math.random() * 4.2;
+    /* beats: the dance state keeps its own count from the moment it starts; flourishes count from zero */
+    const bps = (this.tempo / 60) * (reduced ? 0 : 1);
+    if (cur.wDance > 0.01 || this._state === 'dance') this._danceBeat += dt * bps;
+    if (this._fl) {
+      this._fl.beat += dt * bps * (this._state === 'paused' ? 0 : 1);
+      if (this._fl.beat >= this._fl.len) this._endFlourish(true);
+      else if (reduced) this._endFlourish(false);
     }
+    this._scheduleFlourish(dt, reduced);
+    if (!reduced) this._fidgets(t);
+    this._updateBlink();
+    this._updateGaze(dt);
 
     for (let i = this._burst.length - 1; i >= 0; i--) {
       const b = this._burst[i];
@@ -577,7 +856,138 @@ export class JigAvatar extends HTMLElement {
       this._lightK = lightTarget > this._lightK ? Math.min(lightTarget, this._lightK + step) : Math.max(lightTarget, this._lightK - step);
     }
 
+    this._pose = this._computePose(m, dt);
     this._render(m);
+  }
+
+  _scheduleFlourish(dt, reduced) {
+    /* idle now and then breaks into a short jig: rarely (a minute or two apart) and never while the user types */
+    if (this._state !== 'idle' || this._background || reduced || this._fl) {
+      if (this._state !== 'idle') this._idleFor = 0;
+      return;
+    }
+    this._idleFor += dt;
+    if (this._idleFor < this._nextFlourish) return;
+    if (this._userTyping) {
+      this._nextFlourish = this._idleFor + 8;
+      return;
+    }
+    this._idleFor = 0;
+    this._nextFlourish = 60 + this._rng() * 75;
+    this._startFlourish('flourish', null);
+  }
+
+  _fidgets(t) {
+    const cur = this._cur;
+    if (t < this._nextFidget) return;
+    const rnd = this._rng;
+    const f = cur.fidget * (this._fl || cur.wDance > 0.3 ? 0 : 1);
+    this._nextFidget = t + 3.5 + rnd() * 6;
+    if (f < 0.05) return;
+    const pick = rnd();
+    const sp = this._sp;
+    if (pick < 0.24) {
+      (rnd() < 0.5 ? sp.earL : sp.earR).v += (rnd() < 0.5 ? 7 : -5) * f;
+    } else if (pick < 0.42) {
+      sp.tilt.v += (rnd() - 0.5) * 2.2 * f;
+    } else if (pick < 0.58) {
+      this._gaze.next = 0; /* a fresh glance somewhere */
+    } else if (pick < 0.74) {
+      this._wiggle = 1;
+    } else if (pick < 0.88) {
+      sp.aL.v += (rnd() < 0.5 ? 120 : -90) * f;
+      sp.aR.v += (rnd() < 0.5 ? -120 : 90) * f;
+      sp.sq.v += 1.2 * f;
+    } else if (this._state === 'idle') {
+      sp.hop.v += 150 * f;
+      sp.sq.v += 2 * f;
+      sp.earL.v += 3;
+      sp.earR.v += 3;
+    }
+  }
+
+  _updateBlink() {
+    const cur = this._cur;
+    const rt = this._rt;
+    if (rt >= this._nextBlink) {
+      this._blinkStart = rt;
+      const focus = cur.wThink + cur.wCode + cur.wBrowse * 0.5;
+      this._nextBlink = rt + (this._doubleBlink ? 0.26 : 1.1 + Math.min(6, -Math.log(1 - this._rng()) * (2.6 + focus * 1.5)));
+      this._doubleBlink = !this._doubleBlink && this._rng() < 0.18;
+    }
+    const e = rt - this._blinkStart;
+    if (e < 0.06) this._blink = ease(e / 0.06);
+    else if (e < 0.1) this._blink = 1;
+    else if (e < 0.24) this._blink = 1 - ease((e - 0.1) / 0.14);
+    else this._blink = 0;
+  }
+
+  /* where Jig wants to look, in the -1..1 eye range: the pointer, a look-at target, the task, or a wander */
+  _updateGaze(dt) {
+    const cur = this._cur;
+    const g = this._gaze;
+    const rt = this._rt;
+    const rnd = this._rng;
+    const focus = clamp(cur.wThink + cur.wBrowse + cur.wWrite + cur.wCode + cur.wShop + cur.wCal + cur.wError * 0.7, 0, 1);
+    let free = null;
+    const pointerActive = !this.manualClock && rt - this._pointer.at < 2.5;
+    if (pointerActive) free = this._boxToLook(this._pointer.x, this._pointer.y);
+    else if (this._lookAt) free = this._lookAtPoint();
+    if (!free) {
+      if (rt > g.next) {
+        g.next = rt + 0.7 + rnd() * 2.6;
+        /* while dancing Jig mostly looks out at its audience */
+        const showing = this._fl || cur.wDance > 0.5 ? 0.45 : 0;
+        if (rnd() < 0.42 + showing) {
+          g.x = (rnd() - 0.5) * 0.25;
+          g.y = (rnd() - 0.5) * 0.2;
+        } else {
+          g.x = (rnd() - 0.5) * 1.5;
+          g.y = (rnd() - 0.6) * 1.0;
+        }
+      }
+      free = g;
+    }
+    if (rt > g.microNext) {
+      g.microNext = rt + 0.25 + rnd() * 0.7;
+      g.microX = (rnd() - 0.5) * 0.12;
+      g.microY = (rnd() - 0.5) * 0.1;
+    }
+    const pointerK = pointerActive && free !== g ? 0.55 : 0;
+    const k = clamp(1 - focus + focus * pointerK, 0, 1);
+    const wx = lerp(cur.lookX, free.x, k) + g.microX;
+    const wy = lerp(cur.lookY, free.y, k) + g.microY;
+    const sx = this._sp.gazeX;
+    if (Math.abs(wx - sx.x) > 0.6 && rnd() < 0.3 && rt - this._blinkStart > 0.6) this._blinkStart = rt;
+    sx.step(clamp(wx, -1, 1), dt);
+    this._sp.gazeY.step(clamp(wy, -1, 1), dt);
+  }
+
+  /* a point in fractions of the element box, as a -1..1 look direction from Jig's head */
+  _boxToLook(fx, fy) {
+    const view = this._view;
+    if (!view || !this._scale) return null;
+    const wx = view.x + (fx * this._cssW - this._cssW / 2) / this._scale;
+    const wy = view.y + (fy * this._cssH - this._cssH / 2) / this._scale;
+    return { x: clamp((wx - HEAD.x) / 260, -1, 1), y: clamp((wy - HEAD.y - 30) / 240, -1, 1) };
+  }
+
+  _lookAtPoint() {
+    const la = this._lookAt;
+    if (!la.selector) return this._boxToLook(la.x, la.y);
+    const target = document.querySelector(la.selector);
+    if (!target) {
+      if (!this._lookAtMissing) {
+        this._lookAtMissing = true;
+        reportError(new Error(`jig-avatar: look-at "${la.selector}" matches no element, so Jig is not looking at it`));
+      }
+      return null;
+    }
+    this._lookAtMissing = false;
+    const me = this.getBoundingClientRect();
+    const r = target.getBoundingClientRect();
+    if (!me.width || !me.height) return null;
+    return this._boxToLook((r.left + r.width / 2 - me.left) / me.width, (r.top + r.height / 2 - me.top) / me.height);
   }
 
   /* ---------- rendering ---------- */
@@ -639,6 +1049,7 @@ export class JigAvatar extends HTMLElement {
     const view = icon ? { x: 505, y: 405, s: 650 } : { x: 500, y: 500, s: 1000 };
     const scale = css / view.s;
     this._scale = scale;
+    this._view = view;
     this._minW = (icon ? 0.75 : 0.9) / scale;
     this._icon = icon;
     this._spread = icon ? 0.74 : 1;
@@ -661,7 +1072,6 @@ export class JigAvatar extends HTMLElement {
     ctx.setTransform(d, 0, 0, d, this._dpr * (this._cssW / 2) - view.x * d, this._dpr * (this._cssH / 2) - view.y * d);
 
     if (shape !== 'none' && !this._light) this._drawBackground(view);
-    this._pose = this._computePose(m);
 
     ctx.globalCompositeOperation = this._addOp;
     this._drawVortex(view);
@@ -673,14 +1083,19 @@ export class JigAvatar extends HTMLElement {
     this._drawSparks(m);
 
     const P = this._pose;
-    ctx.save();
-    if (P.spinX !== 1) {
-      ctx.translate(HEAD.x, 0);
-      ctx.scale(P.spinX, 1);
-      ctx.translate(-HEAD.x, 0);
-    }
-    if (P.shake) ctx.translate(P.shake, 0);
     this._drawBase();
+    ctx.save();
+    /* the whole character hops, sways and squashes about its ribbon foot; the pool stays on the ground */
+    const fx = TAIL_TIP.x + P.footX + P.groupX;
+    ctx.translate(fx, TAIL_TIP.y);
+    ctx.scale(P.sqX, P.sqY);
+    ctx.translate(-fx + P.groupX, -TAIL_TIP.y - P.hop);
+    if (P.spinX !== 1) {
+      const cx = HEAD.x + P.headDX;
+      ctx.translate(cx, 0);
+      ctx.scale(P.spinX, 1);
+      ctx.translate(-cx, 0);
+    }
     this._drawTail();
     this._drawArms();
     this._drawHead();
@@ -807,26 +1222,169 @@ export class JigAvatar extends HTMLElement {
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
 
-  _computePose(m) {
+  /* The dance: one move per routine section, scaled by weight w. Returns offsets for the pose. */
+  _danceMoves(dt) {
+    const cur = this._cur;
+    const out = {
+      w: 0, hop: 0, sway: 0, foot: 0, tilt: 0, aL: 0, aR: 0, spin: 1, happy: 0, squint: 0, smile: 0, mouth: 0,
+      swirl: 0, wave: 0, wink: 0, spread: 0,
+    };
+    if (this._reduced) return out;
+    let routine, b, w;
+    if (this._fl) {
+      const fl = this._fl;
+      routine = fl.routine;
+      b = fl.beat;
+      w = clamp(fl.beat / 0.5, 0, 1) * clamp((fl.len - fl.beat) / 0.75, 0, 1);
+      w = Math.max(w * (1 - cur.wDance), 0);
+      if (fl.lastBeat !== Math.floor(b)) {
+        fl.lastBeat = Math.floor(b);
+        this._onBeat(w);
+      }
+    }
+    if (!routine || cur.wDance > 0.5) {
+      if (cur.wDance < 0.01) return out;
+      routine = ROUTINES.dance;
+      b = this._danceBeat % routineLength(routine);
+      w = cur.wDance;
+      const bi = Math.floor(this._danceBeat);
+      if (bi !== this._lastBeat) {
+        this._lastBeat = bi;
+        this._onBeat(w);
+      }
+    }
+    /* dancing to music: louder audio means livelier steps */
+    const amp = 0.85 + clamp(this._audioS, 0, 1) * 0.55;
+    let s0 = 0;
+    let sec = routine[routine.length - 1];
+    for (const s of routine) {
+      if (b < s.until) {
+        sec = s;
+        break;
+      }
+      s0 = s.until;
+    }
+    const p = clamp((b - s0) / (sec.until - s0), 0, 1);
+    const f = frac(b);
+    const bounce = Math.sin(Math.PI * f);
+    const swing = Math.cos(Math.PI * b);
+    const side = Math.cos(Math.PI * Math.floor(b));
+    switch (sec.kind) {
+      case 'step': /* side-steps on the ribbon foot, body leaning against it, arms swinging in time */
+        out.hop = 24 * bounce * amp;
+        out.foot = 66 * side;
+        out.sway = -20 * swing;
+        out.tilt = 0.12 * swing;
+        out.aL = 30 * swing;
+        out.aR = 30 * swing;
+        out.squint = 0.5;
+        out.smile = 0.35;
+        out.mouth = 0.2;
+        out.wave = 12 * bounce;
+        break;
+      case 'wave': /* both hands up, waving, quick double taps of the foot */
+        out.hop = 30 * bounce * amp;
+        out.foot = 30 * Math.cos(Math.PI * Math.floor(b * 2));
+        out.sway = 12 * Math.sin(Math.PI * b);
+        out.tilt = 0.1 * Math.sin(Math.PI * b);
+        out.aL = 50 + 18 * Math.sin(TAU * b);
+        out.aR = -54 + 18 * Math.sin(TAU * b + Math.PI);
+        out.squint = 0.8;
+        out.smile = 0.6;
+        out.mouth = 0.45;
+        out.wave = 18 * bounce;
+        out.spread = 0.25;
+        break;
+      case 'spin': /* a pirouette with a happy face and the ribbons swirling round */
+        out.spin = Math.cos(TAU * ease(p));
+        out.hop = 34 * Math.sin(Math.PI * p) * amp;
+        out.aL = 18;
+        out.aR = -22;
+        out.happy = 1;
+        out.smile = 0.6;
+        out.mouth = 0.3;
+        out.swirl = Math.sin(Math.PI * p);
+        out.wave = 22 * Math.sin(Math.PI * p);
+        out.spread = 0.35;
+        break;
+      case 'tada': /* land, arms up in a V, a wink */
+        out.hop = 12 * bounce * (1 - p);
+        out.aL = 52;
+        out.aR = -58;
+        out.tilt = 0.14 * ease(clamp(p * 2, 0, 1));
+        out.squint = 0.15;
+        out.smile = 0.7;
+        out.mouth = 0.5;
+        out.wink = Math.sin(Math.PI * clamp((p - 0.15) * 1.6, 0, 1));
+        out.spread = 0.4;
+        break;
+    }
+    out.w = w;
+    for (const key in out) if (key !== 'w' && key !== 'spin') out[key] *= w;
+    out.spin = lerp(1, out.spin, w);
+    return out;
+  }
+
+  /* every landing squashes, splashes the pool and flops the ears */
+  _onBeat(w) {
+    const k = clamp(w, 0, 1);
+    this._sp.sq.v += 3.2 * k;
+    this._splash = Math.max(this._splash, k);
+    this._sp.earL.v += 1.5 * k;
+    this._sp.earR.v += 1.5 * k;
+  }
+
+  _computePose(m, dt) {
     const cur = this._cur;
     const ph = this._ph;
-    const rt = this._rt;
+    const sp = this._sp;
     const reduced = this._reduced;
     const audio = this._audioS * cur.wTalk;
+    const M = reduced ? 0 : 1;
 
-    const bob = Math.sin(ph.bob) * cur.bobAmp * m + cur.drop;
-    const breath = Math.sin(ph.breath) * cur.breath;
+    /* breathing: depth wanders as well as rate */
+    const breath = (Math.sin(ph.breath) + 0.25 * Math.sin(ph.breath * 2 + 0.6)) * (0.8 + 0.35 * fbm(this._rt * 0.23 + 9)) * cur.breath;
+    const D = this._danceMoves(dt);
+    ph.swirl += dt * TAU * (D.swirl * 1.1 + D.w * 0.2);
+    ph.sway += dt * TAU * D.w * 0.5;
 
-    let spinX = 1;
-    const st = rt - this._spinStart;
-    if (!reduced && st >= 0 && st < 1.5) spinX = Math.cos(TAU * ease(st / 1.5));
-    let shake = 0;
-    const et = rt - this._shakeStart;
-    if (!reduced && et >= 0 && et < 0.8) shake = Math.sin(et * 42) * 9 * Math.exp(-et * 5);
+    /* onsets in the music add an extra little hop */
+    this._onsetCool -= dt;
+    if (D.w > 0.3 && this._audioS - this._audioSlow > 0.14 && this._onsetCool <= 0) {
+      this._onsetCool = 0.22;
+      sp.hop.v += 140 * D.w;
+    }
 
-    let eyeOpen = cur.eyeOpen * this._blink;
-    let lookX = cur.lookX;
-    let lookY = cur.lookY;
+    const grooveK = cur.groove * M * (1 - D.w);
+    const groove = Math.pow(Math.abs(Math.sin(ph.groove)), 1.5) * grooveK;
+    const bob = Math.sin(ph.bob) * cur.bobAmp * m * (1 - D.w * 0.6) + cur.drop - groove * 7 + breath * 2.5;
+
+    const hopS = Math.max(-6, sp.hop.step(0, dt));
+    const hop = D.hop + hopS * M;
+    const sq = sp.sq.step(0, dt) * M;
+    const sqK = clamp(sq * 0.06, -0.14, 0.14);
+    this._splash = Math.max(0, this._splash - dt * 2.2);
+
+    const gazeX = sp.gazeX.x;
+    const gazeY = sp.gazeY.x;
+    /* the head turns a little towards where the eyes look; the ribbons follow behind it */
+    const headDX = sp.headX.step((gazeX * 14 + D.sway * 0.6) * (reduced ? 0.3 : 1), dt);
+    const lag = sp.lag.step(headDX, dt);
+    const footX = sp.foot.step(D.foot, dt);
+    const groupX = D.sway * 0.5;
+
+    /* ears trail the head's vertical motion, so hops and bobs make them flop and settle */
+    const headY = bob - hop;
+    const vy = dt > 0 ? (headY - this._prevHeadY) / dt : 0;
+    this._prevHeadY = headY;
+    const earDrive = clamp(-vy * 0.0018, -0.5, 0.5) * M;
+    const earL = sp.earL.step(earDrive, dt);
+    const earR = sp.earR.step(earDrive, dt);
+    const tiltS = sp.tilt.step(0, dt);
+
+    let eyeOpen = cur.eyeOpen * (1 - this._blink);
+    let lookX = gazeX;
+    let lookY = gazeY;
 
     if (cur.wWatch > 0.01) {
       const cyc = frac(this._t / 7.5);
@@ -844,8 +1402,10 @@ export class JigAvatar extends HTMLElement {
     }
     if (cur.wCode > 0.01) lookX += cur.wCode * Math.sin(this._t * 3) * 0.08;
 
-    const tilt = cur.tilt + Math.sin(ph.bob * 0.5) * 0.03 * m + audio * 0.04;
-    const head = { x: HEAD.x, y: HEAD.y + bob, s: 1 + breath * 0.012, tilt };
+    /* a gentle head wander plus a curious tilt towards where it looks */
+    const tilt = cur.tilt + Math.sin(ph.bob * 0.5) * 0.03 * m + audio * 0.04 + fbm(this._rt * 0.21 + 5) * 0.05 * m
+      + gazeX * 0.05 + tiltS * M + D.tilt + groove * 0.03 * Math.sign(Math.sin(ph.groove * 0.5));
+    const head = { x: HEAD.x + headDX, y: HEAD.y + bob, s: 1 + breath * 0.014, tilt };
 
     let aR = cur.aR + cur.waveR * Math.sin(ph.wave) * 22 * m;
     let aL = cur.aL + Math.sin(ph.bob + 1) * 3 * m + cur.wTalk * (Math.sin(this._t * 1.4) * 8 * m + audio * 14);
@@ -853,10 +1413,27 @@ export class JigAvatar extends HTMLElement {
     aR += cur.typing * Math.sin(ph.type + Math.PI) * 5 * m;
     aR += cur.wSuccess * Math.sin(ph.wave * 0.8) * 6 * m;
     aL -= cur.wSuccess * Math.sin(ph.wave * 0.8) * 6 * m;
+    aL += breath * 2.5 + groove * 5;
+    aR -= breath * 2.5 + groove * 5;
+    aL = sp.aL.step(aL + D.aL, dt);
+    aR = sp.aR.step(aR + D.aR, dt);
+    /* fingers drag behind the arm's swing, and now and then wiggle */
+    this._wiggle = Math.max(0, this._wiggle - dt * 0.9);
+    const wig = this._wiggle > 0 ? Math.sin(this._rt * 22) * 0.3 * Math.sin(Math.PI * this._wiggle) : 0;
+    const curlL = sp.fingerL.step(clamp(sp.aL.v * 0.004, -0.6, 0.6), dt) + wig;
+    const curlR = sp.fingerR.step(clamp(-sp.aR.v * 0.004, -0.6, 0.6), dt) - wig;
 
+    const happy = clamp(cur.happy + D.happy, 0, 1);
+    let winkR = D.wink;
+    if (D.spin < 0) winkR = 0;
     return {
-      bob, breath, spinX, shake, eyeOpen: clamp(eyeOpen, 0, 1.15), lookX: clamp(lookX, -1, 1), lookY: clamp(lookY, -1, 1),
-      head, aL, aR, audio, faceA: Math.max(0, spinX),
+      bob, breath, spinX: D.spin, hop, groupX, headDX, lag, footX,
+      sqX: 1 + sqK * 0.7, sqY: 1 - sqK,
+      eyeOpen: clamp(eyeOpen, 0, 1.15), lookX: clamp(lookX, -1, 1), lookY: clamp(lookY, -1, 1),
+      head, aL, aR, curlL, curlR, audio, faceA: Math.max(0, D.spin),
+      earL: earL + cur.earDroop, earR: earR + cur.earDroop,
+      happy, winkR, squint: clamp(cur.squint + D.squint, 0, 0.62), smile: cur.smile + D.smile,
+      mouthOpen: cur.mouthOpen + D.mouth, blush: cur.blush, swirl: D.swirl, waveBoost: D.wave, dance: D.w,
       amberPulse: cur.amber * (0.55 + 0.45 * Math.sin(ph.pulse * 1.6)),
     };
   }
@@ -960,7 +1537,7 @@ export class JigAvatar extends HTMLElement {
       const sh = this._shards[i];
       const layouts = [];
 
-      /* 0 — idle orbit: tumbling glass prisms */
+      /* 0 â€” idle orbit: tumbling glass prisms */
       {
         const ang = sh.ang + this._ph.orbit * (i % 2 ? 1 : 0.85);
         const think = cur.wThink;
@@ -980,7 +1557,7 @@ export class JigAvatar extends HTMLElement {
         layouts.push({ q, z: -1, a: 1 - cur.wError * 0.4 });
       }
 
-      /* 1 — browsing: scanning panes facing Jig */
+      /* 1 â€” browsing: scanning panes facing Jig */
       {
         const col = i % 2;
         const row = Math.floor(i / 2);
@@ -1001,7 +1578,7 @@ export class JigAvatar extends HTMLElement {
         layouts.push({ q: corners.map(([px, py]) => [sx(x) + px * sp, sy(y) + py * sp]), z: -1, a });
       }
 
-      /* 2 — writing: one page, one envelope, the rest drift as faint glints */
+      /* 2 â€” writing: one page, one envelope, the rest drift as faint glints */
       {
         let q, a = 1;
         if (i === 0) {
@@ -1020,7 +1597,7 @@ export class JigAvatar extends HTMLElement {
         layouts.push({ q, z: -1, a });
       }
 
-      /* 3 — coding: a terminal pane and small orbiting pixels */
+      /* 3 â€” coding: a terminal pane and small orbiting pixels */
       {
         let q, a = 1;
         if (i === 0) {
@@ -1036,7 +1613,7 @@ export class JigAvatar extends HTMLElement {
         layouts.push({ q, z: -1, a });
       }
 
-      /* 4 — shopping: a payment card and a ring of spinning coins */
+      /* 4 â€” shopping: a payment card and a ring of spinning coins */
       {
         let q, z = -1, a = 1;
         if (i === 0) {
@@ -1058,7 +1635,7 @@ export class JigAvatar extends HTMLElement {
         layouts.push({ q, z, a, coin: i > 0 });
       }
 
-      /* 5 — scheduling: calendar page with day tiles */
+      /* 5 â€” scheduling: calendar page with day tiles */
       {
         let q;
         const cx = 828, cy = 480;
@@ -1354,7 +1931,7 @@ export class JigAvatar extends HTMLElement {
         ctx.save();
         ctx.translate(c[0], c[1]);
         ctx.scale(rx / ry, 1);
-        ctx.fillText('£', 0, 2);
+        ctx.fillText('Â£', 0, 2);
         ctx.restore();
       }
     }
@@ -1458,29 +2035,40 @@ export class JigAvatar extends HTMLElement {
     const t = this._t;
     const cols = [C.violet, C.magenta, C.cyan, C.violet, C.blue];
     const ctx = this._ctx;
+    const P = this._pose;
+    const X = TAIL_TIP.x + P.footX + P.groupX;
+    /* the shadow shrinks as Jig hops up */
+    const lift = clamp(P.hop / 60, 0, 0.6);
     if (this._light) {
       /* a soft plum ground shadow anchors Jig on the page */
-      const g = ctx.createRadialGradient(TAIL_TIP.x, TAIL_TIP.y + 14, 4, TAIL_TIP.x, TAIL_TIP.y + 14, 190);
-      g.addColorStop(0, rgba(INK, 0.22 * this._alphaK));
+      const g = ctx.createRadialGradient(X, TAIL_TIP.y + 14, 4, X, TAIL_TIP.y + 14, 190);
+      g.addColorStop(0, rgba(INK, 0.22 * this._alphaK * (1 - lift * 0.6)));
       g.addColorStop(1, rgba(INK, 0));
       ctx.save();
-      ctx.translate(TAIL_TIP.x, TAIL_TIP.y + 14);
-      ctx.scale(1, 0.24);
-      ctx.translate(-TAIL_TIP.x, -(TAIL_TIP.y + 14));
+      ctx.translate(X, TAIL_TIP.y + 14);
+      ctx.scale(1 - lift * 0.4, 0.24 * (1 - lift * 0.4));
+      ctx.translate(-X, -(TAIL_TIP.y + 14));
       ctx.fillStyle = g;
-      ctx.fillRect(TAIL_TIP.x - 190, TAIL_TIP.y + 14 - 190, 380, 380);
+      ctx.fillRect(X - 190, TAIL_TIP.y + 14 - 190, 380, 380);
       ctx.restore();
     }
     for (let i = 0; i < 5; i++) {
       const rx = 34 + i * 30;
       const p = new Path2D();
-      p.ellipse(TAIL_TIP.x, TAIL_TIP.y + 6, rx, rx * 0.26, 0, 0, TAU);
+      p.ellipse(X, TAIL_TIP.y + 6, rx, rx * 0.26, 0, 0, TAU);
       ctx.setLineDash([rx * 0.9, rx * 0.5]);
       ctx.lineDashOffset = -this._ph.swirl * rx * (i % 2 ? 1.6 : -1.2) * 2 - t * 20;
       this._neon(p, this._tone(cols[i]), 2.2 - i * 0.25, 0.65 - i * 0.09, false);
     }
     ctx.setLineDash([]);
-    this._glow(TAIL_TIP.x, TAIL_TIP.y + 4, 60, this._tone(C.magenta), 0.5);
+    if (this._splash > 0.01 && !this._icon) {
+      /* each landing sends a ripple across the pool */
+      const k = 1 - this._splash;
+      const p = new Path2D();
+      p.ellipse(X, TAIL_TIP.y + 6, 40 + k * 170, (40 + k * 170) * 0.26, 0, 0, TAU);
+      this._neon(p, this._tone(C.cyan), 2.6, this._splash * 0.8, false);
+    }
+    this._glow(X, TAIL_TIP.y + 4, 60 + this._splash * 30, this._tone(C.magenta), 0.5 + this._splash * 0.3);
   }
 
   _drawTail() {
@@ -1492,8 +2080,10 @@ export class JigAvatar extends HTMLElement {
     const iconK = this._icon ? 0.8 : 1;
     const n = this._icon ? 22 : 40;
     const flare = cur.flare * (1 + P.breath * 0.03);
-    const waveAmp = cur.wave + P.audio * 46;
-    const swirlBoost = 1 + cur.wThink * 0.6;
+    const waveAmp = cur.wave + P.audio * 46 + P.waveBoost;
+    const swirlBoost = 1 + cur.wThink * 0.6 + P.swirl * 0.5;
+    /* the top of the body moves with the head, the middle trails behind it and the tip follows the foot */
+    const follow = (s) => lerp(P.headDX, P.lag, ease(clamp(s * 1.6, 0, 1))) * (1 - s * s) + P.footX * s * s;
     for (const r of ribbons) {
       const centre = [];
       const left = [];
@@ -1509,7 +2099,7 @@ export class JigAvatar extends HTMLElement {
         const side = r.o < 0 ? 1.08 + 0.12 * Math.sin(s * 5) : 0.95;
         const lateral = 285 * flare * env * (r.o * 0.74 * side + 0.3 * curl);
         const ripple = waveAmp * env * Math.sin(s * 9 - this._ph.sway * 1.6 + r.ph);
-        const x = lerp(HEAD.x + r.o * 16, TAIL_TIP.x, s) - ess + sway + lateral + ripple;
+        const x = lerp(HEAD.x + r.o * 16, TAIL_TIP.x, s) - ess + sway + lateral + ripple + follow(s);
         centre.push(x, y);
       }
       const band = r.bw * (this._icon ? 1.4 : 1);
@@ -1547,7 +2137,7 @@ export class JigAvatar extends HTMLElement {
           const y = TAIL_TOP + s * (TAIL_TIP.y - TAIL_TOP) + P.bob * (1 - s) * 0.95;
           const ess = 95 * flare * Math.sin(s * TAU * 0.92 + 0.35) * Math.sin(Math.PI * s);
           const x = lerp(HEAD.x, TAIL_TIP.x, s) - ess + cur.sway * Math.sin(s * 2.6 - this._ph.sway) * (0.35 + s * 0.8)
-            + 90 * flare * env * Math.sin(s * 6 + f * 1.7 + this._ph.swirl * 3 + t * 0.3);
+            + 90 * flare * env * Math.sin(s * 6 + f * 1.7 + this._ph.swirl * 3 + t * 0.3) + follow(s);
           pts.push(x, y);
         }
         this._neon(smoothPath(pts), this._tone([C.white, C.cyan, C.pink, C.amber][f]), 0.9, 0.5, false);
@@ -1555,7 +2145,7 @@ export class JigAvatar extends HTMLElement {
     }
   }
 
-  _drawArm(sx, sy, angDeg, len, bend, spread, side) {
+  _drawArm(sx, sy, angDeg, len, bend, spread, side, drag = 0) {
     const ctx = this._ctx;
     const a = angDeg * DEG;
     const hx = sx + Math.cos(a) * len;
@@ -1574,7 +2164,7 @@ export class JigAvatar extends HTMLElement {
 
     const dir = Math.atan2(hy - cy, hx - cx);
     const cur = this._cur;
-    const curl = side > 0 ? cur.waveR * Math.sin(this._ph.wave * 2) * 0.35 : 0;
+    const curl = (side > 0 ? cur.waveR * Math.sin(this._ph.wave * 2) * 0.35 : 0) + drag;
     const fingers = new Path2D();
     const offs = [-1.5, -0.5, 0.5, 1.5];
     for (let k = 0; k < 4; k++) {
@@ -1597,18 +2187,64 @@ export class JigAvatar extends HTMLElement {
   _drawArms() {
     const P = this._pose;
     const cur = this._cur;
-    const yL = SHOULDER_L.y + P.bob * 0.9;
-    const yR = SHOULDER_R.y + P.bob * 0.9;
-    this._drawArm(SHOULDER_L.x, yL, P.aL, cur.lL, cur.bL, cur.spreadL, -1);
-    this._handR = this._drawArm(SHOULDER_R.x, yR, P.aR, cur.lR, cur.bR, cur.spreadR, 1);
+    const yL = SHOULDER_L.y + P.bob * 0.9 - P.breath * 2;
+    const yR = SHOULDER_R.y + P.bob * 0.9 - P.breath * 2;
+    const dx = P.headDX * 0.85;
+    const spread = 1 + (P.dance || 0) * 0.15;
+    this._drawArm(SHOULDER_L.x + dx, yL, P.aL, cur.lL, cur.bL, cur.spreadL * spread, -1, P.curlL);
+    this._handR = this._drawArm(SHOULDER_R.x + dx, yR, P.aR, cur.lR, cur.bR, cur.spreadR * spread, 1, P.curlR);
   }
 
-  _hornPath(base1, base2, tip, c1, c2) {
+  /* A soft petal: wide in the middle, rounded at the tip, its tip curling by `bend` (local axis is -y). */
+  _leafPath(L, W, bend) {
     const p = new Path2D();
-    p.moveTo(base1[0], base1[1]);
-    p.quadraticCurveTo(c1[0], c1[1], tip[0], tip[1]);
-    p.quadraticCurveTo(c2[0], c2[1], base2[0], base2[1]);
+    const tx = bend * L * 0.32;
+    const ty = -L;
+    p.moveTo(-W * 0.34, 0);
+    p.bezierCurveTo(-W * 1.12, -L * 0.3, tx - W * 0.46, ty + L * 0.14, tx, ty);
+    p.bezierCurveTo(tx + W * 0.46, ty + L * 0.14, W * 1.12, -L * 0.3, W * 0.34, 0);
+    p.quadraticCurveTo(0, L * 0.08, -W * 0.34, 0);
     return p;
+  }
+
+  _drawEar(ear, out, amber) {
+    const ctx = this._ctx;
+    const { L, W } = ear;
+    ctx.save();
+    ctx.translate(ear.x, ear.y);
+    ctx.rotate(ear.dir * (ear.ang + out * ear.give));
+    const bend = ear.dir * (0.55 + out * 0.5);
+    const p = this._leafPath(L, W, bend);
+    const g = ctx.createLinearGradient(0, 0, bend * L * 0.32, -L);
+    g.addColorStop(0, rgba(this._tone([46, 18, 96]), 1));
+    g.addColorStop(0.45, rgba(this._tone([150, 52, 190], amber * 0.5), 1));
+    g.addColorStop(1, rgba(this._tone([200, 90, 220], amber * 0.4), 1));
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = clamp(0.6 + this._alphaK * 0.35, 0, 1);
+    ctx.fillStyle = g;
+    ctx.fill(p);
+    /* the warm orange-gold glow inside the leaf */
+    const inner = this._leafPath(L, W, bend);
+    const ig = ctx.createLinearGradient(0, -L * 0.1, bend * L * 0.3, -L * 0.88);
+    ig.addColorStop(0, rgba(this._tone(C.orange, amber * 0.3), 0));
+    ig.addColorStop(0.35, rgba(this._tone(C.orange, amber * 0.3), 0.75));
+    ig.addColorStop(1, rgba(this._tone([255, 214, 140]), 0.95));
+    ctx.save();
+    ctx.translate(bend * L * 0.03, -L * 0.14);
+    ctx.scale(0.56, 0.74);
+    ctx.fillStyle = ig;
+    ctx.fill(inner);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = this._addOp;
+    this._neon(p, this._tone(C.violet, amber * 0.4), ear.small ? 2.4 : 3, 1);
+    if (!ear.small || !this._icon) {
+      const rib = new Path2D();
+      rib.moveTo(0, -L * 0.06);
+      rib.quadraticCurveTo(bend * L * 0.04, -L * 0.5, bend * L * 0.26, -L * 0.86);
+      this._neon(rib, this._tone(C.amber, amber * 0.4), ear.small ? 1.6 : 2.4, 0.9);
+    }
+    ctx.restore();
   }
 
   _drawHead() {
@@ -1623,39 +2259,15 @@ export class JigAvatar extends HTMLElement {
     ctx.rotate(h.tilt);
     ctx.scale(h.s, h.s);
 
-    const twitch = Math.sin(this._t * 1.7) * 0.03 + cur.wApprove * Math.sin(this._ph.wave) * 0.05 - cur.wError * 0.18;
-    const horns = [
-      { b1: [-148, -66], b2: [-72, -132], tip: [-186, -236], c1: [-214, -128], c2: [-138, -158], piv: [-110, -100], dir: -1 },
-      { b1: [30, -147], b2: [104, -114], tip: [118, -268], c1: [98, -196], c2: [170, -214], piv: [66, -130], dir: 1 },
-      { b1: [-161, -18], b2: [-152, -54], tip: [-236, -74], c1: [-206, -18], c2: [-190, -70], piv: [-156, -36], dir: -1 },
-      { b1: [132, -88], b2: [152, -56], tip: [226, -118], c1: [170, -112], c2: [206, -70], piv: [142, -72], dir: 1 },
+    /* two soft leaf ears and two small leaflets, each on its own spring; dir -1 is Jig's right (screen left) */
+    const perk = cur.wApprove * Math.sin(this._ph.wave) * 0.04;
+    const ears = [
+      { x: -84, y: -112, ang: 0.62, L: 138, W: 62, dir: -1, give: 0.9, spring: P.earL, small: false },
+      { x: 86, y: -114, ang: 0.56, L: 142, W: 62, dir: 1, give: 0.9, spring: P.earR, small: false },
+      { x: -146, y: -52, ang: 1.25, L: 66, W: 30, dir: -1, give: 1.3, spring: P.earL * 1.2 + 0.05, small: true },
+      { x: 142, y: -64, ang: 1.15, L: 62, W: 28, dir: 1, give: 1.3, spring: P.earR * 1.2 + 0.05, small: true },
     ];
-    ctx.globalCompositeOperation = 'source-over';
-    for (const hn of horns) {
-      ctx.save();
-      ctx.translate(hn.piv[0], hn.piv[1]);
-      ctx.rotate(twitch * hn.dir);
-      ctx.translate(-hn.piv[0], -hn.piv[1]);
-      const p = this._hornPath(hn.b1, hn.b2, hn.tip, hn.c1, hn.c2);
-      const g = ctx.createLinearGradient(hn.piv[0], hn.piv[1], hn.tip[0], hn.tip[1]);
-      g.addColorStop(0, rgba(this._tone([46, 18, 96]), 1));
-      g.addColorStop(0.4, rgba(this._tone([170, 52, 180], amber * 0.5), 1));
-      g.addColorStop(0.8, rgba(this._tone(C.orange, amber * 0.3), 1));
-      g.addColorStop(1, rgba(this._tone([255, 214, 140]), 1));
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = clamp(0.55 + this._alphaK * 0.4, 0, 1);
-      ctx.fillStyle = g;
-      ctx.fill(p);
-      ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation = this._addOp;
-      this._neon(p, this._tone(C.violet, amber * 0.4), 3, 1);
-      const inner = new Path2D();
-      const mid = [lerp(hn.b1[0], hn.b2[0], 0.5), lerp(hn.b1[1], hn.b2[1], 0.5)];
-      inner.moveTo(mid[0], mid[1]);
-      inner.quadraticCurveTo(lerp(hn.c2[0], hn.c1[0], 0.35), lerp(hn.c2[1], hn.c1[1], 0.35), lerp(mid[0], hn.tip[0], 0.9), lerp(mid[1], hn.tip[1], 0.9));
-      this._neon(inner, this._tone(C.amber, amber * 0.4), 3.2, 1);
-      ctx.restore();
-    }
+    for (const ear of ears) this._drawEar(ear, ear.spring - perk, amber);
 
     const headPath = new Path2D();
     headPath.ellipse(0, 0, HEAD.rx, HEAD.ry, 0, 0, TAU);
@@ -1705,96 +2317,159 @@ export class JigAvatar extends HTMLElement {
     ctx.globalCompositeOperation = this._addOp;
   }
 
+  /* eyelids are filled with the head's own gradient, which lives in head space, not eye space */
+  _fillLid(r, lid, ex, ey) {
+    const ctx = this._ctx;
+    const shifted = new Path2D();
+    shifted.addPath(lid, new DOMMatrix([1, 0, 0, 1, ex, ey]));
+    /* a touch wider than the eye so the iris's anti-aliased rim never peeks out round a closed lid */
+    const bound = new Path2D();
+    bound.arc(0, 0, r + 2.5, 0, TAU);
+    ctx.save();
+    ctx.clip(bound);
+    ctx.translate(-ex, -ey);
+    ctx.fillStyle = this._headFill;
+    ctx.fill(shifted);
+    ctx.restore();
+  }
+
   _drawFace() {
     const ctx = this._ctx;
     const cur = this._cur;
     const P = this._pose;
     const faceA = P.faceA;
     if (faceA <= 0.01) return;
-    const r = 44;
+    const r = 50;
     const lx = P.lookX, ly = P.lookY;
-    const open = P.eyeOpen;
-    const happy = cur.happy;
-    const eyes = [[-78, 30], [78, 30]];
+    const happy = P.happy;
+    const squint = P.squint * (1 - happy);
+    const eyes = [[-80, 26], [80, 26]];
+    /* the eyes stay warm amber even when the rest of Jig cools to blue */
+    const cool = cur.cool;
+    cur.cool = cool * 0.3;
+    try {
+      for (let e = 0; e < 2; e++) {
+        const open = e === 1 ? P.eyeOpen * (1 - P.winkR) : P.eyeOpen;
+        const closedK = e === 1 ? Math.max(happy, 0) : happy;
+        const ex = eyes[e][0] + lx * 8;
+        const ey = eyes[e][1] + ly * 7;
+        ctx.save();
+        ctx.translate(ex, ey);
+        const normalA = faceA * (1 - closedK);
+        if (normalA > 0.01 && open > 0.04) {
+          ctx.globalCompositeOperation = this._addOp;
+          this._glow(0, 0, r * 1.75, this._tone(C.orange, P.amberPulse * 0.3), 0.42 * normalA * clamp(open * 1.6 - 0.2, 0, 1));
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = normalA;
+          const eye = new Path2D();
+          eye.arc(0, 0, r, 0, TAU);
+          const ig = ctx.createRadialGradient(lx * 11, ly * 10, 4, 0, 0, r);
+          const amberT = this._tone(C.amber);
+          ig.addColorStop(0, 'rgb(28,8,4)');
+          ig.addColorStop(0.36, 'rgb(76,22,8)');
+          ig.addColorStop(0.64, rgba(this._tone(C.orange), 1));
+          ig.addColorStop(0.9, rgba(mix(amberT, C.white, 0.38), 1));
+          ig.addColorStop(1, rgba(amberT, 1));
+          ctx.fillStyle = ig;
+          ctx.fill(eye);
+          const pupil = new Path2D();
+          pupil.arc(lx * r * 0.24, ly * r * 0.22, r * 0.45, 0, TAU);
+          ctx.fillStyle = 'rgb(16,6,22)';
+          ctx.fill(pupil);
+          /* two catch-lights that stay put as the eye moves: they are reflections of the light */
+          const hl = new Path2D();
+          hl.arc(-r * 0.28 + lx * 4, -r * 0.3 + ly * 3, r * 0.25, 0, TAU);
+          hl.moveTo(r * 0.38 + lx * 4, r * 0.26 + ly * 3);
+          hl.arc(r * 0.28 + lx * 4, r * 0.26 + ly * 3, r * 0.1, 0, TAU);
+          ctx.fillStyle = 'rgba(255,250,240,0.96)';
+          ctx.fill(hl);
+          if (!this._icon) {
+            const glint = new Path2D();
+            glint.arc(r * 0.02 + lx * 4, -r * 0.52 + ly * 3, r * 0.055, 0, TAU);
+            ctx.fillStyle = 'rgba(255,250,240,0.7)';
+            ctx.fill(glint);
+          }
 
-    for (let e = 0; e < 2; e++) {
-      const ex = eyes[e][0] + lx * 7;
-      const ey = eyes[e][1] + ly * 6;
-      ctx.save();
-      ctx.translate(ex, ey);
-      const normalA = faceA * (1 - happy);
-      if (normalA > 0.01 && open > 0.04) {
-        ctx.globalCompositeOperation = this._addOp;
-        this._glow(0, 0, r * 1.75, this._tone(C.orange, P.amberPulse * 0.3), 0.42 * normalA * Math.min(1, open));
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = normalA;
-        const eye = new Path2D();
-        eye.arc(0, 0, r, 0, TAU);
-        const ig = ctx.createRadialGradient(lx * 10, ly * 9, 4, 0, 0, r);
-        const amberT = this._tone(C.amber);
-        ig.addColorStop(0, 'rgb(28,8,4)');
-        ig.addColorStop(0.32, 'rgb(70,20,8)');
-        ig.addColorStop(0.62, rgba(this._tone(C.orange), 1));
-        ig.addColorStop(0.9, rgba(mix(amberT, C.white, 0.35), 1));
-        ig.addColorStop(1, rgba(amberT, 1));
-        ctx.fillStyle = ig;
-        ctx.fill(eye);
-        const pupil = new Path2D();
-        pupil.arc(lx * r * 0.26, ly * r * 0.24, r * 0.4, 0, TAU);
-        ctx.fillStyle = 'rgb(16,6,22)';
-        ctx.fill(pupil);
-        const hl = new Path2D();
-        hl.arc(-r * 0.3 + lx * 6, -r * 0.34 + ly * 5, r * 0.22, 0, TAU);
-        hl.moveTo(r * 0.38 + lx * 6, r * 0.22 + ly * 5);
-        hl.arc(r * 0.3 + lx * 6, r * 0.22 + ly * 5, r * 0.08, 0, TAU);
-        ctx.fillStyle = 'rgba(255,250,240,0.95)';
-        ctx.fill(hl);
-
-        /* eyelids: head-coloured fill so they read at any size */
-        if (open < 0.999 || cur.sad > 0.01) {
-          const lidY = -r - 2 + (2 * r + 4) * clamp(1 - open, 0, 1);
-          const slant = cur.sad * 0.38 * (e === 0 ? -1 : 1);
-          const lid = new Path2D();
-          lid.moveTo(ex - r - 4, ey - r - 6);
-          lid.lineTo(ex + r + 4, ey - r - 6);
-          lid.lineTo(ex + r + 4, ey + lidY + slant * r + cur.sad * r * 0.25);
-          lid.lineTo(ex - r - 4, ey + lidY - slant * r + cur.sad * r * 0.25);
-          lid.closePath();
-          ctx.save();
-          ctx.clip(eye);
-          ctx.translate(-ex, -ey);
-          ctx.fillStyle = this._headFill;
-          ctx.fill(lid);
-          ctx.restore();
+          /* eyelids: head-coloured fill so they read at any size */
+          if (open < 0.999 || cur.sad > 0.01) {
+            /* the lid's edge is a soft downward curve, so a half-closed eye looks content rather than sly */
+            const lidY = -r - 2 + (2 * r + 10) * clamp(1 - open, 0, 1) + cur.sad * r * 0.18;
+            const slant = cur.sad * 0.32 * (e === 0 ? -1 : 1);
+            const lid = new Path2D();
+            lid.moveTo(-r - 4, -2 * r);
+            lid.lineTo(r + 4, -2 * r);
+            lid.lineTo(r + 4, lidY - r * 0.45 + slant * r);
+            lid.quadraticCurveTo(0, lidY + r * 0.3, -r - 4, lidY - r * 0.45 - slant * r);
+            lid.closePath();
+            this._fillLid(r, lid, ex, ey);
+          }
+          /* a happy squint: the cheeks push the lower lids up into a smile shape */
+          if (squint > 0.01) {
+            const top = r * (1.02 - squint * 0.62);
+            const low = new Path2D();
+            low.moveTo(-r - 4, r + 6);
+            low.lineTo(-r - 4, top + r * 0.2);
+            low.quadraticCurveTo(0, top - r * 0.42 * squint, r + 4, top + r * 0.2);
+            low.lineTo(r + 4, r + 6);
+            low.closePath();
+            this._fillLid(r, low, ex, ey);
+          }
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = this._addOp;
+          this._neon(eye, this._tone(C.amber, 0.2), 2.4, normalA * clamp(open * 3 - 0.6, 0, 1) * (0.6 + 0.4 * Math.min(1, open)), false);
         }
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = this._addOp;
-        this._neon(eye, this._tone(C.amber, 0.2), 2.4, normalA * (0.6 + 0.4 * Math.min(1, open)), false);
+        if (normalA > 0.01 && open < 0.3) {
+          /* closed eyes are soft, contented curves */
+          const k = 1 - open / 0.3;
+          const lash = new Path2D();
+          lash.moveTo(-r * 0.78, 6);
+          lash.quadraticCurveTo(0, r * 0.5, r * 0.78, 6);
+          ctx.globalCompositeOperation = this._addOp;
+          this._neon(lash, this._tone(C.amber), 4.4, normalA * k);
+        }
+        if (closedK > 0.01) {
+          const arc = new Path2D();
+          arc.moveTo(-r * 0.78, r * 0.25);
+          arc.quadraticCurveTo(0, -r * 0.85, r * 0.78, r * 0.25);
+          ctx.globalCompositeOperation = this._addOp;
+          this._neon(arc, this._tone(C.amber), 6.5, closedK * faceA);
+          this._glow(0, -6, r * 1.4, this._tone(C.orange), 0.35 * closedK * faceA);
+        }
+        if (cur.brow > 0.01) {
+          /* worried brows lift in the middle: apologetic, never cross */
+          const inner = e === 0 ? 1 : -1;
+          const brow = new Path2D();
+          const by = -r - 18 - ly * 3;
+          brow.moveTo(-inner * r * 0.62, by + 6);
+          brow.quadraticCurveTo(inner * r * 0.05, by - 4 - cur.brow * 6, inner * r * 0.62, by - cur.brow * 16);
+          ctx.globalCompositeOperation = this._addOp;
+          this._neon(brow, this._tone(C.amber), 4.2, cur.brow * faceA * 0.9);
+        }
+        ctx.restore();
       }
-      if (normalA > 0.01 && open < 0.3) {
-        const k = 1 - open / 0.3;
-        const lash = new Path2D();
-        lash.moveTo(-r * 0.8, 4);
-        lash.quadraticCurveTo(0, r * 0.5, r * 0.8, 4);
-        ctx.globalCompositeOperation = this._addOp;
-        this._neon(lash, this._tone(C.amber), 4, normalA * k);
+    } finally {
+      cur.cool = cool;
+    }
+
+    /* warm cheeks */
+    if (P.blush > 0.01 && !this._icon) {
+      ctx.globalCompositeOperation = this._addOp;
+      for (const sx of [-1, 1]) {
+        const cx = sx * 108 + lx * 5;
+        const cy = 90 + ly * 4;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(1.25, 0.8);
+        this._glow(0, 0, 36, this._tone(mix(C.pink, C.orange, 0.25)), 0.8 * P.blush * faceA);
+        ctx.restore();
       }
-      if (happy > 0.01) {
-        const arc = new Path2D();
-        arc.moveTo(-r * 0.8, r * 0.25);
-        arc.quadraticCurveTo(0, -r * 0.85, r * 0.8, r * 0.25);
-        ctx.globalCompositeOperation = this._addOp;
-        this._neon(arc, this._tone(C.amber), 6, happy * faceA);
-        this._glow(0, -6, r * 1.4, this._tone(C.orange), 0.35 * happy * faceA);
-      }
-      ctx.restore();
     }
 
     /* mouth: a filled amber crescent that opens with the voice level */
-    const smile = cur.smile;
-    const openM = clamp(cur.mouthOpen + P.audio * 1.1, 0, 1.2);
-    const mx = 12, my = 82;
-    const mw = 22 + openM * 9;
+    const smile = P.smile;
+    const openM = clamp(P.mouthOpen + P.audio * 1.1, 0, 1.2);
+    const mx = 10, my = 84;
+    const mw = 20 + openM * 9 + Math.max(0, smile - 1) * 4;
     const mouth = new Path2D();
     mouth.moveTo(mx - mw, my - smile * 3);
     mouth.quadraticCurveTo(mx, my + smile * 6 - openM * 10, mx + mw, my - smile * 3);

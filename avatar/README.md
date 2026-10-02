@@ -1,6 +1,6 @@
 # Jig avatar
 
-An animated, dependency-free web component for Jig, the always-on personal agent that runs only on local models. The mascot is drawn live as a vector rig on a single `<canvas>`. Its head, horns, blinking eyes, mouth, arms, ribbon tail, prism shards, sparks and vortex are separate parts, so every state can move them independently. Nothing is a pre-rendered raster.
+An animated, dependency-free web component for Jig, the always-on personal agent that runs only on local models. The mascot is drawn live as a vector rig on a single `<canvas>`. Its head, leaf ears, blinking eyes, cheeks, mouth, arms, ribbon tail, prism shards, sparks and vortex are separate parts, so every state can move them independently. Nothing is a pre-rendered raster.
 
 `assets/jig-mascot-reference.jpg` is the approved artwork the rig is matched against.
 
@@ -32,6 +32,8 @@ jig.setState('working', { task: 'browsing', background: true }); // dimmed: read
 jig.setState('talking');
 jig.setAudioLevel(0.42); // call every frame or on each audio chunk while on a call
 jig.addEventListener('jig-statechange', (e) => console.log(e.detail)); // { state, task, previous, background }
+jig.setState('dance'); // the full dance, looping
+await jig.dance(); // or a short flourish over the current state; resolves true when done
 ```
 
 ### API
@@ -39,12 +41,17 @@ jig.addEventListener('jig-statechange', (e) => console.log(e.detail)); // { stat
 | Member | Description |
 | --- | --- |
 | `setState(name, { task, background })` | Moves smoothly to a new state. `task` is required for `working` and not allowed for any other state. `background` is optional (default `false`) and works with any state. |
-| `setAudioLevel(level)` | Sets the live voice level, from 0 to 1, used by `talking`. |
+| `setAudioLevel(level)` | Sets the live voice level, from 0 to 1, used by `talking`. In the `dance` state it makes the steps livelier, and sharp rises add an extra hop, so Jig can dance to music. |
+| `dance({ routine })` | Plays a one-off dance over the current state and returns a promise. `routine` is `flourish` (default, 8 beats: jig steps, a spin and a ta-da), `celebrate` (8 beats, the success dance) or `dance` (the full 16-beat routine, once). The promise resolves `true` when the dance finishes, `false` if it is cut short (a newer dance replaces it, or Jig switches to `dance` or `paused`), and `false` straight away when reduced motion is on, because Jig doesn't dance then. Throws while `paused`, or for an unknown routine. |
+| `step(dt)`, `advance(seconds, fps = 60)` | Manual clock only (`clock="manual"`). `step` advances by `dt` seconds (more than 0, up to 1) and draws one frame. `advance` steps through `seconds` in fixed `1/fps` steps. |
+| `time` | Seconds of animation run so far. |
+| `tempo` | Dance tempo in beats per minute, from the `tempo` attribute (default 120, exported as `DEFAULT_TEMPO`). |
+| `dancing` | `true` while the dance state or a flourish is moving Jig. |
 | `state`, `task`, `background`, `audioLevel` | Read-only getters. |
 | `jig-statechange` event | Fires on every change, with `detail: { state, task, previous, background }`. |
 | `STATES`, `TASKS` | Exported arrays of the valid names. |
 
-Invalid input throws instead of guessing. An unknown state, an unknown task, a missing task for `working`, a `background` value that is not a boolean, or an audio level outside 0–1 raises a `RangeError` or `TypeError`.
+Invalid input throws instead of guessing. An unknown state, an unknown task, a missing task for `working`, a `background` value that is not a boolean, or an audio level outside 0–1 raises a `RangeError` or `TypeError`. Invalid attribute values (`shape`, `framing`, `theme`, `seed`, `clock`, `tempo`, `look-at`) throw from the attribute callback, so the browser reports them as errors.
 
 ### Background work
 
@@ -63,8 +70,56 @@ The `background` option is separate from the `background` state alias, which sti
 | `framing` | `auto` (default; switches to `icon` below 110px), `icon` (head-and-shoulders crop with reduced detail), or `full`. |
 | `reduced-motion` | Forces reduced motion. Otherwise the component follows `prefers-reduced-motion`. |
 | `theme` | `dark` (default) or `light`. Also available as the `theme` property. Any other value throws a `RangeError`. |
+| `look-at` | Where Jig looks when nothing else needs its eyes: `"x,y"` as fractions of the avatar's own box (`"0.5,1.6"` is below it), or a CSS selector such as `"#composer"` to look at the centre of that element. A selector that matches nothing is reported once with `reportError`, and Jig carries on with its own glances. The pointer takes priority while it is over the avatar. |
+| `user-typing` | Boolean. While present, idle never starts a dance flourish, and a flourish already playing stops at the next beat. Set it from your message box's `input` events and clear it a second or so after the last keystroke. |
+| `tempo` | Dance tempo, 40–220 beats per minute (default 120). |
+| `seed` | A whole number. Fixes every random choice (blinks, glances, fidgets, flourish timing, confetti), so the same seed gives the same performance. Without it each avatar picks its own seed. |
+| `clock` | `auto` (default: the shared ticker) or `manual` (nothing moves until you call `step()`). |
 
 Size the element with CSS.
+
+### Life and motion
+
+Jig is never still and never visibly loops. These run in every state, scaled to the state's energy:
+
+- **Breathing** with a rate and depth that wander (layered value noise), swelling the head and lifting the shoulders. It keeps going, slowly, even when paused.
+- **Blinks** at irregular intervals (an exponential distribution), sometimes a double blink, often a blink on a state change or a big glance. The upper lids have curved edges, so half-closed eyes look content, not sly.
+- **Gaze.** Eyes dart in small saccades and settle on springs. The head turns and tilts a little towards where Jig looks. When the pointer is over the avatar, Jig watches it; otherwise it follows `look-at`, the task (panes, page, terminal), or glances around by itself and often back at you.
+- **Follow-through.** Ears, arms, fingers and ribbons are on damped springs. Ears flop with every bob and hop, fingers drag behind a swinging arm, and the ribbons trail the head, so movements overshoot slightly and settle rather than stop dead.
+- **Squash and stretch** with a small hop on every state change.
+- **Fidgets** every few seconds, chosen at random: an ear flick, a head tilt, a fresh glance, a finger wiggle, a stretch or (in idle) a little hop.
+- **Groove.** Working states bob to a subtle rhythm, and talking a gentler one.
+
+### Dance
+
+Jig's name is a dance, so it has a repertoire:
+
+- **`dance` state** (aliases `dancing`, `jig`) loops a 16-beat routine, 8 seconds at the default 120 bpm: eight beats of side-steps on the ribbon foot with the body leaning against the step and arms swinging in time; four beats of both hands up, waving, with quick double taps; a two-beat spin with a happy face and the ribbons swirling round; and a ta-da with arms up in a V and a wink. Every landing squashes the body, flops the ears and sends a ripple across the pool. The routine starts from beat 0 each time the state is entered, which keeps video takes repeatable.
+- **`success`** plays the 8-beat `celebrate` routine once (waving hops, a spin, a ta-da) with the confetti burst, then settles into a happy bob.
+- **Idle flourishes.** Idle breaks into the 8-beat flourish by itself, first after 60–120 seconds and then every 60–135 seconds, never in background work or while `user-typing` is set.
+- **`dance()`** plays a flourish on demand.
+
+With reduced motion there is no dancing at all. The `dance` state shows a happy face with calm breathing and blinks, success skips the celebration, and `dance()` resolves `false`.
+
+### Rendering video frame by frame
+
+For reproducible renders, for example a teaser video, set a seed and drive the clock yourself:
+
+```html
+<jig-avatar id="jig" clock="manual" seed="7" tempo="120" framing="full" style="width: 1080px; height: 1080px"></jig-avatar>
+```
+
+```js
+const jig = document.getElementById('jig');
+jig.setState('dance');
+for (let frame = 0; frame < 240; frame++) {
+  jig.step(1 / 60); // two 60 Hz steps per 30 fps frame keeps the springs identical to live playback
+  jig.step(1 / 60);
+  await captureFrame(); // for example a Playwright screenshot of the element
+}
+```
+
+With the same seed, size, state changes and steps, every frame is pixel-identical on every run. The pointer is ignored on the manual clock, so a stray mouse cannot change a take. `look-at` still works, for scripted glances. To dance to a soundtrack, call `setAudioLevel()` with the track's loudness for each frame before stepping.
 
 ### Light theme
 
@@ -90,7 +145,7 @@ Every pose parameter is interpolated, so changing state never produces a hard cu
 
 | State | Animation |
 | --- | --- |
-| `idle` (alias `resting`) | Gentle bob and breathing, slow ribbon sway, occasional blinks, tumbling glass shards drifting slowly. |
+| `idle` (alias `resting`) | Gentle bob and irregular breathing, slow ribbon sway, blinks, glances and fidgets, a soft smile and warm cheeks, tumbling glass shards drifting slowly. Now and then a short dance flourish. |
 | `monitoring` (aliases `sleeping`, `background`) | Dimmed with eyes closed, a slow cyan pulse, a radar sweep and sonar rings. An eye occasionally half-opens and glances around. This is read-only proactive research. |
 | `thinking` | Swirl and orbit speed up, eyes look upwards, a hand goes up to the head, sparks form a halo and thought bubbles rise. |
 | `working` + `browsing` | Shards become browser panes facing Jig, with a scan sweep. Eyes jump between panes and a reading beam follows them. |
@@ -100,9 +155,10 @@ Every pose parameter is interpolated, so changing state never produces a hard cu
 | `working` + `scheduling` | Shards become a calendar page of day tiles, with a ticking highlight and a booked tick. A clock ring with a sweeping hand circles the head. |
 | `talking` (aliases `call`, `on-call`) | The mouth opens with the audio level, ribbons widen and ripple, sound arcs radiate and the vortex brightens. |
 | `approval` (alias `needs-approval`) | A cute wave with a curling hand, a bigger bounce, an amber tint, amber pulse rings and an alert bubble. |
-| `success` | A one-off pirouette (horizontal spin), a confetti burst and happy ^ ^ eyes with both arms up. |
-| `error` (alias `blocked`) | Droop: the head sinks and tilts, arms hang, the tail narrows, eyes are sad and lidded, colours turn cool blue, shards sink and a small × and teardrop appear. |
-| `paused` | Motion slows almost to a stop, colours desaturate and a pause badge appears. |
+| `success` | A celebration dance (waving hops, a spin and a ta-da), a confetti burst, then happy ^ ^ eyes, rosy cheeks, an open smile and both arms up. |
+| `error` (alias `blocked`) | Worried and apologetic, never cross: the head sinks and tilts, ears droop, arms hang, the tail narrows, brows lift in the middle over big warm eyes, a small soft frown. Colours cool towards blue (the eyes stay amber), shards sink and a small × and sweat drop appear. |
+| `paused` | Peacefully asleep: eyes closed in contented curves, a small smile, drooping ears, slow breathing. Motion slows almost to a stop, colours desaturate and a pause badge appears. |
+| `dance` (aliases `dancing`, `jig`) | The full dance routine, looping (see Dance above). |
 
 The state set follows how Meta Muse and OpenAI Dots present always-on agents. Both keep working in the background, return when they need a decision or approval (for example before sending or buying), run proactive read-only research, support calls, and can be paused. Jig adds per-task working variants so the user can tell at a glance what kind of work is under way.
 
@@ -131,15 +187,20 @@ Precedence when several things are true at once, highest first: `approval`, `err
 
 ## Performance and accessibility
 
-- All instances share one `requestAnimationFrame` loop. Off-screen instances are skipped through `IntersectionObserver`, and no layout is read inside the loop.
-- The neon glow is built from layered strokes with additive blending rather than `shadowBlur`. In the demo, the large avatar costs about 0.7 ms of JavaScript per frame, and all 13 avatars together about 4 ms.
-- Icon framing reduces detail: fewer ribbons, sparks and vortex rings, with lighter glow passes.
-- With reduced motion, amplitudes shrink to about 15%, phases slow down, and the pirouette and confetti are skipped. States still cross-fade quickly.
-- The element sets `role="img"` and an `aria-label` such as "Jig is working: coding", or "Jig is working: browsing, in the background" for background work.
+- All instances share one `requestAnimationFrame` loop (manual-clock instances leave it). Off-screen instances are skipped through `IntersectionObserver`. No layout is read inside the loop, except two `getBoundingClientRect` calls per frame when `look-at` names a selector.
+- The neon glow is built from layered strokes with additive blending rather than `shadowBlur`. The demo page, with 17 avatars dancing, holds 60 fps.
+- Icon framing reduces detail: fewer ribbons, sparks and vortex rings, lighter glow passes, no cheeks or ripple rings.
+- With reduced motion, amplitudes shrink to about 15% and phases slow down. There is no dancing, hopping, squash and stretch, fidgeting or confetti, only calm breathing, blinks and gentle eye movement. States still cross-fade quickly.
+- The element sets `role="img"` and an `aria-label` such as "Jig is working: coding", "Jig is dancing", or "Jig is working: browsing, in the background" for background work.
+
+## Tests
+
+`tests.html` runs real-browser tests of the component: the dance state and `dance()`, reduced motion, the success celebration, the manual clock and pixel-identical seeded renders, idle flourishes and `user-typing`, blink timing, `look-at`, attribute validation, and every state in both themes at large and icon sizes. Serve the folder (see Run the demo) and open <http://127.0.0.1:8765/tests.html>. The summary line reads "N passed, 0 failed", and `window.__results` holds the details for automation.
 
 ## Files
 
 - `jig-avatar.js`: the web component and rig.
-- `index.html`: the demo page, with state and task buttons, a background-work toggle, an audio slider, a real microphone input and 48px icons.
+- `index.html`: the demo page, with state and task buttons, dance controls (flourish and tempo), a gaze demo with a message box, a background-work toggle, an audio slider, a real microphone input and 48px icons.
+- `tests.html`: browser tests for the component.
 - `assets/jig-mascot-reference.jpg`: the approved mascot artwork.
 - `screenshots/`: captured states.
