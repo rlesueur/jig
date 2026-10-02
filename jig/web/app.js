@@ -1085,12 +1085,16 @@ function approvalCard(a, where) {
       el('h4', { text: 'Sentinel\u2019s verdict' }),
       el('p', { class: 'verdict-reason', text: 'Not reviewed by the Sentinel: this action has no outbound or side effect.' }));
 
+  const asked = a.reasons.filter((r) => r.decision !== 'info');
+  const notes = a.reasons.filter((r) => r.decision === 'info');
   const why = el('section', { class: 'why', 'aria-label': 'The rule that asked' },
     el('h4', { text: 'The rule that asked' }),
-    el('ul', { class: 'reasons' }, a.reasons.map((r) => el('li', {}, el('code', { text: r.rule }), `: ${r.reason}`))));
+    el('ul', { class: 'reasons' }, asked.map((r) => el('li', {}, el('code', { text: r.rule }), `: ${r.reason}`))));
+  /* e.g. a bare web address completed to https:// before every check ran */
+  const noteLines = () => notes.map((r) => el('p', { class: 'hint-quiet', 'data-testid': `approval-note-${r.rule}`, text: r.reason }));
 
   const exact = el('section', { class: 'will-happen', 'aria-label': 'Exactly what will happen', 'data-testid': 'approval-what' },
-    el('h4', { text: pendingNow ? 'Exactly what will happen' : 'Exactly what Jig asked to do' }), argList);
+    el('h4', { text: pendingNow ? 'Exactly what will happen' : 'Exactly what Jig asked to do' }), argList, ...noteLines());
 
   const disclosure = el('details', { class: 'why-ask', 'data-testid': 'approval-why' },
     el('summary', { text: pendingNow ? 'Why am I asking?' : 'Details' }),
@@ -1109,7 +1113,7 @@ function approvalCard(a, where) {
       parts.push(el('p', { class: 'risk-callout', 'data-testid': 'approval-high-risk' },
         el('strong', { text: 'High risk. ' }), s.reason));
     }
-    parts.push(el('p', { class: 'will', 'data-testid': 'approval-will', text: `If you say yes: ${willText}` }));
+    parts.push(el('p', { class: 'will', 'data-testid': 'approval-will', text: `If you say yes: ${willText}` }), ...noteLines());
     if (preview !== null) {
       const short = preview.length > 280 ? `${preview.slice(0, 280)}\u2026` : preview;
       parts.push(el('pre', { class: 'preview', 'data-testid': 'approval-preview', text: short }));

@@ -1,7 +1,9 @@
 """The gate: every tool call passes through here, whatever the prompt said.
 
 Order of checks for one call:
-  1. the tool exists and its arguments validate against its schema;
+  1. the tool exists and its arguments validate against its schema (for an outbound tool, a bare web
+     address such as ``www.example.com`` in a URL argument is first completed to ``https://``, see urls.py,
+     so every later check sees the complete URL);
   2. mode: research mode refuses anything that is not read-only or a private write;
   3. core rules (non-overridable): block, or force a human approval;
   4. the user's custom rule for this tool (allow / ask / block);
@@ -32,6 +34,7 @@ from .approvals import ApprovalQueue
 from .core import evaluate_core
 from .rules import RuleStore
 from .sentinel import Sentinel
+from .urls import complete_url_args
 
 TOOL_TIMEOUT_S = 180.0
 
@@ -113,6 +116,18 @@ class ToolExecutor:
             raise ToolArgumentError(str(exc)) from exc
         self.audit.record("tool.call", f"{spec.name} requested", task_id=ctx.task_id, run_id=ctx.run_id,
                           tool=spec.name, call_id=call.id, args=args, mode=ctx.mode.value)
+        url_notes: list[dict[str, Any]] = []
+        if spec.outbound:
+            args, completed = complete_url_args(args)
+            if completed:
+                policy["url_normalised"] = completed
+                self.audit.record("policy.url_normalised",
+                                  f"{spec.name}: " + "; ".join(f"{c['original']} -> {c['normalised']}" for c in completed),
+                                  task_id=ctx.task_id, run_id=ctx.run_id, tool=spec.name, call_id=call.id,
+                                  normalised=completed)
+                url_notes = [{"rule": "url-normalised", "decision": "info",
+                              "reason": f"{c['original']!r} has no scheme, so Jig will use {c['normalised']}"}
+                             for c in completed]
         spec.validate(args)
 
         if not spec.allowed_in(ctx.mode):
@@ -169,7 +184,7 @@ class ToolExecutor:
         if reasons:
             approval = self.approvals.request(
                 run_id=ctx.run_id, task_id=ctx.task_id, tool_call_id=call.id, tool=spec.name, args=args,
-                reasons=reasons, sentinel=verdict.as_dict() if verdict else None,
+                reasons=reasons + url_notes, sentinel=verdict.as_dict() if verdict else None,
             )
             if approval["status"] == ApprovalStatus.PENDING:
                 if ctx.on_wait:
