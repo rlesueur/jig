@@ -39,7 +39,6 @@ data_dir = "../data"
 sandbox_dir = "../sandbox"
 
 [runtime]
-timezone = "Europe/London"
 max_concurrent_tasks = 3  # the server was started with 4 slots
 
 [server]

@@ -48,7 +48,7 @@ from ..power import PowerRefused, autostart_summary, check_stop, gpu_usage, powe
 from ..remote import Refused, RemoteAccess, RemoteError, RequestSource
 from ..friendly import explain
 from ..runtime import Jig
-from .setup import Controller, setup_router
+from .setup import Controller, setup_router, timezone_state
 
 
 class ChatIn(BaseModel):
@@ -458,7 +458,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             st = controller.setup
             return {"status": "setup", "version": __version__, "setup": st.as_dict(), "connection": st.connection(),
                     "model_endpoint": st.config.model.base_url, "start_reason": st.start_reason,
-                    "vault_backend": st.vault.backend, "desktop": DESKTOP}
+                    "vault_backend": st.vault.backend, "desktop": DESKTOP, "timezone": timezone_state(st.config)}
         jig = J(request)
         model = await jig.model.health()
         sentinel = await jig.sentinel_model.health()
@@ -466,6 +466,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             "status": "ok",
             "version": __version__,
             "desktop": DESKTOP,
+            "timezone": timezone_state(jig.config),
             "model_endpoint": jig.config.model.base_url,
             "sentinel_endpoint": jig.config.sentinel.base_url,
             # Local or cloud, for the agent and for the safety checker (and what a cloud endpoint receives).
@@ -716,7 +717,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig = J(request)
         fields = body.model_dump()
         if body.repeat is not None and body.repeat.get("kind") != "interval" and not body.timezone:
-            fields["timezone"] = config.runtime.timezone
+            fields["timezone"] = jig.config.runtime.timezone
         s = jig.store.create_schedule(**fields, created_by="user")
         jig.audit.record("schedule.created", f"schedule {s['name']!r} created", actor="user", schedule_id=s["id"],
                          repeat=s["repeat"], timezone=s["timezone"], next_run_at=s["next_run_at"], **_who(request))
@@ -733,7 +734,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         changes = _set(body)
         if (changes.get("repeat") or {}).get("kind") not in (None, "interval") and not changes.get("timezone") \
                 and not jig.store.get_schedule(schedule_id)["timezone"]:
-            changes["timezone"] = config.runtime.timezone
+            changes["timezone"] = jig.config.runtime.timezone
         s = jig.store.edit_schedule(schedule_id, **changes)
         action = "updated"
         if set(changes) == {"enabled"}:

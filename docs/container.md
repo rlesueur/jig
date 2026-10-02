@@ -91,6 +91,7 @@ The image contains `deploy/jig.toml` at `/etc/jig/jig.toml`, and `compose.yaml` 
 | `JIG_BIND_ADDRESS` | `127.0.0.1` | Host address the port is published on. See [Security model](#security-model) before changing it |
 | `JIG_MODEL_BASE_URL` | `http://host.docker.internal:8080/v1` | The OpenAI-compatible endpoint |
 | `JIG_MODEL_NAME` | empty (discover) | Needed if the server offers more than one model |
+| `TZ` | empty (UTC) | Your timezone, as an IANA name such as `Europe/London`, for schedules and the agent's sense of the time. Settings > Schedules > Timezone, or `[runtime] timezone` in `deploy/jig.toml`, override it |
 | `JIG_CONFIG_FILE` | `./deploy/jig.toml` | Your own config file |
 | `JIG_VAULT_KEY_PATH` | `./secrets/jig_vault_key` | Host path of the vault key |
 | `JIG_IMAGE`, `JIG_SANDBOX_IMAGE` | `ghcr.io/rlesueur/jig:<version>`, `ghcr.io/rlesueur/jig-sandbox:<version>` | Images to run |

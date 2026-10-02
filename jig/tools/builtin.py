@@ -200,7 +200,7 @@ def build_registry() -> ToolRegistry:
         return {"forgotten": memory_id}
 
     @tool(
-        description="Get the current date and time in a timezone (default Europe/London).",
+        description="Get the current date and time in a timezone (default: the user's own timezone).",
         effect=Effect.READ,
         category=ToolCategory.TIME,
         args={"timezone": "IANA timezone name, e.g. Europe/London."},

@@ -1,5 +1,8 @@
 """Settings > Schedules, forgetting every memory and the "Running code" messaging, against a real `jig serve` (port
-8794) and the real model, in a real browser. Screenshots go to JIG_UI_SCREENSHOTS (default: the test's tmp dir)."""
+8794) and the real model, in a real browser. Screenshots go to JIG_UI_SCREENSHOTS (default: the test's tmp dir).
+
+Jig's timezone is set to New York (in Settings' settings.toml) while the browser is in London: schedules use
+Jig's timezone, not the browser's."""
 
 from __future__ import annotations
 
@@ -14,12 +17,15 @@ from .server_helpers import kill, start_jig, token, wait_health
 
 PORT = 8794
 BASE = f"http://127.0.0.1:{PORT}"
+ZONE = "America/New_York"
 
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     root = tmp_path_factory.mktemp("ui-schedules")
     data = root / "data"
+    data.mkdir()
+    (data / "settings.toml").write_text(f'[runtime]\ntimezone = "{ZONE}"\n', encoding="utf-8")
     proc, log = start_jig(data, PORT, env={"JIG_SANDBOX_DIR": str(root / "sandbox")})
     try:
         wait_health(PORT, proc=proc, log=log)
@@ -58,7 +64,7 @@ def test_schedules_memory_and_sandbox_api(server):
                                               "repeat": {"kind": "weekdays", "at": "08:00"}})
     assert r.status_code == 201, r.text
     s = r.json()
-    assert s["timezone"] == "Europe/London", "defaults to [runtime] timezone"
+    assert s["timezone"] == ZONE, "defaults to Jig's timezone"
     assert s["repeat_text"] == "Every weekday (Monday to Friday) at 08:00" and s["created_by"] == "user"
     legacy = call(data, "POST", "/schedules", json={"name": "Old style", "prompt": "p", "interval_s": 3600,
                                                    "start_in_s": 3600}).json()
@@ -73,7 +79,7 @@ def test_schedules_memory_and_sandbox_api(server):
     assert paused["enabled"] is False
     assert audit(data, "schedule.paused")[-1]["data"]["schedule_id"] == s["id"]
     moved = call(data, "PATCH", f"/schedules/{legacy['id']}", json={"repeat": {"kind": "daily", "at": "21:00"}}).json()
-    assert moved["repeat_text"] == "Every day at 21:00" and moved["timezone"] == "Europe/London"
+    assert moved["repeat_text"] == "Every day at 21:00" and moved["timezone"] == ZONE
     for x in (s, legacy):
         assert call(data, "DELETE", f"/schedules/{x['id']}").status_code == 204
     assert call(data, "GET", "/schedules").json() == []
@@ -138,7 +144,8 @@ def test_schedules_in_settings(server, browser, shots):
     assert first.locator("summary", has_text="Last result").count() == 1
 
     page.locator("#schedule-add-details > summary").click()
-    assert page.get_by_test_id("schedule-tz").inner_text() == "Times are in your timezone, Europe/London."
+    assert page.get_by_test_id("schedule-tz").inner_text() == (
+        f"Times are in Jig\u2019s timezone, {ZONE}. You can change it under Timezone below.")
     assert page.get_by_test_id("schedule-at").is_visible() and not page.get_by_test_id("schedule-every").is_visible()
     page.get_by_test_id("schedule-name").fill("Tech headlines")
     page.get_by_test_id("schedule-prompt").fill("Summarise the BBC technology headlines.")
@@ -184,6 +191,24 @@ def test_schedules_in_settings(server, browser, shots):
     page.get_by_test_id("schedule").first.wait_for()
     page.locator("#schedule-add-details > summary").click()
     page.screenshot(path=str(shots / "schedules-dark.png"), full_page=True)
+    context.close()
+
+    # Settings > Schedules > Timezone: Jig's own timezone, chosen in Settings, and back to this computer's.
+    context, page = signed_in(browser, data, "light", "#settings/schedules")
+    page.locator("#timezone-details > summary").click()
+    assert page.get_by_test_id("timezone-now").inner_text() == (
+        f"Schedules, and Jig\u2019s sense of the time, use {ZONE}.")
+    assert page.get_by_test_id("timezone-choice").input_value() == ZONE
+    page.get_by_test_id("timezone-choice").select_option("")
+    page.get_by_test_id("timezone-save").click()
+    saved = page.get_by_test_id("timezone-saved")
+    wait_until(lambda: saved.inner_text().startswith("Saved"), "the timezone to be saved", timeout=30)
+    local = call(data, "GET", "/setup/timezone").json()
+    assert local["from"] == "system"
+    assert saved.inner_text() == (f"Saved: Jig now uses {local['name']}, this computer\u2019s timezone. 1 schedule "
+                                  "moved with it, at the same times of day.")
+    page.screenshot(path=str(shots / "schedules-timezone-light.png"), full_page=True)
+    assert call(data, "PUT", "/setup/timezone", json={"timezone": ZONE}).json()["moved_schedules"] == 1
     context.close()
 
     # Resumed from the API, the open page follows the schedule.changed event.
@@ -261,7 +286,7 @@ def test_agent_schedule_proposal_card(server, browser, shots):
     assert card.locator(".ask-title").inner_text().startswith("Can I set up a schedule called")
     assert "At the times below it will do this by itself" in card.get_by_test_id("approval-will").inner_text()
     about = card.get_by_test_id("approval-about").inner_text()
-    assert "Repeats" in about and "Next runs" in about and "Europe/London" in about
+    assert "Repeats" in about and "Next runs" in about and ZONE in about
     assert card.get_by_test_id("approval-preview").is_visible()
     card.scroll_into_view_if_needed()
     page.screenshot(path=str(shots / "schedule-approval-light.png"))

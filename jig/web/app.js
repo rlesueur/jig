@@ -706,6 +706,7 @@ async function loadStatus() {
     return;
   }
   desktop = s.desktop || null;
+  if (s.timezone) setJigZone(s.timezone);
   lastConnection = s.connection;
   showConnection(s.connection);
   $('st-endpoint').textContent = s.model_endpoint;
@@ -1849,13 +1850,17 @@ $('jobs-wipe').addEventListener('click', async () => {
 /* ---------- schedules: jobs Jig does by itself at set times ---------- */
 
 const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// Jig's own timezone, from /status: {name, from: 'system' | 'config' | 'settings'}. A Jig too old to report
+// one used the browser's timezone for schedules made here, so the page keeps doing that for it.
+let jigZone = null;
+const scheduleZone = () => (jigZone ? jigZone.name : browserZone);
 const nextWhen = (iso) => new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const TASK_OUTCOME = { done: 'finished', failed: 'couldn\u2019t finish', blocked: 'couldn\u2019t start', cancelled: 'stopped',
   running: 'running now', waiting_approval: 'waiting for your answer', queued: 'lined up to start', paused: 'paused' };
 
 function scheduleItem(s) {
   const label = `schedule ${s.name}`;
-  const repeats = s.repeat_text + (s.timezone && s.timezone !== browserZone ? ` (${s.timezone})` : '');
+  const repeats = s.repeat_text + (s.timezone && s.timezone !== scheduleZone() ? ` (${s.timezone})` : '');
   const next = !s.enabled ? 'Paused: it won\u2019t run until you resume it.'
     : agentPaused ? `Next: ${nextWhen(s.next_run_at)}, but Jig is paused, so nothing runs until you resume Jig.`
       : `Next: ${nextWhen(s.next_run_at)}`;
@@ -1930,6 +1935,40 @@ $('schedule-repeat').addEventListener('change', showRepeatFields);
 showRepeatFields();
 $('schedule-tz').textContent = `Times are in your timezone, ${browserZone}.`;
 
+const zoneWords = (z) => (z.from === 'system' ? `${z.name}, this computer\u2019s timezone` : z.name);
+
+function setJigZone(zone) {
+  const changed = !jigZone || jigZone.name !== zone.name || jigZone.from !== zone.from;
+  jigZone = zone;
+  $('schedule-tz').textContent = `Times are in Jig\u2019s timezone, ${zoneWords(zone)}. You can change it under Timezone below.`;
+  $('timezone-details').hidden = false;
+  if (changed) {
+    $('timezone-now').textContent = `Schedules, and Jig\u2019s sense of the time, use ${zoneWords(zone)}.`;
+    fillZones(zone);
+  }
+}
+
+function fillZones(zone) {
+  const names = Intl.supportedValuesOf('timeZone');
+  if (!names.includes(zone.name)) names.push(zone.name);
+  const select = $('timezone-choice');
+  select.replaceChildren(
+    el('option', { value: '', text: 'This computer\u2019s timezone (follows the computer\u2019s settings)' }),
+    ...names.sort().map((n) => el('option', { value: n, text: n.replace(/_/g, ' ') })));
+  select.value = zone.from === 'system' ? '' : zone.name;
+}
+
+$('timezone-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  act(e.submitter, async () => {
+    const out = await api('/setup/timezone', { method: 'PUT', body: { timezone: $('timezone-choice').value } });
+    const moved = out.moved_schedules ? ` ${plural(out.moved_schedules, 'schedule')} moved with it, at the same times of day.` : '';
+    setJigZone(out);
+    $('timezone-saved').textContent = `Saved: Jig now uses ${zoneWords(out)}.${moved}`;
+    await loadSchedules();
+  });
+});
+
 $('schedule-form').addEventListener('submit', (e) => {
   e.preventDefault();
   act(e.submitter, async () => {
@@ -1944,7 +1983,7 @@ $('schedule-form').addEventListener('submit', (e) => {
     }
     const s = await api('/schedules', { method: 'POST', body: {
       name: $('schedule-name').value.trim(), prompt: $('schedule-prompt').value.trim(), mode: $('schedule-mode').value,
-      repeat, timezone: browserZone,
+      repeat, timezone: scheduleZone(),
     } });
     $('schedules-saved').textContent = `Added ${q(s.name)}. First run: ${nextWhen(s.next_run_at)}.`;
     $('schedule-name').value = '';

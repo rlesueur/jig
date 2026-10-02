@@ -65,6 +65,7 @@ services:
       JIG_MODEL_BASE_URL: ${JIG_MODEL_BASE_URL:-http://host.docker.internal:8080/v1}
       JIG_MODEL_NAME: ${JIG_MODEL_NAME:-}
       JIG_REMOTE_HOSTNAME: ${JIG_REMOTE_HOSTNAME:-}
+      TZ: ${TZ:-}
     secrets:
       - jig_vault_key
     extra_hosts:

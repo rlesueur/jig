@@ -78,7 +78,7 @@ def save(data_dir: Path, sections: dict[str, dict[str, Any]]) -> Path:
 
 def dumps(sections: dict[str, dict[str, Any]]) -> str:
     lines = ["# Saved by Jig's set-up page and Settings. Each section here replaces the same section of jig.toml",
-             "# ([sandbox] is merged into it). Delete this file to go back to jig.toml alone.", ""]
+             "# ([sandbox] and [runtime] are merged into it). Delete this file to go back to jig.toml alone.", ""]
     for name, table in sections.items():
         _table(lines, name, table)
     return "\n".join(lines) + "\n"

@@ -13,17 +13,21 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .endpoints import PROVIDERS, RESERVED_REQUEST_KEYS, Location, Provider, classify, origin
 from .errors import ConfigError
 from .logs import verbose_model_server
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "jig.toml"
-# In the data folder: what the web UI's set-up and Settings chose ([model], [sentinel], [vision], [sandbox]).
-# Each of [model], [sentinel] and [vision] in it replaces that whole section of jig.toml; [sandbox] keys are
-# merged into it. jig.toml itself is never rewritten.
+# In the data folder: what the web UI's set-up and Settings chose ([model], [sentinel], [vision], [sandbox],
+# [runtime]). Each of [model], [sentinel] and [vision] in it replaces that whole section of jig.toml; [sandbox]
+# and [runtime] keys are merged into it. jig.toml itself is never rewritten.
 SETTINGS_FILE = "settings.toml"
-SETTINGS_SECTIONS = {"model": "replace", "sentinel": "replace", "vision": "replace", "sandbox": "merge"}
+SETTINGS_SECTIONS = {"model": "replace", "sentinel": "replace", "vision": "replace", "sandbox": "merge",
+                     "runtime": "merge"}
+# Of [runtime], Settings only ever saves the timezone.
+SETTINGS_RUNTIME_KEYS = {"timezone"}
 # Vault secrets holding model API keys. Tools can never use them (core rule secret-allowlist).
 MODEL_KEY_PREFIX = "model-key."
 
@@ -120,7 +124,9 @@ class WebFetchConfig:
 @dataclass(frozen=True)
 class RuntimeConfig:
     agent_id: str = "default"
-    timezone: str = "Europe/London"
+    # An IANA name such as "America/New_York". Empty: this computer's timezone, read from the system when
+    # Jig starts. After load_config it always holds a checked IANA name (see Config.timezone_from).
+    timezone: str = ""
     max_steps: int = 12
     max_concurrent_tasks: int = 3
     heartbeat_s: float = 2.0
@@ -247,6 +253,8 @@ class Config:
     deployment: str = "host"
     # The data folder's settings.toml, when it exists and was applied (see SETTINGS_FILE).
     settings_file: Path | None = None
+    # Where runtime.timezone came from: "system" (this computer's), "config" (jig.toml) or "settings".
+    timezone_from: str = "config"
 
     @property
     def db_path(self) -> Path:
@@ -299,6 +307,8 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     settings = overrides["settings"] if "settings" in overrides else _read_settings(settings_path)
     if unknown := sorted(set(settings) - set(SETTINGS_SECTIONS)):
         raise ConfigError(f"{settings_path} has sections Jig doesn't save there: {unknown}")
+    if unknown := sorted(set(settings.get("runtime", {})) - SETTINGS_RUNTIME_KEYS):
+        raise ConfigError(f"[runtime] in {settings_path} has keys Jig doesn't save there: {unknown}")
     if settings:
         raw = dict(raw)
         for name, values in settings.items():
@@ -361,10 +371,17 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
     if v := os.environ.get("JIG_PORT"):
         server_raw["port"] = int(v)
 
+    runtime = _build(RuntimeConfig, _section(raw, "runtime"), "runtime")
+    timezone_from = "settings" if "timezone" in settings.get("runtime", {}) else "config"
+    if runtime.timezone.strip():
+        runtime = replace(runtime, timezone=check_timezone(runtime.timezone.strip(), timezone_from))
+    else:
+        runtime, timezone_from = replace(runtime, timezone=system_timezone()), "system"
+
     return Config(
         model=model,
         sentinel=sentinel,
-        runtime=_build(RuntimeConfig, _section(raw, "runtime"), "runtime"),
+        runtime=runtime,
         web_fetch=web_fetch,
         server=_build(ServerConfig, server_raw, "server"),
         data_dir=data_dir.resolve(),
@@ -379,7 +396,37 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         connectors=_connectors_config(_section(raw, "connectors")),
         deployment=deployment,
         settings_file=settings_path if settings else None,
+        timezone_from=timezone_from,
     )
+
+
+TIMEZONE_HELP = ('Choose one in Settings > Schedules, or set timezone = "Europe/London" (say) under [runtime] in '
+                 "jig.toml")
+
+
+def check_timezone(name: str, where: str = "config") -> str:
+    """``name`` if it's an IANA timezone this computer knows, else a ConfigError saying where it came from."""
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        source = {"settings": "Settings", "system": "this computer's settings"}.get(where, "[runtime] in jig.toml")
+        raise ConfigError(f"The timezone {name!r} (from {source}) isn't one Jig knows. Use an IANA name such as "
+                          f"Europe/London or America/New_York. {TIMEZONE_HELP}.") from exc
+    return name
+
+
+def system_timezone() -> str:
+    """This computer's timezone as an IANA name, read from Windows, macOS or Linux (or the TZ variable)."""
+    import tzlocal
+
+    try:
+        name = tzlocal.get_localzone_name()
+    except (LookupError, OSError, ValueError) as exc:  # ZoneInfoNotFoundError is a KeyError (a LookupError)
+        raise ConfigError(f"Jig couldn't tell this computer's timezone: {exc}. {TIMEZONE_HELP}.") from exc
+    if not name:
+        raise ConfigError(f"Jig couldn't tell this computer's timezone: the system doesn't name one. "
+                          f"{TIMEZONE_HELP}.")
+    return check_timezone(name, "system")
 
 
 def _read_settings(path: Path) -> dict[str, dict[str, Any]]:

@@ -196,12 +196,40 @@ class Controller:
                 raise CheckFailed(self.setup.problem, self.setup.detail)
             return {"model": result["models"]["agent"], "capabilities": result["capabilities"]}
 
+    async def set_timezone(self, name: str, who: dict[str, Any]) -> dict[str, Any]:
+        """Save Jig's timezone ("" for this computer's) and use it from now on, without restarting the agent.
+        Schedules that were on Jig's old timezone move with it, so 08:00 stays 08:00 in the new one."""
+        async with self._swap:
+            holder = self.current
+            old = holder.config.runtime.timezone
+            checked = self.config_with({"runtime": {"timezone": name}})
+            settings_file.save(self.base.data_dir, {"runtime": {"timezone": name}})
+            holder.config = dataclasses.replace(holder.config, runtime=checked.runtime,
+                                                timezone_from=checked.timezone_from)
+            new = checked.runtime.timezone
+            moved: list[str] = []
+            if self.jig is not None and new != old:
+                for schedule in self.jig.store.list_schedules():
+                    if schedule["timezone"] == old:
+                        self.jig.store.edit_schedule(schedule["id"], timezone=new)
+                        moved.append(schedule["id"])
+                self.jig.scheduler.wake()
+            holder.audit.record("settings.timezone", f"timezone set to {new}", actor="user", timezone=new,
+                                previous=old, timezone_from=checked.timezone_from, moved_schedules=moved, via="web",
+                                **who)
+            return {**timezone_state(holder.config), "moved_schedules": len(moved)}
+
     async def turn_off_agent(self, problem: Explained, detail: str = "") -> None:
         """Stop the agent and go to set-up mode (for example after cloud consent is withdrawn)."""
         async with self._swap:
             config = self.config
             await self._stop_current({"scope": "jig", "via": "settings"})
             self._enter_setup(config, problem, detail)
+
+
+def timezone_state(config: Config) -> dict[str, Any]:
+    """Jig's timezone, and whether it is this computer's ("system") or one chosen in jig.toml or Settings."""
+    return {"name": config.runtime.timezone, "from": config.timezone_from}
 
 
 class CheckFailed(Exception):
@@ -233,6 +261,11 @@ class KeyIn(BaseModel):
 class SandboxIn(BaseModel):
     enable: bool
     confirm: bool = False
+
+
+class TimezoneIn(BaseModel):
+    # An IANA name, or "" for this computer's timezone.
+    timezone: str
 
 
 def setup_router(controller: Controller, who: Callable[[Request], dict[str, Any]]) -> APIRouter:
@@ -431,6 +464,17 @@ def setup_router(controller: Controller, who: Callable[[Request], dict[str, Any]
             return {"built": cfg.sandbox.image}
 
         return stream(work)
+
+    @router.get("/timezone")
+    async def timezone_get() -> dict[str, Any]:
+        return timezone_state(controller.config)
+
+    @router.put("/timezone")
+    async def timezone_set(request: Request, body: TimezoneIn) -> dict[str, Any]:
+        try:
+            return await controller.set_timezone(body.timezone.strip(), who(request))
+        except ConfigError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @router.post("/sandbox")
     async def sandbox_set(body: SandboxIn) -> StreamingResponse:

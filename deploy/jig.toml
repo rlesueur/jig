@@ -61,7 +61,9 @@ sandbox_dir = "/var/lib/jig/sandbox"
 [runtime]
 # The workspace volume is mounted at /var/lib/jig/sandbox/<agent_id>; change both together.
 agent_id = "default"
-timezone = "Europe/London"
+# Empty: the container's timezone, which is the TZ variable from .env (compose.yaml passes it in),
+# or UTC without one. Or an IANA name, such as "Europe/London". Settings > Schedules can change it.
+timezone = ""
 max_steps = 12
 max_concurrent_tasks = 3
 heartbeat_s = 2.0

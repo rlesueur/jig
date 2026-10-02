@@ -26,7 +26,9 @@ sandbox_dir = "sandbox"
 
 [runtime]
 agent_id = "default"
-timezone = "Europe/London"
+# Empty: this computer's timezone, read from the system. Or an IANA name, such as "America/New_York".
+# Settings > Schedules can change it (saved in the data folder's settings.toml).
+timezone = ""
 max_steps = 12
 max_concurrent_tasks = 3
 heartbeat_s = 2.0

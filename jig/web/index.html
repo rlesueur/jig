@@ -288,6 +288,16 @@
                 <button type="submit" class="btn btn-primary" data-testid="schedule-add">Add schedule</button>
               </form>
             </details>
+            <details class="advanced" id="timezone-details" data-testid="timezone-details" hidden>
+              <summary>Timezone</summary>
+              <form class="form" id="timezone-form">
+                <p class="hint-quiet" id="timezone-now" data-testid="timezone-now"></p>
+                <label for="timezone-choice">Jig&rsquo;s timezone</label>
+                <select id="timezone-choice" data-testid="timezone-choice"></select>
+                <button type="submit" class="btn" data-testid="timezone-save">Save timezone</button>
+              </form>
+              <p class="saved" id="timezone-saved" aria-live="polite" data-testid="timezone-saved"></p>
+            </details>
           </section>
 
           <!-- History -->
