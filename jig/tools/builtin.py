@@ -22,6 +22,8 @@ def build_registry() -> ToolRegistry:
 
     @tool(
         description="Fetch a public web page over HTTP(S) and return its readable text, title and links. "
+        "A long page comes back one part at a time: the result then says how long the whole text is and where the "
+        "next part starts, so read on with offset, or use find to get just the passages that mention a word. "
         "Header values may reference vault secrets as {{secret:NAME}}.",
         effect=Effect.READ,
         category=ToolCategory.WEB,
@@ -29,12 +31,19 @@ def build_registry() -> ToolRegistry:
         args={
             "url": "Absolute http(s) URL of a public page.",
             "headers": "Optional request headers.",
-            "max_chars": "Maximum characters of text to return.",
+            "max_chars": "Maximum characters of text to return; 0 for the most allowed. Never more than the "
+                         "configured limit.",
+            "offset": "Character position in the page's text to start from (from next_offset of an earlier result).",
+            "find": "Return only the passages around each place this text appears (case-insensitive), with "
+                    "their offsets, instead of reading from offset.",
         },
     )
-    async def web_fetch(ctx: ToolContext, url: str, headers: dict | None = None, max_chars: int = 0) -> dict[str, Any]:
+    async def web_fetch(ctx: ToolContext, url: str, headers: dict | None = None, max_chars: int = 0,
+                        offset: int = 0, find: str = "") -> dict[str, Any]:
         cfg = ctx.config.web_fetch
         limit = min(max_chars or cfg.max_chars, cfg.max_chars)
+        if offset < 0:
+            raise ToolArgumentError("web_fetch: offset must be 0 or more")
         current = url
         for _hop in range(cfg.max_redirects + 1):
             await ensure_public(current)
@@ -67,15 +76,23 @@ def build_registry() -> ToolRegistry:
             title, text, links = "", text_raw, []
         else:
             raise ToolError(f"unsupported content type {ctype!r} at {current}")
-        return {
-            "url": url,
-            "final_url": current,
-            "status": status,
-            "title": title,
-            "text": text[:limit],
-            "truncated": len(text) > limit,
-            "links": links[:25],
-        }
+        page = {"url": url, "final_url": current, "status": status, "title": title, "total_chars": len(text)}
+        if find.strip():
+            return {**page, **_find_passages(text, find.strip(), limit)}
+        if offset and offset >= len(text):
+            raise ToolArgumentError(f"web_fetch: offset {offset} is past the end of the page's text "
+                                    f"({len(text)} characters)")
+        end = min(offset + limit, len(text))
+        part = {"text": text[offset:end], "offset": offset, "truncated": end < len(text) or offset > 0}
+        if part["truncated"]:
+            part["note"] = (f"This is characters {offset} to {end} of {len(text)}; the rest of the page is not "
+                            "shown here. "
+                            + (f"Call web_fetch again with offset={end} to read on, " if end < len(text) else "")
+                            + "or use find to get the passages that mention what you need. Do not guess what the "
+                            "rest says.")
+            if end < len(text):
+                part["next_offset"] = end
+        return {**page, **part, "links": links[:25]}
 
     @tool(
         description="List files and folders in the agent's sandboxed workspace.",
@@ -283,6 +300,44 @@ def _schedule_recurrence(ctx: ToolContext, args: dict[str, Any]) -> tuple[Recurr
     except ValueError as exc:
         raise ToolArgumentError(f"schedule_create: {exc}") from None
     return rec, tz
+
+
+_FIND_CONTEXT = 300
+
+
+def _find_passages(text: str, needle: str, limit: int) -> dict[str, Any]:
+    """The passages around each match of ``needle`` (case-insensitive), merged where they overlap, up to ``limit``
+    characters in all. Each passage says where it starts, so the model can read on from there with offset."""
+    lower, target = text.lower(), needle.lower()
+    spans: list[list[int]] = []
+    matches = 0
+    start = lower.find(target)
+    while start >= 0:
+        matches += 1
+        lo, hi = max(0, start - _FIND_CONTEXT), min(len(text), start + len(target) + _FIND_CONTEXT)
+        if spans and lo <= spans[-1][1]:
+            spans[-1][1] = hi
+        else:
+            spans.append([lo, hi])
+        start = lower.find(target, start + len(target))
+    passages, used, resume_at = [], 0, None
+    for lo, hi in spans:
+        room = limit - used
+        if room <= 0:
+            resume_at = lo
+            break
+        passages.append({"offset": lo, "text": text[lo:min(hi, lo + room)]})
+        used += min(hi, lo + room) - lo
+        if hi > lo + room:
+            resume_at = lo + room
+            break
+    out: dict[str, Any] = {"find": needle, "matches": matches, "passages": passages}
+    if resume_at is not None:
+        out["note"] = (f"Not every passage fits in one result: this stops at character {resume_at} of {len(text)}. "
+                       f"Read on with offset={resume_at}, or search for something more specific.")
+    elif not matches:
+        out["note"] = f"{needle!r} does not appear in the page's text ({len(text)} characters)."
+    return out
 
 
 def _local_words(t: datetime, tz: str) -> str:

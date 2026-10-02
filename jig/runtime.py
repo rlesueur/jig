@@ -38,6 +38,9 @@ from .vision import VisionService
 
 log = logging.getLogger(__name__)
 
+# How much of an earlier task's result a dependent task is given in its prompt.
+DEPENDENCY_RESULT_CHARS = 4000
+
 _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
                      EventType.APPROVAL_REQUESTED, EventType.APPROVAL_RESOLVED}
 
@@ -385,7 +388,10 @@ class Jig:
         parts.append(f"Your task ({position} of {len(siblings)}): {task['title']}\n{task['description']}")
         for dep_id in task["depends_on"]:
             dep = self.store.get_task(dep_id)
-            parts.append(f"Result of earlier task '{dep['title']}':\n{(dep['result'] or '')[:4000]}")
+            result = dep["result"] or ""
+            cut = (f"\n[Cut here: this is the first {DEPENDENCY_RESULT_CHARS} of {len(result)} characters of that "
+                   "result.]" if len(result) > DEPENDENCY_RESULT_CHARS else "")
+            parts.append(f"Result of earlier task '{dep['title']}':\n{result[:DEPENDENCY_RESULT_CHARS]}{cut}")
         parts.append("Complete only your task, then reply with a concise result.")
         intent = f"User goal: {goal['description']}\nCurrent task: {task['title']}: {task['description']}"
         return "\n\n".join(parts), intent
