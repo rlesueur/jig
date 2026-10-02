@@ -1,7 +1,8 @@
 # Overnight queue, in priority order. Each entry resumes where the last window stopped; an entry that is
 # complete is skipped in seconds, so the queue simply moves on.
 #
-# Safety evaluation (the former D1/D2/CD1) is being re-scoped onto published benchmarks and will be added
-# here once its Jig adapter runs their existing test cases. Only the memory experiment (C1) is queued now.
+# Safety (D1) runs the published AgentDojo benchmark (MIT) unchanged against Jig's defences; memory (C1)
+# compares long-horizon memory strategies. No attack content is authored; see PROTOCOL.md.
 queue:
+  - configs/full/d1_full.yaml
   - configs/full/c1_full.yaml

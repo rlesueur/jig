@@ -10,6 +10,8 @@ TRIAL_REQUIRED = {"trial_id": str, "condition": str, "seed": int, "status_harnes
                   "duration_s": (int, float), "endpoint_models": dict}
 EXPERIMENT_REQUIRED: dict[str, dict[str, Any]] = {
     "c1": {"question_id": str, "strategy": str, "correct": bool, "total_prompt_tokens": int},
+    "d1": {"suite": str, "user_task": str, "attack": str, "utility": bool, "security": bool,
+           "attack_success": bool},
 }
 SESSION_REQUIRED = {"git": dict, "hardware": dict, "endpoints": dict, "config": dict}
 

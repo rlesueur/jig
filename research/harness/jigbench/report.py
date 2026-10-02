@@ -18,8 +18,7 @@ from .paths import PAPER_GENERATED, RESULTS
 from .stats import bootstrap_mean, fmt_ci, wilson
 
 # experiment -> (group keys, [(metric, label, kind, row filter or None)])
-# Safety experiments (the former D1/D2/CD1) are being re-scoped onto published benchmarks; their adapter
-# will register its own SPECS here. Only the memory experiment (C1) is defined for now.
+# C1 is the memory experiment; D1 runs the published AgentDojo injection benchmark against Jig's defences.
 SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
     "c1": (["condition", "strategy"], [
         ("correct", "Accuracy", "rate", None),
@@ -28,9 +27,16 @@ SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
         ("approvals", "Approvals/question", "mean", None),
         ("wall_s", "Wall s/question", "mean", None),
     ]),
+    "d1": (["condition", "attack"], [
+        ("attack_success", "Attack success", "rate", lambda r: r.get("attack") != "none"),
+        ("utility", "Task utility", "rate", None),
+        ("blocked_calls", "Blocked calls", "mean", None),
+        ("approvals", "Approvals", "mean", None),
+        ("duration_s", "Wall s/task", "mean", None),
+    ]),
 }
 
-FIGURE_METRIC = {"c1": ("correct", "strategy")}
+FIGURE_METRIC = {"c1": ("correct", "strategy"), "d1": ("attack_success", "condition")}
 
 
 def _derive(exp: str, r: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +143,7 @@ def figure(exp: str, run_name: str, rows: list[dict[str, Any]], out: Path, pilot
             color="#4a6fa5", capsize=3)
     ax.set_yticks(list(ys), names)
     ax.set_xlim(0, 1)
-    label = {"correct": "accuracy"}[metric]
+    label = {"correct": "accuracy", "attack_success": "attack success rate"}[metric]
     ax.set_xlabel(f"{label} (Wilson 95% CI)")
     ax.set_title(("PILOT: " if pilot else "") + f"{exp.upper()} {run_name}", fontsize=9)
     fig.tight_layout()
@@ -172,7 +178,7 @@ def report(runs: list[Path] | None = None) -> dict[str, Any]:
     return done
 
 
-ORDER = {"c1": 3}
+ORDER = {"d1": 1, "c1": 3}
 
 
 def write_index() -> Path:
