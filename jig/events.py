@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .constants import TRANSIENT_STATE_SECONDS, AvatarState, Effect, EventType, Mode, TaskVariant
+from .constants import TRANSIENT_STATE_SECONDS, WORK_DWELL_SECONDS, AvatarState, Effect, EventType, Mode, TaskVariant
 from .db import now_iso
 
 log = logging.getLogger(__name__)
@@ -113,6 +113,14 @@ class _Activity:
     variant: str | None = None
     pending_approvals: set[str] = field(default_factory=set)
     updated: float = field(default_factory=time.monotonic)
+    # The pose of the tool call that just ended, held until ``worked_until`` while the run is thinking.
+    worked: str | None = None
+    worked_until: float = 0.0
+
+    def pose(self, now: float) -> tuple[AvatarState, str | None]:
+        if self.phase == AvatarState.THINKING and self.worked and now < self.worked_until:
+            return AvatarState.WORKING, self.worked
+        return self.phase, self.variant
 
     @property
     def background(self) -> bool:
@@ -130,7 +138,8 @@ class AvatarStateTracker:
     """Derives one avatar state from all concurrent activity.
 
     Precedence: approval, then a transient success/error, then the most salient
-    foreground activity (talking > working > thinking), then paused (the agent
+    foreground activity (talking > working > thinking; a run keeps its working
+    pose for ``WORK_DWELL_SECONDS`` after a tool call ends), then paused (the agent
     or a task is paused), then running background research (``working`` with
     ``background: true``, as ``browsing`` unless it is using a tool of another
     kind), then monitoring (active research schedules), then idle.
@@ -145,6 +154,7 @@ class AvatarStateTracker:
         self._paused_tasks = 0
         self._current: dict[str, Any] = {"state": AvatarState.IDLE.value, "variant": None, "background": False}
         self._timer: asyncio.TimerHandle | None = None
+        self._dwell_timer: asyncio.TimerHandle | None = None
         bus.add_listener(self._on_event)
 
     @property
@@ -177,7 +187,12 @@ class AvatarStateTracker:
             return
         elif t == EventType.MODEL_END and act.phase == AvatarState.TALKING and not d.get("tool_calls"):
             return  # the final answer has just been spoken; stay talking until the run ends
-        elif t in (EventType.MODEL_START, EventType.TOOL_END, EventType.MODEL_END):
+        elif t == EventType.TOOL_END:
+            if act.phase == AvatarState.WORKING:
+                act.worked, act.worked_until = act.variant, time.monotonic() + WORK_DWELL_SECONDS
+                self._recompute_later(WORK_DWELL_SECONDS)
+            act.phase, act.variant = AvatarState.THINKING, None
+        elif t in (EventType.MODEL_START, EventType.MODEL_END):
             act.phase, act.variant = AvatarState.THINKING, None
         elif t == EventType.CHAT_DELTA and d.get("kind") == "content":
             if act.phase != AvatarState.TALKING:
@@ -188,7 +203,7 @@ class AvatarStateTracker:
             variant = d.get("variant")
             if act.background and d.get("effect") == Effect.READ:
                 variant = TaskVariant.BROWSING.value  # background fetching or reading shows dimmed browsing
-            act.phase, act.variant = AvatarState.WORKING, variant
+            act.phase, act.variant, act.worked = AvatarState.WORKING, variant, None
         elif t == EventType.APPROVAL_REQUESTED:
             act.pending_approvals.add(d["approval_id"])
         elif t == EventType.APPROVAL_RESOLVED:
@@ -220,7 +235,17 @@ class AvatarStateTracker:
             self._timer.cancel()
         self._timer = loop.call_later(TRANSIENT_STATE_SECONDS + 0.05, self._recompute)
 
+    def _recompute_later(self, delay: float) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._dwell_timer:
+            self._dwell_timer.cancel()
+        self._dwell_timer = loop.call_later(delay + 0.05, self._recompute)
+
     def _derive(self) -> dict[str, Any]:
+        now = time.monotonic()
         acts = list(self._activities.values())
         waiting = [a for a in acts if a.pending_approvals]
         if waiting:
@@ -232,14 +257,15 @@ class AvatarStateTracker:
         self._transient = None
         foreground = [a for a in acts if not a.background]
         if foreground:
-            a = max(foreground, key=lambda a: (_FOREGROUND_PRIORITY[a.phase], a.updated))
-            return self._state(a.phase, a.variant, a)
+            a = max(foreground, key=lambda a: (_FOREGROUND_PRIORITY[a.pose(now)[0]], a.updated))
+            return self._state(*a.pose(now), a)
         if self._agent_paused or self._paused_tasks:
             return self._idle(AvatarState.PAUSED, agent_paused=self._agent_paused, paused_tasks=self._paused_tasks)
         if acts:
-            a = max(acts, key=lambda a: (a.phase == AvatarState.WORKING, a.updated))
-            variant = a.variant if a.phase == AvatarState.WORKING else TaskVariant.BROWSING.value
-            return self._state(AvatarState.WORKING, variant, a, background=True)
+            a = max(acts, key=lambda a: (a.pose(now)[0] == AvatarState.WORKING, a.updated))
+            phase, variant = a.pose(now)
+            return self._state(AvatarState.WORKING, variant if phase == AvatarState.WORKING else TaskVariant.BROWSING.value,
+                               a, background=True)
         if self._monitoring:
             return self._idle(AvatarState.MONITORING)
         return self._idle(AvatarState.IDLE)

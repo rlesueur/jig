@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .. import work
 from ..audit import AuditLog, result_shape, sizes
 from ..constants import ApprovalStatus, Decision, Effect, EventType, Mode, TaskVariant, Verdict
 from ..errors import (ApprovalDenied, JigError, ModeViolation, PolicyBlocked, SentinelError, ToolArgumentError,
@@ -244,25 +245,43 @@ class ToolExecutor:
         variant = spec.avatar_variant.value
         if resolved and resolved.get("avatar_variant") in {v.value for v in TaskVariant}:
             variant = resolved["avatar_variant"]
+        changing = work.before(spec.name, tool_ctx, args)
         self.bus.publish(EventType.TOOL_START, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                          category=spec.category.value, variant=variant, effect=spec.effect.value,
                          call_id=call.id)
         redact = {**self.always_redact, **used}
+        result: Any = None
+        error: str | None = None
         ok = False
         try:
-            async with asyncio.timeout(TOOL_TIMEOUT_S):
-                result = await spec.fn(tool_ctx, **real_args)
+            result = Vault.redact(await self._run(spec, tool_ctx, real_args, redact, bool(used)), redact)
             ok = True
+            return result
+        except (JigError, OSError) as exc:
+            error = str(exc)
+            raise
+        finally:
+            if (ok or error is not None) and (summary := work.summarise(spec.name, args, result, error=error,
+                                                                         before=changing)):
+                # For the live work view only: on the event bus, never in the logs or the audit history.
+                self.bus.publish(EventType.TOOL_SUMMARY, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
+                                 call_id=call.id, ok=ok, summary=summary)
+            self.bus.publish(EventType.TOOL_END, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
+                             call_id=call.id, ok=ok)
+
+    @staticmethod
+    async def _run(spec: Any, tool_ctx: ToolContext, real_args: dict[str, Any], redact: dict[str, str],
+                   used_secrets: bool) -> Any:
+        """Run the tool with its secrets filled in; any error comes back with those secrets redacted."""
+        try:
+            async with asyncio.timeout(TOOL_TIMEOUT_S):
+                return await spec.fn(tool_ctx, **real_args)
         except TimeoutError as exc:
             raise ToolError(f"{spec.name} timed out after {TOOL_TIMEOUT_S:.0f}s") from exc
         except (JigError, OSError):
             message = str(sys.exc_info()[1])
-            if not used and Vault.redact(message, redact) == message:
+            if not used_secrets and Vault.redact(message, redact) == message:
                 raise
             raise ToolError(Vault.redact(message, redact)) from None
         except Exception as exc:
             raise ToolError(Vault.redact(f"{type(exc).__name__}: {exc}", redact)) from None
-        finally:
-            self.bus.publish(EventType.TOOL_END, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
-                             call_id=call.id, ok=ok)
-        return Vault.redact(result, redact)

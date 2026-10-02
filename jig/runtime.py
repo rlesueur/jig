@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 # How much of an earlier task's result a dependent task is given in its prompt.
 DEPENDENCY_RESULT_CHARS = 4000
 
-_CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
+_CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_SUMMARY, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
                      EventType.APPROVAL_REQUESTED, EventType.APPROVAL_RESOLVED}
 
 

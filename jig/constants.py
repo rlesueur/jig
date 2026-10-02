@@ -63,6 +63,10 @@ CATEGORY_TO_VARIANT: dict[ToolCategory, TaskVariant] = {
 # Transient states (success / error) are shown for this long before the
 # avatar settles back to whatever is still going on.
 TRANSIENT_STATE_SECONDS = 3.0
+# A tool call is often over in a moment, so the avatar keeps its working pose this long after the call ends
+# (unless something else happens first: another tool, an answer, a question) instead of dropping straight
+# back to thinking.
+WORK_DWELL_SECONDS = 2.5
 
 
 class Effect(StrEnum):
@@ -139,6 +143,8 @@ class EventType(StrEnum):
     MODEL_END = "model.end"
     TOOL_START = "tool.start"
     TOOL_END = "tool.end"
+    # What a file or code call did (files, command and exit status, tests, diff): for Jig's pages only.
+    TOOL_SUMMARY = "tool.summary"
     # A browser action was recognised as a checkout, payment or booking (before review and approval).
     TOOL_CHECKOUT = "tool.checkout"
     SENTINEL_VERDICT = "sentinel.verdict"
