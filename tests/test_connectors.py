@@ -404,6 +404,18 @@ def test_bodies_prefer_plain_text_and_list_attachments():
     assert "Hello" in gmail._body(html_only)[0] and "<b>" not in gmail._body(html_only)[0]
 
 
+def test_mail_dates_reach_the_model_in_the_users_timezone_not_the_senders():
+    gmt = {"headers": [{"name": "Date", "value": "Fri, 02 Oct 2026 17:31:00 GMT"}]}
+    received = {"internalDate": "1790962260000", "payload": gmt}  # 17:31 UTC
+    assert gmail._when(received, "Europe/London") == "2026-10-02T18:31+01:00"
+    assert gmail._when(received, "America/New_York") == "2026-10-02T13:31-04:00"
+    assert gmail._when({"payload": gmt}, "Europe/London") == "2026-10-02T18:31+01:00"
+    assert gmail._when({"payload": {"headers": []}}, "Europe/London") == ""
+    thread = {"id": "t1", "messages": [{**received, "labelIds": ["UNREAD"], "snippet": "",
+                                        "payload": {"headers": [*gmt["headers"], {"name": "Subject", "value": "Hi"}]}}]}
+    assert gmail._summary(thread, "Europe/London")["date"] == "2026-10-02T18:31+01:00"
+
+
 def test_subject_prefix_allows_reply_markers():
     limits = type("C", (), {"connectors": {"gmail": ConnectorLimits(required_prefix="[Jig test]")}})()
     assert gmail.limits_problem(limits, {"subject": "Re: RE: [Jig test] x"}, None) is None

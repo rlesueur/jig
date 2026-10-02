@@ -17,8 +17,10 @@ import asyncio
 import base64
 import re
 from email.message import EmailMessage
-from email.utils import getaddresses
+from datetime import datetime, timezone
+from email.utils import getaddresses, parsedate_to_datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -190,13 +192,28 @@ def _body(payload: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     return "", attachments
 
 
-def _summary(thread: dict[str, Any]) -> dict[str, Any]:
+def _when(message: dict[str, Any], tz: str) -> str:
+    """When Gmail received the message, in the user's timezone with its UTC offset. The Date header is the
+    sender's clock and zone (often GMT), which a model reads as local time."""
+    try:
+        t = datetime.fromtimestamp(int(message["internalDate"]) / 1000, timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        try:
+            t = parsedate_to_datetime(_headers(message.get("payload", {})).get("date", ""))
+        except (TypeError, ValueError):
+            return ""
+        if t.tzinfo is None:
+            return t.isoformat(timespec="minutes")
+    return t.astimezone(ZoneInfo(tz)).isoformat(timespec="minutes")
+
+
+def _summary(thread: dict[str, Any], tz: str) -> dict[str, Any]:
     messages = thread.get("messages", [])
     first = _headers(messages[0]["payload"]) if messages else {}
     last = _headers(messages[-1]["payload"]) if messages else {}
     labels = sorted({label for m in messages for label in m.get("labelIds", [])})
     return {"thread_id": thread["id"], "subject": first.get("subject", ""), "from": last.get("from", ""),
-            "date": last.get("date", ""), "messages": len(messages), "unread": "UNREAD" in labels,
+            "date": _when(messages[-1], tz) if messages else "", "messages": len(messages), "unread": "UNREAD" in labels,
             "labels": labels, "snippet": messages[-1].get("snippet", "") if messages else ""}
 
 
@@ -209,7 +226,7 @@ async def resolve_thread(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
     """What a reply, draft or label change refers to, for the Sentinel and the approval card."""
     if not args.get("thread_id"):
         return {}
-    s = _summary(await _thread_meta(ctx, args["thread_id"]))
+    s = _summary(await _thread_meta(ctx, args["thread_id"]), ctx.config.runtime.timezone)
     return {"thread_subject": s["subject"], "last_from": s["from"], "last_date": s["date"],
             "messages_in_thread": s["messages"], "labels": s["labels"],
             "note": "Looked up from the mailbox; the subject and sender were written by other people."}
@@ -289,7 +306,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
 
     @tool(
         description="Search the user's Gmail. Uses Gmail search syntax (for example 'from:alice newer_than:7d', "
-        "'is:unread', 'subject:invoice'). Returns threads with subject, sender, date, labels and a snippet.",
+        "'is:unread', 'subject:invoice'). Returns threads with subject, sender, date, labels and a snippet. "
+        "Dates are when the mail arrived, in the user's timezone with its UTC offset.",
         effect=Effect.READ, **reads,
         args={"query": "Gmail search query; empty lists the newest threads.",
               "label": "Only threads with this label id (for example INBOX, UNREAD, or one from gmail_list_labels).",
@@ -308,7 +326,7 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
 
         async def one(tid: str) -> dict[str, Any]:
             async with gate:
-                return _summary(await _thread_meta(ctx, tid))
+                return _summary(await _thread_meta(ctx, tid), ctx.config.runtime.timezone)
 
         threads = await asyncio.gather(*(one(t) for t in ids))
         return {"source": "gmail", "untrusted": UNTRUSTED, "query": query, "threads": list(threads),
@@ -329,7 +347,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
             h = _headers(m["payload"])
             text, attachments = _body(m["payload"])
             messages.append({"message_id": m["id"], "from": h.get("from", ""), "to": h.get("to", ""),
-                             "cc": h.get("cc", ""), "date": h.get("date", ""), "subject": h.get("subject", ""),
+                             "cc": h.get("cc", ""), "date": _when(m, ctx.config.runtime.timezone),
+                             "subject": h.get("subject", ""),
                              "labels": m.get("labelIds", []), "text": text[:limit],
                              "truncated": len(text) > limit, "attachments": attachments})
         return {"source": "gmail", "untrusted": UNTRUSTED, "thread_id": thread["id"], "messages": messages}

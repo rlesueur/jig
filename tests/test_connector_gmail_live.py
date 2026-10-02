@@ -18,7 +18,9 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -96,6 +98,9 @@ async def test_gmail_end_to_end_on_test_messages_only(live):
     read = await _call(live, "gmail_read_thread", {"thread_id": thread_id}, intent=intent)
     assert read.ok and read.result["untrusted"]
     assert f"Test body {tag}" in read.result["messages"][0]["text"]
+    arrived = datetime.fromisoformat(read.result["messages"][0]["date"])
+    assert arrived.utcoffset() == arrived.astimezone(ZoneInfo(live.config.runtime.timezone)).utcoffset()
+    assert abs((datetime.now(timezone.utc) - arrived).total_seconds()) < 600
     assert "sentinel" not in read.policy and "approval" not in read.policy, "reads are not reviewed or asked"
 
     reply = await _call(live, "gmail_reply", {"thread_id": thread_id, "to": [ADDRESS], "body": f"Reply {tag}"},
