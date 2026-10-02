@@ -82,6 +82,7 @@
           <ul>
             <li><a href="#settings/model" data-section="model" data-testid="settings-nav-model">Model and connection</a></li>
             <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
+            <li><a href="#settings/connections" data-section="connections" data-testid="settings-nav-connections">Connections</a></li>
             <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">What Jig remembers about you</a></li>
             <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
             <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
@@ -199,6 +200,18 @@
             </form>
             <div id="audit" class="audit-list" data-testid="audit"></div>
             <button type="button" class="btn" id="audit-more" data-testid="audit-more" hidden>Load older entries</button>
+          </section>
+
+          <!-- Connections -->
+          <section class="set-section" id="set-connections" data-section="connections" aria-labelledby="connections-heading" data-testid="settings-connections" hidden>
+            <div class="section-head">
+              <h3 id="connections-heading">Connections</h3>
+              <button type="button" class="btn btn-small" id="connections-refresh" data-testid="connections-refresh">Refresh</button>
+            </div>
+            <p class="hint">Your own accounts that Jig can work with. Reading is just reading. Jig asks you before it sends, changes or deletes anything, and you can disconnect at any time.</p>
+            <div id="connection-list" class="list" data-testid="connection-list"><p class="hint-quiet">Checking your connections…</p></div>
+            <p class="saved" id="connections-saved" aria-live="polite" data-testid="connections-saved"></p>
+            <p class="hint-quiet">Setting one up for the first time? Each needs a one-off step with the provider first: see docs/connectors-setup.md in Jig's folder.</p>
           </section>
 
           <!-- Starting with Windows -->

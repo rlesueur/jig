@@ -369,7 +369,7 @@ function refreshAll() {
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'memory', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'memory', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?$/);
@@ -398,6 +398,7 @@ function route(moveFocus = true) {
       }
     }
     if (section === 'history') loadAudit(true);
+    if (section === 'connections') loadConnections();
     if (section === 'devices') loadRemote();
     if (section === 'power') loadPower();
     if (moveFocus) {
@@ -697,7 +698,9 @@ const TOOL_DOING = {
   browser_open: 'opening a web page', browser_read: 'reading a web page', browser_screenshot: 'looking at a web page',
   browser_click: 'using a web page', browser_type: 'typing into a web page', browser_fill: 'filling in a form',
   browser_submit: 'submitting a form', browser_login: 'signing in to a website', run_command: 'running a command',
-  run_python: 'running some code',
+  run_python: 'running some code', gmail_search: 'looking through your email', gmail_read_thread: 'reading an email',
+  gmail_list_labels: 'looking at your email labels', gmail_create_draft: 'writing an email draft', gmail_send: 'sending an email',
+  gmail_reply: 'replying to an email', gmail_modify_labels: 'labelling an email', gmail_archive: 'archiving an email',
 };
 
 function setAgentPaused(paused) {
@@ -1040,7 +1043,14 @@ const QUESTION = {
   browser_login: (x) => `Can I sign in as ${q(x.username)}?`,
   run_command: () => 'Can I run this command?',
   run_python: () => 'Can I run this Python code?',
+  gmail_send: (x) => `Can I send this email to ${joinList(x.to)}?`,
+  gmail_reply: (x) => `Can I send this reply to ${joinList(x.to)}?`,
+  gmail_create_draft: (x) => `Can I save a draft to ${joinList(x.to)} in your Gmail?`,
+  gmail_modify_labels: () => 'Can I change the labels on this email?',
+  gmail_archive: () => 'Can I archive this email?',
 };
+const joinList = (v) => (Array.isArray(v) ? v.join(', ') : String(v ?? ''));
+const ccText = (x) => (x.cc && x.cc.length ? `, copying ${joinList(x.cc)}` : '');
 const WILL = {
   write_file: (x) => `Jig will write ${String(x.content ?? '').length.toLocaleString('en-GB')} characters to the file ${q(x.path)} in its `
     + `workspace${x.overwrite ? ', replacing that file if it already exists.' : '. If that file already exists, nothing is replaced and the step fails.'}`,
@@ -1056,9 +1066,18 @@ const WILL = {
   browser_login: (x) => `Jig will sign in on the current page as ${q(x.username)}.`,
   run_command: () => 'Jig will run this command in its sandbox:',
   run_python: () => 'Jig will run this Python code in its sandbox:',
+  gmail_send: (x) => `Jig will send an email from your Gmail to ${joinList(x.to)}${ccText(x)}, subject ${q(x.subject)}:`,
+  gmail_reply: (x) => `Jig will send a reply from your Gmail to ${joinList(x.to)}${ccText(x)}, in the thread described below:`,
+  gmail_create_draft: (x) => `Jig will save (not send) a draft to ${joinList(x.to)}${ccText(x)}, subject ${q(x.subject)}:`,
+  gmail_modify_labels: (x) => `Jig will${x.add && x.add.length ? ` add ${joinList(x.add)}` : ''}${x.add && x.add.length && x.remove && x.remove.length ? ' and' : ''}${x.remove && x.remove.length ? ` remove ${joinList(x.remove)}` : ''} on the thread described below. Nothing is deleted.`,
+  gmail_archive: () => 'Jig will take the thread described below out of your inbox. Nothing is deleted.',
 };
 /* The exact thing that will be written, sent or run, shown on the card itself. */
-const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'command', run_python: 'code' };
+const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'command', run_python: 'code',
+  gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body' };
+/* What a call refers to, looked up by Jig from your account (written by other people, so shown as text). */
+const RESOLVED_WORDS = { thread_subject: 'Subject', last_from: 'Last message from', last_date: 'Date',
+  messages_in_thread: 'Messages in the thread', labels: 'Labels' };
 const VERDICT_LABEL = { allow: 'Looks fine', ask_user: 'Ask you first', deny: 'Do not do this' };
 const RISK_MARK = { low: '\u25CF', medium: '\u25B2', high: '\u25A0' };
 
@@ -1124,6 +1143,11 @@ function approvalCard(a, where) {
         el('strong', { text: 'High risk. ' }), s.reason));
     }
     parts.push(el('p', { class: 'will', 'data-testid': 'approval-will', text: `If you say yes: ${willText}` }), ...noteLines());
+    const about = Object.entries(a.resolved || {}).filter(([k]) => RESOLVED_WORDS[k]);
+    if (about.length) {
+      parts.push(el('dl', { class: 'args-list', 'data-testid': 'approval-about' },
+        about.flatMap(([k, v]) => [el('dt', { text: RESOLVED_WORDS[k] }), el('dd', {}, argValue(Array.isArray(v) ? joinList(v) : v))])));
+    }
     if (preview !== null) {
       const short = preview.length > 280 ? `${preview.slice(0, 280)}\u2026` : preview;
       parts.push(el('pre', { class: 'preview', 'data-testid': 'approval-preview', text: short }));
@@ -1421,6 +1445,9 @@ const CAN = {
   browser_screenshot: 'Take screenshots of web pages', browser_click: 'Click on web pages', browser_type: 'Type into web pages',
   browser_fill: 'Fill in forms on web pages', browser_submit: 'Submit forms on web pages', browser_login: 'Sign in to websites',
   run_command: 'Run commands in its sandbox', run_python: 'Run Python code in its sandbox',
+  gmail_search: 'Search your Gmail', gmail_read_thread: 'Read your emails', gmail_list_labels: 'See your Gmail labels',
+  gmail_create_draft: 'Write Gmail drafts', gmail_send: 'Send emails', gmail_reply: 'Reply to emails',
+  gmail_modify_labels: 'Change labels on emails', gmail_archive: 'Archive emails',
 };
 const CHOICE_TEXT = { allow: 'On its own', ask: 'Ask me first', block: 'Never' };
 const CORE_WORDS = { block: 'Never allowed', ask: 'Always asks you' };
@@ -1963,5 +1990,100 @@ async function watchOff() {
   }
   setTimeout(watchOff, offState.phase === 'stopping' ? 1000 : 5000);
 }
+
+/* ---------- Settings > Connections: your own accounts ---------- */
+
+const SCOPE_WORDS = {
+  'https://www.googleapis.com/auth/gmail.readonly': 'read your mail',
+  'https://www.googleapis.com/auth/gmail.compose': 'draft and send mail (each send needs your OK)',
+  'https://www.googleapis.com/auth/gmail.modify': 'read, send and label mail (never delete)',
+};
+let connectionPoll = null;
+
+async function loadConnections() {
+  let rows;
+  try {
+    rows = await api('/connections');
+  } catch (err) {
+    if (err.status !== 401) $('connection-list').replaceChildren(el('p', { class: 'error-text', text: err.message }));
+    return;
+  }
+  $('connection-list').replaceChildren(...rows.map(connectionItem));
+  const waiting = rows.some((r) => r.attempt && r.attempt.status === 'waiting');
+  clearTimeout(connectionPoll);
+  if (waiting && currentSection() === 'connections') connectionPoll = setTimeout(loadConnections, 2000);
+}
+
+const FAMILY_NAMES = { google: 'Google', microsoft: 'Microsoft' };
+
+function connectionItem(c) {
+  const state = c.connected ? { s: 'done', text: 'connected' }
+    : c.status === 'needs_reconnect' ? { s: 'failed', text: 'needs reconnecting' }
+      : { s: 'interrupted', text: 'not connected' };
+  const lines = [];
+  if (c.connected) lines.push(`${c.account} \u00b7 \u2018${c.access}\u2019 access \u00b7 since ${when(c.connected_at)}`);
+  if (c.status === 'needs_reconnect' && c.last_error) lines.push(c.last_error);
+  if (c.attempt && c.attempt.status === 'waiting') lines.push('Waiting for you to finish signing in, in the tab that opened\u2026');
+  if (c.attempt && c.attempt.status === 'failed') lines.push(`Connecting didn\u2019t work: ${c.attempt.error}`);
+  if (!c.client_configured) lines.push(`First, set up the ${FAMILY_NAMES[c.family] || c.family} app once (docs/connectors-setup.md), then run \u2018jig connect ${c.provider} --client-json <file>\u2019.`);
+  const scopes = c.scopes.length ? el('ul', { class: 'confirm-list' }, c.scopes.map((s) => el('li', { text: SCOPE_WORDS[s] || s }))) : null;
+  const actions = [];
+  if (c.client_configured && onHost()) {
+    const select = el('select', { 'aria-label': `${c.label} access level`, 'data-testid': `connection-access-${c.provider}` },
+      Object.entries(c.access_levels).map(([k, v]) => el('option', { value: k, selected: k === (c.access || c.default_access), text: `${k}: ${v.description}` })));
+    actions.push(select, el('button', {
+      type: 'button', class: 'btn btn-small btn-primary', 'data-testid': `connection-connect-${c.provider}`,
+      text: c.connected ? 'Reconnect' : 'Connect', onclick: (e) => connectAccount(e.currentTarget, c, select.value),
+    }));
+  }
+  if (c.connected || c.status === 'needs_reconnect') {
+    actions.push(el('button', {
+      type: 'button', class: 'btn btn-small btn-danger', 'data-testid': `connection-disconnect-${c.provider}`,
+      text: 'Disconnect\u2026', onclick: (e) => disconnectAccount(e.currentTarget, c),
+    }));
+  }
+  return el('div', { class: 'item', 'data-testid': 'connection-item', dataset: { provider: c.provider } },
+    el('div', { class: 'item-head' },
+      el('span', { class: 'title', text: c.label }),
+      el('span', { class: 'status', dataset: { s: state.s }, text: state.text }),
+      el('div', { class: 'item-actions' }, actions)),
+    ...lines.map((t) => el('p', { class: 'hint-quiet body', text: t })),
+    scopes);
+}
+
+async function connectAccount(button, c, access) {
+  const level = c.access_levels[access];
+  const ok = await askConfirm({
+    title: `Connect ${c.label}?`,
+    body: [bullets([
+      `A new tab opens at ${c.family === 'google' ? 'Google' : c.label} so you can sign in and allow access.`,
+      `Jig asks for \u2018${access}\u2019 access: ${level.description}.`,
+      'The keys it gets are kept in Jig\u2019s vault on this computer. The model never sees them.',
+    ])],
+    ok: 'Continue',
+  });
+  if (!ok) return;
+  const out = await act(button, () => api(`/connections/${encodeURIComponent(c.provider)}/connect`, { method: 'POST', body: { confirm: true, access } }));
+  if (!out) return;
+  window.open(out.auth_url, '_blank', 'noopener');
+  await loadConnections();
+}
+
+async function disconnectAccount(button, c) {
+  const ok = await askConfirm({
+    title: `Disconnect ${c.label}?`,
+    body: [bullets([
+      'Jig takes back its access at the provider where it can, and deletes its keys from the vault.',
+      'Nothing in your account is changed or deleted.',
+    ])],
+    ok: 'Disconnect', danger: true,
+  });
+  if (!ok) return;
+  const out = await act(button, () => api(`/connections/${encodeURIComponent(c.provider)}/disconnect`, { method: 'POST', body: { confirm: true } }));
+  if (out) $('connections-saved').textContent = `${c.label}: disconnected; ${out.at_provider}.`;
+  await loadConnections();
+}
+
+$('connections-refresh').addEventListener('click', loadConnections);
 
 boot();
