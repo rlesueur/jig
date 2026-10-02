@@ -631,12 +631,17 @@ def _error_message(text: str) -> str:
     return str(message)[:200] if message else text[:200]
 
 
-def _context_overflow(text: str) -> tuple[int, int] | None:
-    """(prompt tokens, context size) from llama.cpp's exceed_context_size_error, which reports both."""
+def _context_overflow(text: str, *, unwrap: bool = True) -> tuple[int, int] | None:
+    """(prompt tokens, context size) from llama.cpp's exceed_context_size_error, which reports both. Ollama's
+    OpenAI-compatible API passes its runner's error on as a JSON string in the message of its own error
+    ({"error": {"message": "{\\"error\\": {...}}", "type": "invalid_request_error"}}), so that is read too."""
     try:
         error = json.loads(text).get("error")
     except (ValueError, AttributeError):
         return None
+    if unwrap and isinstance(error, dict) and isinstance(error.get("message"), str):
+        if inner := _context_overflow(error["message"], unwrap=False):
+            return inner
     if not isinstance(error, dict) or error.get("type") != "exceed_context_size_error":
         return None
     prompt, context = error.get("n_prompt_tokens"), error.get("n_ctx")

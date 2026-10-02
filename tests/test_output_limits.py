@@ -105,3 +105,19 @@ async def test_a_conversation_too_big_for_the_context_is_explained(config):
     text = str(refused.value)
     assert f"no longer fits the model's context window ({context} tokens)" in text
     assert "HTTP 400" not in text
+
+
+# The body Ollama 0.35's /v1/chat/completions sent (HTTP 400) when a Jig task overflowed its 4K default context,
+# as Jig recorded it on 2 October 2026: its runner's llama.cpp error, as a JSON string inside Ollama's own error.
+OLLAMA_OVERFLOW = ('{"error":{"message":"{\\"error\\":{\\"code\\":400,\\"message\\":\\"request (7721 tokens) exceeds '
+                   'the available context size (4096 tokens), try increasing it\\",\\"type\\":\\"exceed_context_size_'
+                   'error\\",\\"n_prompt_tokens\\":7721,\\"n_ctx\\":4096}}","type":"invalid_request_error",'
+                   '"param":null,"code":null}}')
+
+
+def test_ollamas_wrapped_context_overflow_is_explained(tmp_path):
+    cfg = load_config(write_config(tmp_path / "a.toml", 'base_url = "http://127.0.0.1:11434/v1"'))
+    error = ModelClient(cfg.model, label="agent model")._http_error(400, OLLAMA_OVERFLOW)
+    assert str(error).startswith("agent model: the conversation (7721 tokens) no longer fits the model's context "
+                                 "window (4096 tokens), so the server refused it.")
+    assert error.status == 400 and "HTTP 400" not in str(error)
