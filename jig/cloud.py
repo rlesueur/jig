@@ -31,7 +31,8 @@ ROLES = {"agent": "the agent", "sentinel": "the safety checker (Sentinel)"}
 SENT_BY_AGENT = [
     "your conversation: what you type and Jig's replies",
     "Jig's instructions and the list of tools it can use",
-    "memory snippets Jig puts in its prompts, and anything it looks up in memory",
+    "your most recent saved memories, which Jig adds to every conversation and task, and any memory or note it "
+    "looks up",
     "tool results: web pages, files and command output the agent reads",
     "images you share, when vision is on",
 ]
@@ -39,8 +40,9 @@ SENT_BY_SENTINEL = [
     "each action Jig wants to take, with its arguments (file contents, web addresses, messages)",
     "the request or task it is for",
 ]
-STAYS_LOCAL = ("Your memory database, audit log, rules, approvals and vault secrets stay on this machine; only what "
-               "goes into a request is sent. The provider's own terms decide how long it keeps what it receives.")
+STAYS_LOCAL = ("Your memories and notes, audit log, rules, approvals and vault secrets are stored only in Jig's "
+               "database on this machine; only what goes into a request is sent. The provider's own terms decide how "
+               "long it keeps what it receives.")
 
 
 class CloudConsentRequired(ConfigError):

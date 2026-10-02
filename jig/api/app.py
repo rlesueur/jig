@@ -120,6 +120,11 @@ class MemoryPatch(BaseModel):
     tags: list[str] | None = None
 
 
+class NotePatch(BaseModel):
+    title: str | None = Field(None, min_length=1)
+    body: str | None = Field(None, min_length=1)
+
+
 class SecretIn(BaseModel):
     value: str = Field(min_length=1)
     allowed_tools: list[str] = []
@@ -137,6 +142,11 @@ class ConfirmIn(BaseModel):
 
 class PowerStopIn(ConfirmIn):
     scope: str
+
+
+class MemoryWipeIn(ConfirmIn):
+    # Also delete every note (Settings > Forget everything does).
+    notes: bool = False
 
 
 class ConnectIn(ConfirmIn):
@@ -675,18 +685,54 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig.audit.record("memory.forgotten", f"memory {memory_id} forgotten", actor="user", memory_id=memory_id)
 
     @app.post("/memory/wipe")
-    async def wipe_memory(request: Request, body: ConfirmIn) -> dict[str, Any]:
-        """Forget everything Jig remembers, with its search index. The audit entry has the count, never content."""
+    async def wipe_memory(request: Request, body: MemoryWipeIn) -> dict[str, Any]:
+        """Forget everything Jig remembers, with its search index, and with ``notes`` every note too. The audit
+        entries have counts, never content."""
         _require_confirm(body, "Nothing was forgotten")
         jig = J(request)
         out = jig.memory.wipe()
         jig.audit.record("memory.wiped", f"all memories forgotten ({out['forgotten']})", actor="user",
                          count=out["forgotten"], wal_cleared=out["wal_cleared"], **_who(request))
+        if body.notes:
+            notes = jig.store.wipe_notes()
+            jig.audit.record("note.wiped", f"all notes deleted ({notes['deleted']})", actor="user",
+                             count=notes["deleted"], wal_cleared=notes["wal_cleared"], **_who(request))
+            out = {**out, "notes_deleted": notes["deleted"], "wal_cleared": out["wal_cleared"] and notes["wal_cleared"]}
         return out
 
+    # Notes: what Jig writes down for itself while it works -----------------
     @app.get("/notes")
-    async def notes(request: Request, limit: int = 50) -> list[dict[str, Any]]:
+    async def notes(request: Request, limit: int = Query(50, le=1000)) -> list[dict[str, Any]]:
         return J(request).store.list_notes(limit=limit)
+
+    @app.post("/notes/wipe")
+    async def wipe_notes(request: Request, body: ConfirmIn) -> dict[str, Any]:
+        """Delete every note. The audit entry has the count, never content."""
+        _require_confirm(body, "No note was deleted")
+        jig = J(request)
+        out = jig.store.wipe_notes()
+        jig.audit.record("note.wiped", f"all notes deleted ({out['deleted']})", actor="user", count=out["deleted"],
+                         wal_cleared=out["wal_cleared"], **_who(request))
+        return out
+
+    @app.get("/notes/{note_id}")
+    async def get_note(request: Request, note_id: int) -> dict[str, Any]:
+        return J(request).store.get_note(note_id)
+
+    @app.patch("/notes/{note_id}")
+    async def edit_note(request: Request, note_id: int, body: NotePatch) -> dict[str, Any]:
+        jig = J(request)
+        changes = _set(body)
+        n = jig.store.edit_note(note_id, **changes)
+        jig.audit.record("note.edited", f"note {note_id} edited", actor="user", note_id=note_id,
+                         fields=sorted(changes), **_who(request))
+        return n
+
+    @app.delete("/notes/{note_id}", status_code=204)
+    async def delete_note(request: Request, note_id: int) -> None:
+        jig = J(request)
+        jig.store.delete_note(note_id)
+        jig.audit.record("note.deleted", f"note {note_id} deleted", actor="user", note_id=note_id, **_who(request))
 
     # Audit -----------------------------------------------------------------
     @app.get("/audit")

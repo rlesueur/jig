@@ -148,6 +148,7 @@ class EventType(StrEnum):
     CHAT_DELTA = "chat.delta"
     MEMORY_CHANGED = "memory.changed"
     SCHEDULE_CHANGED = "schedule.changed"
+    NOTE_CHANGED = "note.changed"
     RULE_CHANGED = "rule.changed"
     AGENT_STATUS = "agent.status"
     POWER_STOPPING = "power.stopping"

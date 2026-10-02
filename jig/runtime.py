@@ -65,7 +65,9 @@ class Jig:
         self.tracker = AvatarStateTracker(self.bus)
         self.audit = AuditLog(self.db)
         self.store = Store(self.db, on_schedule_change=lambda schedule_id, action: self.bus.publish(
-            EventType.SCHEDULE_CHANGED, schedule_id=schedule_id, action=action))
+            EventType.SCHEDULE_CHANGED, schedule_id=schedule_id, action=action),
+            on_note_change=lambda note_id, action: self.bus.publish(EventType.NOTE_CHANGED, note_id=note_id,
+                                                                    action=action))
         self.memory = MemoryStore(self.db, on_change=lambda memory_id, action: self.bus.publish(
             EventType.MEMORY_CHANGED, memory_id=memory_id, action=action))
         self.vault = Vault(self.db, config.vault)

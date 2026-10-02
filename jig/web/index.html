@@ -83,7 +83,7 @@
             <li><a href="#settings/model" data-section="model" data-testid="settings-nav-model">Model and connection</a></li>
             <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
             <li><a href="#settings/connections" data-section="connections" data-testid="settings-nav-connections">Connections</a></li>
-            <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">What Jig remembers about you</a></li>
+            <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">Memory and notes</a></li>
             <li><a href="#settings/schedules" data-section="schedules" data-testid="settings-nav-schedules">Schedules</a></li>
             <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
             <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
@@ -170,8 +170,9 @@
 
           <!-- Memory -->
           <section class="set-section" id="set-memory" data-section="memory" aria-labelledby="memory-section-heading" data-testid="settings-memory" hidden>
-            <h3 id="memory-section-heading">What Jig remembers about you</h3>
-            <p class="hint">Everything Jig remembers lives here, on your machine. Change or forget anything, at any time.</p>
+            <h3 id="memory-section-heading">Memory and notes</h3>
+            <p class="hint" data-testid="memory-privacy">What Jig remembers about you, and the notes it writes for itself, are stored only in its database on this computer. View, change or delete any of them, at any time.</p>
+            <p class="cloud-note" id="memory-cloud-note" data-testid="memory-cloud-note" hidden></p>
             <form class="search-row" id="memory-search" role="search" aria-label="Search memories">
               <label for="memory-q" class="sr-only">Search words</label>
               <input id="memory-q" type="search" placeholder="Search words" data-testid="memory-q">
@@ -192,9 +193,17 @@
                 <button type="submit" class="btn btn-primary" data-testid="memory-add">Add</button>
               </form>
             </details>
+            <h4 id="notes-heading">Jig's notes</h4>
+            <p class="hint-quiet">What Jig writes down for itself while it works, such as research findings and reminders.</p>
+            <div id="notes" class="list" aria-labelledby="notes-heading" data-testid="notes"></div>
+            <details class="advanced" data-testid="notes-wipe-details">
+              <summary>Delete all notes</summary>
+              <p class="hint">Deletes every note Jig has written from this computer. What it remembers about you stays. This can't be undone.</p>
+              <button type="button" class="btn btn-danger" id="notes-wipe" data-testid="notes-wipe">Delete all notes…</button>
+            </details>
             <details class="advanced" data-testid="memory-wipe-details">
               <summary>Forget everything</summary>
-              <p class="hint">Deletes every memory, with its search index, from this computer. Jig starts again knowing nothing about you. This can't be undone.</p>
+              <p class="hint">Deletes every memory, with its search index, and every note from this computer. Jig starts again knowing nothing about you. This can't be undone.</p>
               <button type="button" class="btn btn-danger" id="memory-wipe" data-testid="memory-wipe">Forget everything…</button>
             </details>
             <p class="saved" id="memory-saved" aria-live="polite" data-testid="memory-saved"></p>
@@ -381,7 +390,7 @@
             <div class="switch-row">
               <input type="checkbox" role="switch" id="read-only" aria-describedby="read-only-hint" data-testid="setting-read-only">
               <div><label for="read-only">Just look, don't touch</label>
-                <p class="hint-quiet" id="read-only-hint">Jig can look things up and keep its own private notes and memories, but it won't change, send or save anything of yours, or act on websites. Applies to new messages.</p></div>
+                <p class="hint-quiet" id="read-only-hint">Jig can look things up and keep its own private notes and memories, but it won't change, send or save anything of yours, or act on websites. Applies to new messages. Its notes and memories are stored only in its database on this computer, and you can view, change or delete them in <a href="#settings/memory">Memory and notes</a>.<span id="read-only-cloud" data-testid="read-only-cloud" hidden></span></p></div>
             </div>
             <div class="switch-row">
               <input type="checkbox" role="switch" id="show-working" aria-describedby="show-working-hint" data-testid="setting-show-working">

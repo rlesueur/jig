@@ -116,6 +116,7 @@ class MemoryStore:
                 memory_id,
             ),
         )
+        self._scrub()
         memory = self.get(memory_id)
         self._changed(memory_id, "edited")
         return memory
@@ -124,7 +125,14 @@ class MemoryStore:
         cur = self.db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         if cur.rowcount == 0:
             raise NotFound(f"memory {memory_id} does not exist")
+        self._scrub()
         self._changed(memory_id, "forgotten")
+
+    def _scrub(self) -> None:
+        """After an edit or a forget: FTS5 only marks old entries as deleted, so rewrite the index without them,
+        then clear the write-ahead log, so the old words are no longer in the database files."""
+        self.db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('optimize')")
+        self.db.checkpoint()
 
     def count(self) -> int:
         return int(self.db.one("SELECT COUNT(*) AS n FROM memories")["n"])  # type: ignore[index]
@@ -143,9 +151,9 @@ class MemoryStore:
             # it might still hold, and 'optimize' rewrites it into fresh, empty segments.
             conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')")
             conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('optimize')")
-        busy, _log, _done = self.db.one("PRAGMA wal_checkpoint(TRUNCATE)").values()  # type: ignore[union-attr]
+        cleared = self.db.checkpoint()
         self._changed(None, "wiped")
-        return {"forgotten": n, "wal_cleared": busy == 0}
+        return {"forgotten": n, "wal_cleared": cleared}
 
     @staticmethod
     def _out(row: dict[str, Any]) -> dict[str, Any]:

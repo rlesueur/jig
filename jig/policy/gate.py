@@ -41,6 +41,26 @@ from .urls import complete_url_args
 TOOL_TIMEOUT_S = 180.0
 
 
+def _private_args(args: dict[str, Any]) -> dict[str, Any]:
+    """A private tool's arguments for the audit log: numbers and flags as they are, text only as its size."""
+    return {k: v if v is None or isinstance(v, (bool, int, float))
+            else f"[private, {len(v) if isinstance(v, (str, list, dict)) else 1} "
+                 f"{'characters' if isinstance(v, str) else 'items'}]"
+            for k, v in args.items()}
+
+
+def _private_preview(result: Any) -> str:
+    """A private tool's result for the audit log: the ids it touched, never the text."""
+    if isinstance(result, dict):
+        if "id" in result:
+            return f"[private: id {result['id']}]"
+        for value in result.values():
+            if isinstance(value, list):
+                ids = [x["id"] for x in value if isinstance(x, dict) and "id" in x]
+                return f"[private: {len(value)} found, ids {ids}]"
+    return "[private]"
+
+
 @dataclass
 class CallContext:
     run_id: str
@@ -95,8 +115,10 @@ class ToolExecutor:
         try:
             result = await self._execute(call, ctx, policy)
             outcome = ToolOutcome(call.id, call.name, True, result=result, policy=policy)
+            preview = (_private_preview(result) if self.registry.get(call.name).private
+                       else outcome.message_content()[:500])
             self.audit.record("tool.result", f"{call.name} succeeded", task_id=ctx.task_id, run_id=ctx.run_id,
-                              tool=call.name, call_id=call.id, result_preview=outcome.message_content()[:500])
+                              tool=call.name, call_id=call.id, result_preview=preview)
         except asyncio.CancelledError:
             raise
         except (JigError, OSError) as exc:
@@ -119,7 +141,8 @@ class ToolExecutor:
         except ModelError as exc:
             raise ToolArgumentError(str(exc)) from exc
         self.audit.record("tool.call", f"{spec.name} requested", task_id=ctx.task_id, run_id=ctx.run_id,
-                          tool=spec.name, call_id=call.id, args=args, mode=ctx.mode.value)
+                          tool=spec.name, call_id=call.id, args=_private_args(args) if spec.private else args,
+                          mode=ctx.mode.value)
         url_notes: list[dict[str, Any]] = []
         if spec.outbound:
             args, completed = complete_url_args(args)

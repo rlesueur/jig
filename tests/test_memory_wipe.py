@@ -38,3 +38,19 @@ async def test_wipe_removes_every_memory_and_its_index(jig, events):
     assert fresh["id"] == 42 and jig.memory.search("rowing")[0]["id"] == 42
     assert jig.memory.wipe()["forgotten"] == 1
     assert jig.memory.wipe() == {"forgotten": 0, "wal_cleared": True}
+
+
+async def test_forgetting_or_editing_one_memory_leaves_no_trace_in_the_index(jig):
+    """FTS5 only marks a deleted entry as deleted; Jig rewrites the index so the old words really go."""
+    for i in range(30):
+        jig.memory.add(f"Filler memory {i} about gardening")
+    gone = jig.memory.add("Robyn's secret word is lapwingcrumble")
+    changed = jig.memory.add("Robyn's old address is 3 curlewmarsh lane")
+    jig.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    assert b"lapwingcrumble" in _files(jig) and b"curlewmarsh" in _files(jig)
+
+    jig.memory.forget(gone["id"])
+    jig.memory.edit(changed["id"], content="Robyn moved house")
+    after = _files(jig)
+    assert b"lapwingcrumble" not in after and b"curlewmarsh" not in after
+    assert jig.memory.search("gardening") and jig.memory.search("moved")[0]["id"] == changed["id"]

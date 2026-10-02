@@ -18,10 +18,13 @@ def _task_out(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class Store:
-    def __init__(self, db: Database, on_schedule_change: Callable[[str, str], None] | None = None):
+    def __init__(self, db: Database, on_schedule_change: Callable[[str, str], None] | None = None,
+                 on_note_change: Callable[[int | None, str], None] | None = None):
         self.db = db
         # Called with (schedule_id, "created" | "updated" | "deleted") after every change, whoever made it.
         self.on_schedule_change = on_schedule_change
+        # Called with (note_id, "added" | "edited" | "deleted"), or (None, "wiped"), whoever made the change.
+        self.on_note_change = on_note_change
 
     # Runtime settings ------------------------------------------------------
     def get_meta(self, key: str) -> str | None:
@@ -313,12 +316,57 @@ class Store:
         )
 
     # Private notes ---------------------------------------------------------
+    # Notes have no search index; deleting one removes the row, and secure_delete zeroes the pages it used.
     def add_note(self, *, title: str, body: str, task_id: str | None) -> dict[str, Any]:
         cur = self.db.execute(
             "INSERT INTO notes(task_id, title, body, created_at) VALUES (?, ?, ?, ?)",
             (task_id, title, body, now_iso()),
         )
-        return self.db.one("SELECT * FROM notes WHERE id = ?", (cur.lastrowid,)) or {}
+        self._note_changed(cur.lastrowid, "added")
+        return self.get_note(cur.lastrowid)
+
+    def get_note(self, note_id: int) -> dict[str, Any]:
+        row = self.db.one("SELECT * FROM notes WHERE id = ?", (note_id,))
+        if row is None:
+            raise NotFound(f"note {note_id} does not exist")
+        return row
 
     def list_notes(self, *, limit: int = 50) -> list[dict[str, Any]]:
         return self.db.query("SELECT * FROM notes ORDER BY id DESC LIMIT ?", (limit,))
+
+    def count_notes(self) -> int:
+        return int(self.db.one("SELECT COUNT(*) AS n FROM notes")["n"])  # type: ignore[index]
+
+    def edit_note(self, note_id: int, *, title: str | None = None, body: str | None = None) -> dict[str, Any]:
+        fields = {k: v.strip() for k, v in (("title", title), ("body", body)) if v is not None}
+        if empty := [k for k, v in fields.items() if not v]:
+            raise ValueError(f"a note's {' and '.join(empty)} must not be empty")
+        if not fields:
+            return self.get_note(note_id)
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        cur = self.db.execute(f"UPDATE notes SET {sets}, updated_at = ? WHERE id = ?",
+                              (*fields.values(), now_iso(), note_id))
+        if cur.rowcount == 0:
+            raise NotFound(f"note {note_id} does not exist")
+        self.db.checkpoint()
+        self._note_changed(note_id, "edited")
+        return self.get_note(note_id)
+
+    def delete_note(self, note_id: int) -> None:
+        if self.db.execute("DELETE FROM notes WHERE id = ?", (note_id,)).rowcount == 0:
+            raise NotFound(f"note {note_id} does not exist")
+        self.db.checkpoint()
+        self._note_changed(note_id, "deleted")
+
+    def wipe_notes(self) -> dict[str, Any]:
+        """Delete every note. ``wal_cleared`` is as for ``Database.checkpoint``."""
+        with self.db.transaction() as conn:
+            n = int(conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
+            conn.execute("DELETE FROM notes")
+        cleared = self.db.checkpoint()
+        self._note_changed(None, "wiped")
+        return {"deleted": n, "wal_cleared": cleared}
+
+    def _note_changed(self, note_id: int | None, action: str) -> None:
+        if self.on_note_change:
+            self.on_note_change(note_id, action)

@@ -213,7 +213,8 @@ _ADDED_COLUMNS = (("approvals", "resolved_json", "TEXT"),
                   # A schedule's repeat (jig.recurrence); NULL for schedules made before calendar times.
                   ("schedules", "repeat_json", "TEXT"),
                   ("schedules", "timezone", "TEXT"),
-                  ("schedules", "created_by", "TEXT"))
+                  ("schedules", "created_by", "TEXT"),
+                  ("notes", "updated_at", "TEXT"))
 
 
 def now() -> datetime:
@@ -290,3 +291,9 @@ class Database:
                 raise
             else:
                 self._conn.execute("COMMIT")
+
+    def checkpoint(self) -> bool:
+        """Copy the write-ahead log into the database file and truncate it, so deleted text is not left in the
+        log. False only if another connection (a CLI command, say) was reading; the next checkpoint clears it."""
+        busy, _log, _done = self.one("PRAGMA wal_checkpoint(TRUNCATE)").values()  # type: ignore[union-attr]
+        return busy == 0

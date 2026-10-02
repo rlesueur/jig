@@ -461,6 +461,10 @@ input[type="checkbox"][role="switch"]:checked::after { transform: translateX(20p
 .item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .meta { color: var(--muted); font-size: 13px; margin: 0; }
 .item .body { margin-top: 6px; }
+.note-body { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note details.body > summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note details.body > summary .note-less, .note details.body[open] > summary .note-preview { display: none; }
+.note details.body[open] > summary .note-less { display: inline; color: var(--link); font-weight: 700; }
 .subtasks { margin: 10px 0 0; padding-left: 14px; border-left: 2px solid var(--line-strong); display: flex; flex-direction: column; gap: 8px; }
 .empty { color: var(--muted); margin: 0; font-weight: 700; }
 .empty-state { padding: 4px 2px; }

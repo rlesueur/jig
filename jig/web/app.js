@@ -364,6 +364,7 @@ function refreshAll() {
   loadActivity();
   loadApprovals();
   loadMemory();
+  loadNotes();
   loadRules();
   loadSandbox();
   if (currentSection() === 'history') loadAudit(true);
@@ -555,7 +556,7 @@ function avatarWords(state, variant, background) {
 }
 
 const refreshers = { activity: loadActivity, approvals: loadApprovals, memory: loadMemory, rules: loadRules,
-  status: loadStatus, audit: () => loadAudit(true), schedules: () => loadSchedules() };
+  status: loadStatus, audit: () => loadAudit(true), schedules: () => loadSchedules(), notes: () => loadNotes() };
 const pendingRefresh = {};
 function refreshSoon(area, delay = 300) {
   clearTimeout(pendingRefresh[area]);
@@ -580,6 +581,7 @@ function handleEvent(event) {
     refreshSoon('activity');
   }
   if (t === 'memory.changed') refreshSoon('memory');
+  if (t === 'note.changed') refreshSoon('notes');
   if (currentSection() === 'schedules' && (t === 'schedule.changed' || t === 'task.status' || t === 'agent.status')) refreshSoon('schedules');
   if (t === 'rule.changed') refreshSoon('rules');
   if (t === 'agent.status') {
@@ -635,9 +637,16 @@ function showConnection(conn) {
   } else if (agent.kind === 'cloud') {
     lines.push('The safety checker runs locally, so its checks stay on this computer.');
   }
-  if (lines.length) lines.push('Your memory, history, rules and passwords stay on this computer.');
+  if (lines.length) lines.push('Your memories, notes, history, rules and passwords are stored only on this computer. Only what goes into a request is sent.');
   $('st-cloud-note').textContent = lines.join(' ');
   $('st-cloud-note').hidden = !lines.length;
+  const cloud = agent.kind === 'cloud';
+  $('memory-cloud-note').textContent = cloud
+    ? `Jig uses a cloud model at ${agent.host}. Your most recent memories go with every request to it, and so does any note or memory Jig looks up. They are still stored only here, and deleting one here doesn\u2019t delete what ${agent.host} has already received.`
+    : '';
+  $('memory-cloud-note').hidden = !cloud;
+  $('read-only-cloud').textContent = cloud ? ` Jig uses a cloud model, though, so what it uses for a request, notes and memories included, is sent to ${agent.host}.` : '';
+  $('read-only-cloud').hidden = !cloud;
   const chip = $('cloud-chip');
   chip.hidden = agent.kind !== 'cloud';
   if (agent.kind === 'cloud') {
@@ -1544,20 +1553,108 @@ $('memory-wipe').addEventListener('click', async () => {
   const ok = await askConfirm({
     title: 'Forget everything Jig remembers?',
     body: [bullets([
-      'Every memory, and Jig\u2019s search index of them, is deleted from this computer. Jig starts again knowing nothing about you.',
+      'Every memory, with Jig\u2019s search index of them, and every note Jig has written are deleted from this computer. Jig starts again knowing nothing about you.',
       'This can\u2019t be undone.',
-      'The History keeps a note that you did this and how many were forgotten, never what they said.',
-      'Past conversations and job results aren\u2019t changed. Jig just stops remembering.',
+      'The History records that you did this and how many were deleted, never what they said.',
+      'Past conversations and job results aren\u2019t changed, so whatever Jig read or said in them stays there.',
     ])],
     ok: 'Forget everything', danger: true,
   });
   if (!ok) return;
-  const out = await act($('memory-wipe'), () => api('/memory/wipe', { method: 'POST', body: { confirm: true } }));
+  const out = await act($('memory-wipe'), () => api('/memory/wipe', { method: 'POST', body: { confirm: true, notes: true } }));
   if (!out) return;
-  $('memory-saved').textContent = out.forgotten ? `Jig forgot ${plural(out.forgotten, 'memory', 'memories')}.` : 'There was nothing to forget.';
+  const parts = [out.forgotten && plural(out.forgotten, 'memory', 'memories'), out.notes_deleted && plural(out.notes_deleted, 'note')].filter(Boolean);
+  $('memory-saved').textContent = parts.length ? `Jig forgot ${parts.join(' and ')}.` : 'There was nothing to forget.';
   memoryQuery = '';
   $('memory-q').value = '';
-  await loadMemory();
+  await Promise.all([loadMemory(), loadNotes()]);
+});
+
+/* ---------- notes: what Jig writes down for itself ---------- */
+
+const NOTE_PREVIEW_CHARS = 280;
+
+function noteItem(n) {
+  const item = el('div', { class: 'item note', 'data-testid': 'note', dataset: { id: String(n.id) } });
+  const view = () => {
+    const long = n.body.length > NOTE_PREVIEW_CHARS;
+    const from = n.task_id ? `from job ${n.task_id}` : 'from a conversation';
+    item.replaceChildren(
+      el('div', { class: 'item-head' }, el('span', { class: 'title', text: n.title }),
+        el('div', { class: 'item-actions' },
+          el('button', { type: 'button', class: 'btn btn-small', text: 'Edit', 'aria-label': `Edit note ${n.id}`, onclick: edit }),
+          el('button', { type: 'button', class: 'btn btn-small btn-danger', text: 'Delete', 'aria-label': `Delete note ${n.id}`,
+            onclick: (e) => act(e.currentTarget, async () => {
+              if (!confirm('Delete this note? It is deleted from Jig\u2019s database on this computer.')) return;
+              await api(`/notes/${n.id}`, { method: 'DELETE' });
+              item.remove();
+              $('memory-saved').textContent = `Note #${n.id} is deleted.`;
+              await loadNotes();
+            }) }))),
+      long
+        ? el('details', { class: 'body' },
+          el('summary', {}, el('span', { class: 'note-preview', text: `${n.body.slice(0, NOTE_PREVIEW_CHARS).trimEnd()}\u2026` }),
+            el('span', { class: 'note-less', text: 'Show less' })),
+          el('p', { class: 'note-body', text: n.body }))
+        : el('p', { class: 'note-body', text: n.body }),
+      el('div', { class: 'meta', text: `#${n.id} \u00b7 ${from} \u00b7 written ${when(n.created_at)}${n.updated_at ? ` \u00b7 edited ${when(n.updated_at)}` : ''}` }));
+  };
+  const edit = () => {
+    const ids = { t: `note-t-${n.id}`, b: `note-b-${n.id}` };
+    const title = el('input', { id: ids.t, type: 'text', required: true, value: n.title });
+    const body = el('textarea', { id: ids.b, rows: 5, required: true });
+    body.value = n.body;
+    const form = el('form', { class: 'form' },
+      el('label', { for: ids.t }, `Title of note #${n.id}`, title),
+      el('label', { for: ids.b }, `Text of note #${n.id}`, body),
+      el('div', { class: 'item-actions' },
+        el('button', { type: 'submit', class: 'btn btn-primary btn-small', text: 'Save' }),
+        el('button', { type: 'button', class: 'btn btn-small', text: 'Cancel', onclick: view })));
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      act(e.submitter, async () => {
+        Object.assign(n, await api(`/notes/${n.id}`, { method: 'PATCH', body: { title: title.value.trim(), body: body.value.trim() } }));
+        view();
+      });
+    });
+    item.replaceChildren(form);
+    title.focus();
+  };
+  view();
+  return item;
+}
+
+async function loadNotes() {
+  let rows;
+  try {
+    rows = await api('/notes?limit=500');
+  } catch (err) {
+    if (err.status !== 401) showError(err.message);
+    return;
+  }
+  if ($('notes').querySelector('form')) return;
+  $('notes-heading').textContent = `Jig\u2019s notes (${rows.length})`;
+  $('notes').replaceChildren(...rows.map(noteItem));
+  if (!rows.length) $('notes').append(empty('Jig hasn\u2019t written any notes yet.', 'It writes them while it works, for example during research.'));
+}
+
+$('notes-wipe').addEventListener('click', async () => {
+  $('memory-saved').textContent = '';
+  const ok = await askConfirm({
+    title: 'Delete all of Jig\u2019s notes?',
+    body: [bullets([
+      'Every note Jig has written is deleted from this computer. What it remembers about you stays.',
+      'This can\u2019t be undone.',
+      'The History records that you did this and how many were deleted, never what they said.',
+      'Past conversations and job results aren\u2019t changed, so whatever Jig read or said in them stays there.',
+    ])],
+    ok: 'Delete all notes', danger: true,
+  });
+  if (!ok) return;
+  const out = await act($('notes-wipe'), () => api('/notes/wipe', { method: 'POST', body: { confirm: true } }));
+  if (!out) return;
+  $('memory-saved').textContent = out.deleted ? `Deleted ${plural(out.deleted, 'note')}.` : 'There were no notes to delete.';
+  await loadNotes();
 });
 
 /* ---------- schedules: jobs Jig does by itself at set times ---------- */

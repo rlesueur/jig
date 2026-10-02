@@ -72,6 +72,9 @@ class ToolSpec:
     available: Callable[[], bool] | None = None
     resolve: ResolveFn | None = None
     precheck: PrecheckFn | None = None
+    # Its arguments and results are the user's notes or memories: the append-only audit log records only their
+    # size and ids, so deleting a note or memory leaves no copy of its text there.
+    private: bool = False
 
     def is_available(self) -> bool:
         return self.available is None or bool(self.available())
@@ -106,6 +109,7 @@ class ToolSpec:
             "human_only": self.human_only,
             "default_decision": self.default_decision.value,
             "available": self.is_available(),
+            "private": self.private,
         }
 
     def validate(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -176,6 +180,7 @@ class ToolRegistry:
         available: Callable[[], bool] | None = None,
         resolve: ResolveFn | None = None,
         precheck: PrecheckFn | None = None,
+        private: bool = False,
     ) -> Callable[[ToolFn], ToolFn]:
         def decorator(fn: ToolFn) -> ToolFn:
             if not inspect.iscoroutinefunction(fn):
@@ -217,6 +222,7 @@ class ToolRegistry:
                 available=available,
                 resolve=resolve,
                 precheck=precheck,
+                private=private,
             )
             return fn
 
