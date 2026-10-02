@@ -1,7 +1,13 @@
 # Example: LM Studio's local server (Developer tab, "Start server").
-# Load a model with tool-use support and a context of 32K or more. If several models are loaded,
-# set 'name' to the identifier LM Studio shows; otherwise it is discovered from /v1/models.
 #   jig --config profiles/lmstudio.toml serve
+#
+# Load a model with tool-use support and set its context length to 32768 (or more) in the model loader's
+# settings before loading it: Jig needs 32K. If several models are loaded, set 'name' to the identifier
+# LM Studio shows; otherwise it is discovered from /v1/models.
+#
+# A measured choice: Granite 4.2 8B at Q4_K_M (search "granite-4.2-8b" in LM Studio, from
+# lmstudio-community) used about 10.6 GB of graphics memory with a 32K context (about 8.1 GB at 16K), so it
+# suits cards with 12 GB or more.
 
 [model]
 base_url = "http://127.0.0.1:1234/v1"

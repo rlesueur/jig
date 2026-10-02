@@ -42,11 +42,12 @@ min_p = 0.05
 #   name = "your-reviewer-model"
 [sentinel]
 
-# Image input. Needs a vision-capable model: for llama.cpp start llama-server with
+# Image input. Off by default, because most models can't see pictures. To turn it on, set
+# enabled = true and use a vision-capable model: for llama.cpp start llama-server with
 # --mmproj <projector.gguf>; in Ollama or LM Studio pick a vision model. When enabled,
-# Jig sends a real test image at start-up and refuses to start if the model cannot see it.
+# Jig sends a real test image at start-up and won't start the agent if the model can't see it.
 [vision]
-enabled = true
+enabled = false
 
 # "directory": file tools confined to a folder; no code execution or browser.
 # "container": code, shell and the headless browser run in a hardened Docker container

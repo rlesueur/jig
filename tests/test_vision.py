@@ -1,4 +1,7 @@
-"""Vision: real image requests against the configured model server. Nothing is mocked."""
+"""Vision: real image requests against the configured model server. Nothing is mocked.
+
+The shipped jig.toml leaves [vision] off, because most models can't see pictures, so these tests send images
+straight to the configured model: it must be vision-capable (the tested set-up, llama.cpp with --mmproj, is)."""
 
 from __future__ import annotations
 
@@ -17,8 +20,6 @@ MASCOT = Path(__file__).resolve().parent.parent / "avatar" / "assets" / "jig-mas
 
 @pytest.fixture
 async def client(config):
-    if not config.vision.enabled:
-        pytest.fail("vision tests need [vision] enabled = true and a vision-capable model in the config")
     c = ModelClient(config.model, label="agent model")
     await c.health()
     try:

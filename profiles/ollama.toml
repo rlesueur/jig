@@ -1,12 +1,21 @@
 # Example: Ollama's OpenAI-compatible endpoint.
-# Ollama serves every pulled model, so set 'name' explicitly. Pick a model with tool-calling support
-# (shown as "tools" on ollama.com) and raise its context: OLLAMA_CONTEXT_LENGTH=32768 or a Modelfile with
-# "PARAMETER num_ctx 32768". Allow parallel requests with OLLAMA_NUM_PARALLEL.
 #   jig --config profiles/ollama.toml serve
+#
+# FIRST, raise Ollama's context length. Ollama gives a model only 4K tokens of context on graphics cards with
+# less than 24 GB of memory, and Jig needs 32K: with less, it quietly forgets the start of longer jobs.
+#   - Ollama app: Settings > Context length > 32k.
+#   - Or set the environment variable OLLAMA_CONTEXT_LENGTH=32768 before Ollama starts.
+# Allow parallel requests with OLLAMA_NUM_PARALLEL.
+#
+# The example model, Granite 4.2 8B at Q4_K_M, was measured at about 10.6 GB of graphics memory with a 32K
+# context (about 8.1 GB at 16K), so it suits cards with 12 GB or more. Get it with
+#   ollama pull granite4.2:8b-q4_K_M
+# Any other model with tool-calling support (shown as "tools" on ollama.com) works too; Ollama serves every
+# model you have pulled, so 'name' must say which one.
 
 [model]
 base_url = "http://127.0.0.1:11434/v1"
-name = "qwen3:30b"   # any tool-capable model you have pulled
+name = "granite4.2:8b-q4_K_M"   # any tool-capable model you have pulled
 max_tokens = 8192
 
 [model.sampling]
@@ -20,7 +29,7 @@ top_p = 0.9
 
 # The safety checker (Sentinel) uses the same model as the agent: nothing extra is loaded.
 # Optional, advanced: a different model for it, added under [sentinel] below, for example
-#   name = "qwen3:4b"
+#   name = "granite4.2:3b"
 # Ollama then keeps both models loaded if memory allows (or swaps them, which is slow), so this costs that
 # model's memory on top of the agent's. See "The safety checker's model" in README.md.
 [sentinel]
