@@ -196,8 +196,10 @@
               <li>Download <code>JigSetup-&lt;version&gt;.exe</code> from the <a href="https://github.com/rlesueur/jig/releases/latest">latest GitHub release</a>. It is for 64-bit Windows.</li>
               <li>Open it. The installer isn't code-signed yet, so Windows will probably warn you. If your browser says the file isn't commonly downloaded, choose <strong>Keep</strong>. If Windows shows "Windows protected your PC", click <strong>More info</strong>, then <strong>Run anyway</strong>. Only do this for the file from Jig's releases page.</li>
               <li>Click through the installer. It needs no administrator rights and no Python, Git or terminal. It asks whether Jig should start when you sign in to Windows; that is off unless you tick it.</li>
-              <li>Jig opens in your browser on its set-up page. Choose a model, and Jig checks it and starts. Afterwards, open Jig from the Start menu or its icon by the clock.</li>
+              <li>Jig opens in its own window on its set-up page. Choose a model, and Jig checks it and starts. Afterwards, open Jig from the Start menu or its icon by the clock.</li>
+              <li>Closing the window leaves Jig running, so schedules still run. To turn Jig off, use <strong>Turn Jig off</strong> on its icon by the clock. If you prefer your browser, <strong>Open in browser</strong> is at the top right of the window and on the icon.</li>
             </ol>
+            <p class="muted">The window uses Microsoft Edge WebView2, which comes with Windows 11. If it's missing, Jig offers to get it (free, from Microsoft) or to open in your browser instead.</p>
           </div>
           <div>
             <h3 class="code-title">macOS and Linux: the developer route</h3>
@@ -207,7 +209,7 @@ cd jig
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/jig serve</code></pre>
-            <p><code>jig serve</code> opens Jig in your browser, already signed in. If Jig has no working model yet, it opens on its set-up page. Leave the terminal open: closing it stops Jig. To open Jig again while it's running, run <code>jig ui</code>.</p>
+            <p><code>jig serve</code> opens Jig, already signed in: in your browser on macOS and Linux, and in its own window on Windows (add <code>--browser</code> to use the browser there too). If Jig has no working model yet, it opens on its set-up page. Leave the terminal open: closing it stops Jig. To open Jig again while it's running, run <code>jig ui</code> (which also takes <code>--browser</code>).</p>
           </div>
         </div>
         <h3>Need a model?</h3>
