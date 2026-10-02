@@ -313,12 +313,35 @@ def _provider_message(r: httpx.Response) -> str:
     return json.dumps(body)[:300]
 
 
+_GOOGLE_RATE_REASONS = frozenset({"rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"})
+
+
+def _rate_limited(r: httpx.Response) -> bool:
+    """The provider says "slow down": HTTP 429, or Google's per-minute quota, which it sends as HTTP 403
+    (reason rateLimitExceeded). A daily limit (dailyLimitExceeded) is not this: waiting won't lift it."""
+    if r.status_code == 429:
+        return True
+    if r.status_code != 403:
+        return False
+    try:
+        err = r.json().get("error")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(err, dict):
+        return False
+    reasons = {str(e.get("reason")) for e in err.get("errors") or [] if isinstance(e, dict)}
+    reasons |= {str(d.get("reason")) for d in err.get("details") or [] if isinstance(d, dict)}
+    return (bool(reasons & _GOOGLE_RATE_REASONS) or err.get("status") == "RESOURCE_EXHAUSTED"
+            or "per minute" in str(err.get("message") or "").lower())
+
+
 def _retry_after(r: httpx.Response, attempt: int) -> float:
     value = r.headers.get("retry-after", "")
     try:
         return max(0.0, float(value))
     except ValueError:
-        return float(2 ** attempt)
+        # Per-minute quotas need longer than a server hiccup: 4, 8, 16 s, within MAX_TOTAL_WAIT_S.
+        return float(2 ** (attempt + 2)) if _rate_limited(r) else float(2 ** attempt)
 
 
 class Connectors:
@@ -409,7 +432,8 @@ class Connectors:
                 refreshed = True
                 grant = await self._current(name, force_refresh=True)
                 continue
-            retryable = r.status_code == 429 or (method.upper() in IDEMPOTENT and r.status_code in (500, 502, 503, 504))
+            limited = _rate_limited(r)
+            retryable = limited or (method.upper() in IDEMPOTENT and r.status_code in (500, 502, 503, 504))
             if retryable and attempt < MAX_RETRIES:
                 delay = _retry_after(r, attempt)
                 if waited + delay <= MAX_TOTAL_WAIT_S:
@@ -424,9 +448,9 @@ class Connectors:
                 why = f"{spec.label} rejected Jig's access (HTTP 401: {_provider_message(r)})"
                 self.store.mark_needs_reconnect(name, why)
                 raise ConnectorAuthError(f"{why}. Reconnect with 'jig connect {name}'.")
-            if r.status_code == 403:
+            if r.status_code == 403 and not limited:
                 raise ConnectorError(f"{spec.label} refused this (HTTP 403): {_provider_message(r)}", status=403)
-            if r.status_code == 429 or (retryable and r.status_code >= 500):
+            if limited or (retryable and r.status_code >= 500):
                 raise ConnectorError(f"{spec.label} is rate-limiting or unavailable (HTTP {r.status_code}) after "
                                      f"waiting {waited:.0f}s; try again later. {_provider_message(r)}",
                                      status=r.status_code)

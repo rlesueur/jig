@@ -206,6 +206,28 @@ async def test_disconnect_reports_what_google_said_and_deletes_the_tokens(store)
     assert "connector.disconnected" in kinds
 
 
+def _google_error(code: int, reason: str, status: str, message: str) -> httpx.Response:
+    body = {"error": {"code": code, "message": message, "status": status,
+                      "errors": [{"message": message, "domain": "usageLimits", "reason": reason}]}}
+    return httpx.Response(code, json=body)
+
+
+def test_googles_per_minute_quota_403_is_a_slow_down_but_a_daily_limit_or_refusal_is_not():
+    from jig.connectors.base import _rate_limited, _retry_after
+    per_minute = _google_error(403, "rateLimitExceeded", "PERMISSION_DENIED",
+                               "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per "
+                               "user' of service 'gmail.googleapis.com' for consumer 'project_number:1'.")
+    assert _rate_limited(per_minute) and _rate_limited(_google_error(403, "userRateLimitExceeded", "", "slow"))
+    assert _rate_limited(_google_error(403, "", "PERMISSION_DENIED", per_minute.json()["error"]["message"]))
+    assert _rate_limited(httpx.Response(429)) and _rate_limited(httpx.Response(429, text="not json"))
+    assert not _rate_limited(_google_error(403, "dailyLimitExceeded", "PERMISSION_DENIED", "Daily limit"))
+    assert not _rate_limited(_google_error(403, "insufficientPermissions", "PERMISSION_DENIED", "no scope"))
+    assert not _rate_limited(httpx.Response(403, text="<html>Forbidden</html>"))
+    assert [_retry_after(per_minute, a) for a in range(3)] == [4.0, 8.0, 16.0]
+    assert _retry_after(httpx.Response(429, headers={"Retry-After": "7"}), 0) == 7.0
+    assert _retry_after(httpx.Response(503), 1) == 2.0
+
+
 def test_scope_checks_explain_how_to_get_more_access(store):
     read_only = Grant(access_token="ya29.x", scopes=[gmail.S_READONLY])
     store.save("gmail", read_only, account="test@example.com", access="read", via="test")
