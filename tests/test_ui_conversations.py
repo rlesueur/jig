@@ -236,7 +236,7 @@ def test_forget_everything_and_the_history_wording(server, browser, shots):
                  "The History records that you did this and how many were deleted, never what they said.",
                  "2 older History entries"):
         assert line in body, line
-    page.screenshot(path=str(shots / "forget-everything-confirm-light.png"))
+    page.screenshot(path=str(shots / "forget-everything-older-history-light.png"))
     page.get_by_test_id("confirm-ok").click()
     page.wait_for_selector("#memory-saved:text-matches('^Jig deleted [0-9]+ memor.*, 1 conversation and [0-9]+ tasks?.$')")
     assert call(data, "GET", "/sessions").json() == [] and call(data, "GET", "/memory").json() == []
@@ -244,7 +244,7 @@ def test_forget_everything_and_the_history_wording(server, browser, shots):
     on_disk = files(data)
     for word in (b"kittiwakemuffin", b"ocelotgrammar", b"shagcormorant"):
         assert word not in on_disk, f"{word!r} is still in the database files"
-    page.screenshot(path=str(shots / "forget-everything-done-light.png"), full_page=True)
+    page.screenshot(path=str(shots / "forget-everything-older-history-done-light.png"), full_page=True)
     last = call(data, "GET", "/audit", params={"kind": "everything", "newest_first": True}).json()[0]
     assert last["data"]["memories"] >= 1 and last["data"]["conversations"] == 1 and last["actor"] == "user"
     context.close()
