@@ -145,10 +145,12 @@ class Tray:
         self.stopping = False  # we asked Jig to turn off
         self.quitting = False
         self.open_when_up = False
+        self.start_when_off = False  # asked to start while the last Jig was still turning off
         self.waiting_approvals: set[str] = set()  # pending approvals already notified
         self.state = "starting"  # starting | running | setup | stopping | off | problem
         self.problem = ""
         self.lock = threading.Lock()
+        self.start_lock = threading.Lock()
         self.hwnd = None
         self.user32, self.shell32, self.kernel32 = _win32()
         self._wndproc = WNDPROC(self._on_message)  # keep a reference: Windows calls it
@@ -173,10 +175,20 @@ class Tray:
         return r.json() if r.status_code == 200 else None
 
     def start_jig(self) -> None:
-        if self.child is not None and self.child.poll() is None:
+        """Start Jig. If the last one is still finishing turning off (it stops answering before its process
+        ends), start it as soon as it has: Turn Jig on on the "Jig is off" page can come that quickly."""
+        with self.start_lock:
+            self._start_jig()
+
+    def _start_jig(self) -> None:
+        if (self.child is not None and self.child.poll() is None) or running_instance(self.data_dir):
+            # Already running or starting (perhaps started some other way); the status thread picks it up.
+            if self._answering() is None and not self.start_when_off:
+                self.start_when_off = True
+                log.info("asked to start Jig while it isn't answering yet; starting it once the last one has "
+                         "turned off")
             return
-        if running_instance(self.data_dir):
-            return  # already running (started some other way); the status thread picks it up
+        self.start_when_off = False
         cmd = [sys.executable, "-m", "jig.cli"]
         if self.config_path:
             cmd += ["--config", self.config_path]
@@ -254,6 +266,7 @@ class Tray:
             exited = self.child is not None and self.child.poll() is not None
             with self.lock:
                 if status is not None:
+                    self.start_when_off = False
                     new = "setup" if status.get("status") == "setup" else "running"
                 elif self.stopping and (self.child is None or exited):
                     new = "off"
@@ -266,8 +279,11 @@ class Tray:
                         self.problem = (f"Jig stopped with an error (exit code {code}). Its log is "
                                         f"{self.data_dir / 'logs' / 'jig.log'}.")
                     self.child = None
-                elif self.state == "starting" or (self.child is not None and not exited):
-                    new = "stopping" if self.stopping else "starting"
+                elif self.child is not None and not exited:
+                    # Not answering: still starting, or turning off (perhaps from the web page, not the tray).
+                    new = "starting" if self.state == "starting" and not self.stopping else "stopping"
+                elif self.state == "starting" and running_instance(self.data_dir):
+                    new = "starting"  # started some other way, and not answering yet
                 else:
                     new = "off"
             if new != self.state:
@@ -285,6 +301,8 @@ class Tray:
                 self._check_approvals()
             if new == "off" and self.quitting:
                 break
+            if new == "off" and self.start_when_off:
+                self.start_jig()
             time.sleep(POLL_S)
 
     def _set_state(self, state: str) -> None:
@@ -375,10 +393,15 @@ class Tray:
             threading.Thread(target=self.quit, daemon=True).start()
 
     def quit(self) -> None:
+        self.start_when_off = False
+        deadline = time.monotonic() + 120
+        # A Jig that is still starting is turned off once it answers, so quitting never leaves it running.
+        while (self.state == "starting" and self.child is not None and self.child.poll() is None
+               and time.monotonic() < deadline):
+            time.sleep(0.5)
         if self.state in ("running", "setup") and not self.stop_jig():
             return
         self.quitting = True
-        deadline = time.monotonic() + 120
         while self.child is not None and self.child.poll() is None and time.monotonic() < deadline:
             time.sleep(0.5)
         self.user32.PostMessageW(self.hwnd, WM_CLOSE, 0, 0)
@@ -398,8 +421,8 @@ class Tray:
             self._command(wparam & 0xFFFF)
             return 0
         if msg == WM_START:
-            if self.state in ("off", "problem"):
-                self.start_jig()
+            # Not by self.state, which can be a poll behind: Jig may have stopped answering moments ago.
+            threading.Thread(target=self.start_jig, daemon=True).start()
             return 0
         if msg == WM_OPEN:
             threading.Thread(target=self.open_jig, daemon=True).start()
@@ -432,10 +455,10 @@ class Tray:
             raise ctypes.WinError(ctypes.get_last_error())
         self.icon = u.LoadImageW(None, str(ICON), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
         self.start_reason = start_reason
-        if running_instance(self.data_dir):
+        if start:
+            self.start_jig()  # or picks up the one that runs, or starts it once the last one has turned off
+        elif running_instance(self.data_dir):
             self.state = "running"
-        elif start:
-            self.start_jig()
         else:
             self.state = "off"
         self._add_icon()
@@ -489,9 +512,11 @@ def main(argv: list[str] | None = None) -> int:
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
         hwnd = user32.FindWindowW(name, None)
         if hwnd:
-            user32.AllowSetForegroundWindow(ASFW_ANY)  # so Jig's window may come to the front for the person
-            user32.PostMessageW(hwnd, WM_OPEN if args.open else WM_START, 0, 0)
-            log.info("a tray already runs for %s; asked it to %s", data_dir, "open Jig" if args.open else "start Jig")
+            if args.open or not args.no_start:
+                user32.AllowSetForegroundWindow(ASFW_ANY)  # so Jig's window may come to the front for the person
+                user32.PostMessageW(hwnd, WM_OPEN if args.open else WM_START, 0, 0)
+            log.info("a tray already runs for %s; %s", data_dir, "asked it to open Jig" if args.open
+                     else "left it as it is" if args.no_start else "asked it to start Jig")
             return 0
         log.error("a tray already runs for %s but its window wasn't found", data_dir)
         return 1

@@ -20,6 +20,7 @@ from jig.config import load_config
 from jig.discovery import find_gpu, find_model_servers
 from jig.errors import ConfigError, ModelKeyMissing, ModelServerUnavailable
 from jig.friendly import explain
+from jig.instance import running_instance
 from jig.recommend import ADVISED_CONTEXT, HEADROOM_GB, MEASUREMENTS, recommend
 
 from .server_helpers import free_port, kill, start_jig, token, wait_health, wait_stopped
@@ -229,7 +230,7 @@ def test_setup_mode_keeps_the_agent_off_until_a_model_passes(tmp_path):
 def test_tray_starts_once_per_data_folder_and_quits(tmp_path):
     import ctypes
 
-    from jig.tray import instance_name
+    from jig.tray import POLL_S, instance_name
 
     cfg = tmp_path / "jig.toml"
     cfg.write_text('[model]\nbase_url = ""\nname = ""\n\n[paths]\ndata_dir = "data"\nsandbox_dir = "sandbox"\n',
@@ -248,13 +249,70 @@ def test_tray_starts_once_per_data_folder_and_quits(tmp_path):
             assert proc.poll() is None, "the tray exited"
             time.sleep(0.2)
         assert find(instance_name(data), None), "the tray's window never appeared"
-        # A second tray for the same data folder hands over to the first and exits.
+        # A second tray for the same data folder hands over to the first and exits, and with --no-start it
+        # doesn't ask the first one to start Jig either.
         second = subprocess.run([*tray_cmd, "--no-start"], timeout=30)
         assert second.returncode == 0 and proc.poll() is None
+        time.sleep(2 * POLL_S)
+        assert running_instance(data) is None, "--no-start started Jig"
         quit_ = subprocess.run([*tray_cmd, "--quit"], timeout=200)
         assert quit_.returncode == 0
         assert proc.wait(30) == 0
         assert not find(instance_name(data), None)
-        assert "tray ready" in (data / "logs" / "tray.log").read_text(encoding="utf-8")
+        tray_log = (data / "logs" / "tray.log").read_text(encoding="utf-8")
+        assert "tray ready" in tray_log and "left it as it is" in tray_log
     finally:
         kill(proc)
+        subprocess.run([sys.executable, "-m", "jig.cli", "--config", str(cfg), "stop"], capture_output=True,
+                       timeout=120)
+        wait_stopped(data)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the tray icon is for Windows")
+def test_turn_jig_on_while_it_is_still_turning_off_starts_it_once_it_has(tmp_path):
+    """The "Jig is off" page shows as soon as Jig stops answering, but its process can take a few seconds more to
+    end (here an open /events connection holds it, as Jig's window does). Turn Jig on (the jig://start link the
+    page offers, which reaches the running tray) in that gap still starts Jig, once the last one has gone."""
+    from websockets.sync.client import connect
+
+    cfg = tmp_path / "jig.toml"
+    cfg.write_text('[model]\nbase_url = ""\nname = ""\n\n[paths]\ndata_dir = "data"\nsandbox_dir = "sandbox"\n',
+                   encoding="utf-8")
+    data, port = tmp_path / "data", free_port()
+    base = f"http://127.0.0.1:{port}"
+    tray_cmd = [sys.executable, "-m", "jig.tray", "--config", str(cfg), "--port", str(port)]
+    tray = subprocess.Popen(tray_cmd)
+    try:
+        wait_health(port, proc=tray, timeout=120)
+        first = running_instance(data)["pid"]
+        with connect(f"ws://127.0.0.1:{port}/events", additional_headers=token(data), open_timeout=30) as ws:
+            assert json.loads(ws.recv(timeout=30))["type"] == "setup"
+            r = httpx.post(f"{base}/power/stop", headers=token(data), json={"scope": "jig", "confirm": True},
+                           timeout=30)
+            assert r.status_code == 202, r.text
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                try:
+                    httpx.get(f"{base}/health", timeout=1)
+                except httpx.HTTPError:
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("Jig kept answering after it was turned off")
+            assert running_instance(data), "the test needs Jig's process to still be ending here"
+
+            link = subprocess.run([*tray_cmd, "jig://start"], timeout=30)
+            assert link.returncode == 0 and tray.poll() is None
+            wait_health(port, proc=tray, timeout=120)
+        assert running_instance(data)["pid"] != first, "a new Jig started"
+        tray_log = (data / "logs" / "tray.log").read_text(encoding="utf-8")
+        assert "starting it once the last one has turned off" in tray_log
+        assert subprocess.run([*tray_cmd, "--quit"], timeout=200).returncode == 0
+        assert tray.wait(30) == 0
+        wait_stopped(data)
+        assert running_instance(data) is None, "quitting the tray turned Jig off"
+    finally:
+        kill(tray)
+        subprocess.run([sys.executable, "-m", "jig.cli", "--config", str(cfg), "stop"], capture_output=True,
+                       timeout=120)
+        wait_stopped(data)
