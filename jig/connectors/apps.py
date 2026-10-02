@@ -11,9 +11,9 @@ from __future__ import annotations
 
 # Microsoft: the Application (client) ID of Jig's app registration ("Accounts in any organizational
 # directory and personal Microsoft accounts", public client, redirect http://localhost).
-MICROSOFT_CLIENT_ID = ""
+MICROSOFT_CLIENT_ID = "fd880fda-0524-4e20-97d7-404e5ccdf918"
 
 # GitHub: the client ID of the Jig GitHub App (owned by the personal account rlesueur, device flow
 # enabled) and its URL name, as in https://github.com/apps/<slug>.
-GITHUB_APP_CLIENT_ID = ""
-GITHUB_APP_SLUG = ""
+GITHUB_APP_CLIENT_ID = "Iv23lixSDBtJ1WLKCbM0"
+GITHUB_APP_SLUG = "jig-by-rlesueur"
