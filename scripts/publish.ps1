@@ -180,6 +180,10 @@ def fix_identity(commit, metadata):
     if stale(commit.author_name, commit.author_email) or stale(commit.committer_name, commit.committer_email):
         commit.author_name = commit.committer_name = new_name
         commit.author_email = commit.committer_email = new_email
+    lines = commit.message.split(b'\n')
+    kept = [l for l in lines if not l.lower().startswith(b'co-authored-by: cursor')]
+    if kept != lines:
+        commit.message = b'\n'.join(kept).rstrip(b'\n') + b'\n'
 
 with open(attack_paths_file, encoding='utf-8') as fh:
     path_args = [arg for line in fh if line.strip() for arg in ('--path', line.strip())]
@@ -205,6 +209,10 @@ fr.RepoFilter(args, commit_callback=fix_identity).run()
     $idents | ForEach-Object { Write-Host "      $_" }
     if ($idents.Count -ne 1 -or $idents[0] -cne $NewIdent) {
         Fail "the history must contain exactly one author and committer identity, '$NewIdent', but has the $($idents.Count) listed above."
+    }
+    $trailers = @(Run git -C $RepoPath log --all -i --grep='^Co-authored-by: Cursor' --format='%h')
+    if ($trailers.Count -gt 0) {
+        Fail "$($trailers.Count) commit(s) still carry a 'Co-authored-by: Cursor' trailer after the rewrite: $($trailers -join ', ')"
     }
     $count = (Run git -C $RepoPath rev-list --all --count).Trim()
     Ok "rewrote history: $count commits, all authored and committed as $NewIdent"
