@@ -1,13 +1,21 @@
-"""Async client for any OpenAI-compatible chat endpoint (llama.cpp, Ollama, LM Studio, vLLM...).
+"""Async client for any OpenAI-compatible chat endpoint (llama.cpp, Ollama, LM Studio, vLLM, or a cloud API).
 
 Nothing here assumes a particular model. Reasoning text is optional: some
 servers send ``reasoning_content`` or ``reasoning``, and many send neither.
+Documented provider differences (``jig.endpoints.PROVIDERS``) are applied
+explicitly: the output-limit field, how structured output is requested, and
+the fields a provider needs back in the conversation (Gemini's tool-call thought
+signatures, OpenRouter's ``reasoning_details``), which are kept verbatim.
+
+The API key is never logged and is redacted from every error message.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
+import ssl
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -16,11 +24,15 @@ from typing import Any
 import httpx
 
 from .config import EndpointConfig
-from .errors import ModelCapabilityError, ModelError, ModelServerUnavailable
+from .errors import ConfigError, ModelCapabilityError, ModelError, ModelServerUnavailable
 
 log = logging.getLogger(__name__)
 
 _REASONING_KEYS = ("reasoning_content", "reasoning")
+_TOOL_CALL_KEYS = {"index", "id", "type", "function"}
+RESPOND_TOOL = "respond"
+_RESPOND_INSTRUCTION = (f"Give your answer only by calling the {RESPOND_TOOL} tool: its arguments are your whole "
+                        "answer. Do not reply with text.")
 
 
 def _reasoning(obj: dict[str, Any]) -> str:
@@ -35,6 +47,9 @@ class ToolCall:
     id: str
     name: str
     arguments_raw: str
+    # Any other fields the server sent with the call (for example Gemini's extra_content.google.thought_signature),
+    # sent back unchanged in the conversation history.
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def arguments(self) -> dict[str, Any]:
         """Parse the JSON arguments. Raises ``ModelError`` if they are malformed."""
@@ -53,6 +68,7 @@ class ToolCall:
 
     def as_message_part(self) -> dict[str, Any]:
         return {
+            **self.extra,
             "id": self.id,
             "type": "function",
             "function": {"name": self.name, "arguments": self.arguments_raw},
@@ -68,6 +84,10 @@ class ChatResult:
     usage: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, Any] = field(default_factory=dict)
     elapsed_s: float = 0.0
+    # OpenRouter's structured reasoning blocks, which it asks to be passed back unmodified.
+    reasoning_details: list[dict[str, Any]] = field(default_factory=list)
+    # Gemini's vendor extension on the message (extra_content.google...), passed back unmodified.
+    extra_content: dict[str, Any] = field(default_factory=dict)
 
     def assistant_message(self) -> dict[str, Any]:
         """The message to append to history, in the standard OpenAI shape.
@@ -75,6 +95,10 @@ class ChatResult:
         msg: dict[str, Any] = {"role": "assistant", "content": self.content or ""}
         if self.tool_calls:
             msg["tool_calls"] = [tc.as_message_part() for tc in self.tool_calls]
+        if self.reasoning_details:
+            msg["reasoning_details"] = self.reasoning_details
+        if self.extra_content:
+            msg["extra_content"] = self.extra_content
         return msg
 
     def summary(self) -> dict[str, Any]:
@@ -92,18 +116,28 @@ DeltaCallback = Callable[[str, str], Awaitable[None]]  # (kind, text) kind in re
 
 
 class ModelClient:
-    def __init__(self, config: EndpointConfig, *, label: str = "model"):
+    def __init__(self, config: EndpointConfig, *, label: str = "model", api_key: str | None = None):
+        """``api_key`` is the resolved key (``jig.cloud.resolve_api_key``); without it, ``api_key_env`` is read.
+        An endpoint with ``api_key_secret`` needs the key passed in, because only the vault can provide it."""
         self.config = config
         self.label = label
         # Resolved by connect(): the configured name, or the one model the server reports.
         self.model_name: str | None = config.name or None
         self.server_info: dict[str, Any] = {}
-        headers = {}
-        if key := config.api_key:
-            headers["Authorization"] = f"Bearer {key}"
+        provider = config.provider_info
+        headers = {**(provider.headers if provider else {}), **config.headers}
+        if api_key is None:
+            if config.api_key_secret:
+                raise ConfigError(f"{label}: the API key is in the vault ({config.api_key_secret!r}) and was not "
+                                  "resolved; use jig.cloud.resolve_api_key")
+            api_key = config.api_key
+        self._key = api_key or ""
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             headers=headers,
+            verify=ssl.create_default_context(cafile=config.ca_file) if config.ca_file else True,
             timeout=httpx.Timeout(
                 connect=config.connect_timeout_s,
                 read=config.read_timeout_s,
@@ -112,30 +146,48 @@ class ModelClient:
             ),
         )
 
+    def redact(self, text: str) -> str:
+        """Remove the API key, and any masked form of it a provider echoes back (``sk-abcd****wxyz``)."""
+        key = self._key
+        if not key or not text:
+            return text
+        text = text.replace(key, "[api key]")
+        if len(key) >= 16:
+            text = re.sub(re.escape(key[:8]) + r"[^\s\"',]*", "[api key]", text)
+        return text
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
     async def health(self) -> dict[str, Any]:
         """Query /v1/models, resolve the model name and confirm it is served. Fails loudly."""
+        provider = self.config.provider_info
         try:
-            r = await self._client.get("/models", timeout=self.config.connect_timeout_s)
+            r = await self._client.get("/models", params=provider.models_params if provider else None,
+                                       timeout=self.config.connect_timeout_s)
         except httpx.HTTPError as exc:
-            raise ModelServerUnavailable(
+            raise ModelServerUnavailable(self.redact(
                 f"{self.label} server at {self.config.base_url} is unreachable: {exc!r}"
-            ) from exc
+            )) from exc
         if r.status_code != 200:
-            raise ModelServerUnavailable(
-                f"{self.label} server {self.config.base_url}/models returned {r.status_code}: {r.text[:300]}"
-            )
+            hint = (" (the API key was refused: check it with 'jig model key status')"
+                    if r.status_code in (401, 403) and (self._key or self.config.location.is_cloud) else "")
+            raise ModelServerUnavailable(self.redact(
+                f"{self.label} server {self.config.base_url}/models returned {r.status_code}{hint}: {r.text[:300]}"
+            ))
         try:
             entries = r.json().get("data") or []
         except ValueError as exc:
             raise ModelServerUnavailable(f"{self.label} server /models did not return JSON") from exc
         by_name: dict[str, dict[str, Any]] = {}
+        prefixes = provider.model_id_prefixes if provider else ()
         for entry in entries:
             for name in [entry.get("id"), *(entry.get("aliases") or [])]:
                 if name:
                     by_name[name] = entry
+                    for prefix in prefixes:
+                        if name.startswith(prefix):
+                            by_name.setdefault(name[len(prefix):], entry)
         ids = sorted({e.get("id") for e in entries if e.get("id")})
         if self.config.name:
             if self.config.name not in by_name:
@@ -152,7 +204,8 @@ class ModelClient:
             )
         self.model_name = name
         entry = by_name[name]
-        self.server_info = {"model": name, "base_url": self.config.base_url, "context_tokens": _context_size(entry)}
+        self.server_info = {"model": name, "base_url": self.config.base_url, "context_tokens": _context_size(entry),
+                            "location": self.config.location.kind}
         return {"status": "ok", **self.server_info}
 
     def _require_name(self, model: str | None) -> str:
@@ -171,21 +224,43 @@ class ModelClient:
         max_tokens: int | None,
         response_schema: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        provider = self.config.provider_info
         body: dict[str, Any] = {
             **self.config.sampling,
             "model": self._require_name(model),
             "messages": messages,
             "stream": stream,
-            "max_tokens": max_tokens or self.config.max_tokens,
+            provider.max_tokens_field if provider else "max_tokens": max_tokens or self.config.max_tokens,
         }
         if tools:
             body["tools"] = tools
         if response_schema is not None:
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "response", "schema": response_schema, "strict": True},
-            }
+            if self.config.structured_output_mode == "tool_call":
+                if tools:
+                    raise ModelError(f"{self.label}: structured output as a tool call cannot be combined with tools")
+                # Not forced with tool_choice: current Claude models reject forced tool use (HTTP 400). The reply
+                # must be exactly this call, which _structured() checks.
+                body["messages"] = _with_instruction(messages, _RESPOND_INSTRUCTION)
+                body["tools"] = [{"type": "function", "function": {
+                    "name": RESPOND_TOOL, "description": "Give your answer. The arguments are the whole answer.",
+                    "parameters": response_schema}}]
+            else:
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "response", "schema": response_schema, "strict": True},
+                }
         return body
+
+    def _structured(self, result: ChatResult) -> ChatResult:
+        """In tool_call mode, the answer is the arguments of the one ``respond`` call; anything else is an error."""
+        calls = result.tool_calls
+        if len(calls) != 1 or calls[0].name != RESPOND_TOOL:
+            raise ModelError(
+                f"{self.label} did not answer with the single {RESPOND_TOOL!r} tool call that structured output "
+                f"needs (structured_output = \"tool_call\"); it sent {[c.name for c in calls]} and text "
+                f"{result.content[:200]!r}", body=result.content)
+        result.content, result.tool_calls = calls[0].arguments_raw, []
+        return result
 
     async def chat(
         self,
@@ -210,35 +285,44 @@ class ModelClient:
             else:
                 result = await self._stream(body, on_delta)
         except httpx.TimeoutException as exc:
-            raise ModelError(f"{self.label} request timed out: {exc!r}") from exc
+            raise ModelError(self.redact(f"{self.label} request timed out: {exc!r}")) from exc
         except httpx.HTTPError as exc:
-            raise ModelServerUnavailable(f"{self.label} request failed: {exc!r}") from exc
+            raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}")) from exc
         result.elapsed_s = time.perf_counter() - started
         if result.finish_reason == "length":
+            field_name = next(k for k in ("max_completion_tokens", "max_tokens") if k in body)
             raise ModelError(
-                f"{self.label} output was cut off at max_tokens ({body['max_tokens']}); "
+                f"{self.label} output was cut off at {field_name} ({body[field_name]}); "
                 "raise max_tokens or shorten the task"
             )
+        if response_schema is not None and self.config.structured_output_mode == "tool_call":
+            result = self._structured(result)
         return result
+
+    def _http_error(self, status: int, text: str) -> ModelError:
+        text = self.redact(text)
+        hint = " (the API key was refused: check it with 'jig model key status')" if status in (401, 403) else ""
+        return ModelError(f"{self.label} server returned HTTP {status}{hint}: {text[:500]}", status=status, body=text)
 
     async def _complete(self, body: dict[str, Any]) -> ChatResult:
         r = await self._client.post("/chat/completions", json=body)
         if r.status_code != 200:
-            raise ModelError(f"{self.label} server returned HTTP {r.status_code}: {r.text[:500]}",
-                             status=r.status_code, body=r.text)
+            raise self._http_error(r.status_code, r.text)
         data = r.json()
         choices = data.get("choices") or []
         if not choices:
-            raise ModelError(f"{self.label} response has no choices", body=r.text)
+            raise ModelError(f"{self.label} response has no choices", body=self.redact(r.text))
         msg = choices[0].get("message") or {}
         calls = [
             ToolCall(
                 id=tc.get("id") or f"call_{i}",
                 name=(tc.get("function") or {}).get("name", ""),
                 arguments_raw=_arguments_text((tc.get("function") or {}).get("arguments")),
+                extra={k: v for k, v in tc.items() if k not in _TOOL_CALL_KEYS},
             )
             for i, tc in enumerate(msg.get("tool_calls") or [])
         ]
+        details = msg.get("reasoning_details")
         return ChatResult(
             content=msg.get("content") or "",
             reasoning=_reasoning(msg),
@@ -246,29 +330,32 @@ class ModelClient:
             finish_reason=choices[0].get("finish_reason"),
             usage=data.get("usage") or {},
             timings=data.get("timings") or {},
+            reasoning_details=details if isinstance(details, list) else [],
+            extra_content=msg["extra_content"] if isinstance(msg.get("extra_content"), dict) else {},
         )
 
     async def _stream(self, body: dict[str, Any], on_delta: DeltaCallback) -> ChatResult:
         content: list[str] = []
         reasoning: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
+        details: list[dict[str, Any]] = []
+        extra_content: dict[str, Any] = {}
         finish_reason: str | None = None
         usage: dict[str, Any] = {}
         timings: dict[str, Any] = {}
         async with self._client.stream("POST", "/chat/completions", json=body) as r:
             if r.status_code != 200:
-                text = (await r.aread()).decode("utf-8", "replace")
-                raise ModelError(f"{self.label} server returned HTTP {r.status_code}: {text[:500]}",
-                                 status=r.status_code, body=text)
+                raise self._http_error(r.status_code, (await r.aread()).decode("utf-8", "replace"))
             async for line in self._sse_lines(r):
                 if line == "[DONE]":
                     break
                 try:
                     chunk = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise ModelError(f"Malformed stream chunk: {exc}", body=line) from exc
+                    raise ModelError(f"Malformed stream chunk: {exc}", body=self.redact(line)) from exc
                 if "error" in chunk:
-                    raise ModelError(f"{self.label} stream error: {chunk['error']}", body=line)
+                    raise ModelError(self.redact(f"{self.label} stream error: {chunk['error']}"),
+                                     body=self.redact(line))
                 usage = chunk.get("usage") or usage
                 timings = chunk.get("timings") or timings
                 for choice in chunk.get("choices") or []:
@@ -279,8 +366,12 @@ class ModelClient:
                     if text := delta.get("content"):
                         content.append(text)
                         await on_delta("content", text)
+                    if isinstance(delta.get("reasoning_details"), list):
+                        _merge_details(details, delta["reasoning_details"])
+                    if isinstance(delta.get("extra_content"), dict):
+                        extra_content.update(delta["extra_content"])
                     for pos, tc in enumerate(delta.get("tool_calls") or []):
-                        slot = calls.setdefault(tc.get("index", pos), {"id": "", "name": "", "args": []})
+                        slot = calls.setdefault(tc.get("index", pos), {"id": "", "name": "", "args": [], "extra": {}})
                         if tc.get("id"):
                             slot["id"] = tc["id"]
                         fn = tc.get("function") or {}
@@ -288,10 +379,11 @@ class ModelClient:
                             slot["name"] += fn["name"]
                         if fn.get("arguments"):
                             slot["args"].append(_arguments_text(fn["arguments"]))
+                        slot["extra"].update({k: v for k, v in tc.items() if k not in _TOOL_CALL_KEYS})
                     if choice.get("finish_reason"):
                         finish_reason = choice["finish_reason"]
         tool_calls = [
-            ToolCall(id=s["id"] or f"call_{i}", name=s["name"], arguments_raw="".join(s["args"]))
+            ToolCall(id=s["id"] or f"call_{i}", name=s["name"], arguments_raw="".join(s["args"]), extra=s["extra"])
             for i, s in sorted(calls.items())
         ]
         return ChatResult(
@@ -301,6 +393,8 @@ class ModelClient:
             finish_reason=finish_reason,
             usage=usage,
             timings=timings,
+            reasoning_details=details,
+            extra_content=extra_content,
         )
 
     @staticmethod
@@ -359,9 +453,9 @@ class ModelClient:
         try:
             result = await self.chat(messages, response_schema=schema)
         except ModelError as exc:
-            raise ModelCapabilityError(
-                f"{problem}: the server rejected or failed a JSON-schema response_format request: {exc}"
-            ) from exc
+            how = ("a structured answer as a tool call" if self.config.structured_output_mode == "tool_call"
+                   else "a JSON-schema response_format request")
+            raise ModelCapabilityError(f"{problem}: the server rejected or failed {how}: {exc}") from exc
         try:
             data = json.loads(result.content)
         except json.JSONDecodeError as exc:
@@ -369,6 +463,30 @@ class ModelClient:
         if not isinstance(data, dict) or data.get("answer") != 5:
             raise ModelCapabilityError(f"{problem}: unexpected output {result.content[:200]!r}")
         return {"structured_output": True, "elapsed_s": round(result.elapsed_s, 2)}
+
+
+def _with_instruction(messages: list[dict[str, Any]], instruction: str) -> list[dict[str, Any]]:
+    """Add an instruction to the leading system message (some chat templates allow only one, at the start)."""
+    if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+        return [{**messages[0], "content": f"{messages[0]['content']}\n\n{instruction}"}, *messages[1:]]
+    return [{"role": "system", "content": instruction}, *messages]
+
+
+def _merge_details(details: list[dict[str, Any]], chunk: list[Any]) -> None:
+    """Merge streamed reasoning_details by ``index``: text pieces are joined, other fields kept as last sent."""
+    for part in chunk:
+        if not isinstance(part, dict):
+            continue
+        index = part.get("index")
+        slot = next((d for d in details if index is not None and d.get("index") == index), None)
+        if slot is None:
+            details.append(dict(part))
+            continue
+        for key, value in part.items():
+            if key in ("text", "summary", "data") and isinstance(value, str) and isinstance(slot.get(key), str):
+                slot[key] += value
+            elif value is not None:
+                slot[key] = value
 
 
 def _arguments_text(value: Any) -> str:
