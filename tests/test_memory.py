@@ -52,6 +52,38 @@ async def test_every_memory_change_is_published(jig, events):
     assert changes == [(memory_id, "added"), (memory_id, "edited"), (memory_id, "forgotten")]
 
 
+async def test_conversations_and_tasks_are_given_the_saved_memories(jig):
+    """A saved preference must shape an everyday request in a new conversation, without the model having to
+    think of searching for it; edits and forgets apply to the next conversation."""
+    assert "What you remember about the user" not in jig._system_prompt(Mode.ACTION)
+
+    older = jig.memory.add("Robyn cycles to work")
+    vegan = jig.memory.add("Robyn is   vegetarian")
+    prompt = jig._system_prompt(Mode.ACTION)
+    assert "What you remember about the user" in prompt
+    assert prompt.index("- Robyn is vegetarian") < prompt.index("- Robyn cycles to work")
+    assert "- Robyn cycles to work" in jig._system_prompt(Mode.RESEARCH)
+
+    jig.memory.edit(vegan["id"], content="Robyn is vegan")
+    assert "- Robyn is vegan" in jig._system_prompt(Mode.ACTION)
+    assert "vegetarian" not in jig._system_prompt(Mode.ACTION)
+
+    jig.memory.forget(vegan["id"])
+    jig.memory.forget(older["id"])
+    assert "What you remember about the user" not in jig._system_prompt(Mode.ACTION)
+
+
+def test_memory_prompt_is_bounded():
+    from jig.agent.prompts import memory_prompt
+
+    long = memory_prompt([{"content": "x" * 2000}])
+    assert long.endswith("- " + "x" * 500 + "…")
+    many = memory_prompt([{"content": f"fact {i} " + "y" * 400} for i in range(100)])
+    assert 10 <= many.count("\n- ") < 20
+    assert "fact 0 " in many and "fact 99 " not in many
+    assert memory_prompt([]) == ""
+
+
 async def test_memory_search_is_injection_safe(jig):
     jig.memory.add("The cat is called Biscuit")
     assert jig.memory.search('Biscuit" OR content:*') [0]["content"] == "The cat is called Biscuit"

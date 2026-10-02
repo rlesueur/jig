@@ -9,7 +9,7 @@ from typing import Any
 
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
-from .agent.prompts import agent_system_prompt
+from .agent.prompts import MEMORY_PROMPT_LIMIT, agent_system_prompt, memory_prompt
 from .audit import AuditLog
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -105,6 +105,10 @@ class Jig:
     def connection(self) -> dict[str, Any]:
         """Where the agent and the safety checker run (local or cloud), for /status and the audit log."""
         return connection_summary(self.config, self.audit)
+
+    def _system_prompt(self, mode: Mode) -> str:
+        return (agent_system_prompt(mode, self.config.runtime.timezone)
+                + memory_prompt(self.memory.list(limit=MEMORY_PROMPT_LIMIT)))
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -395,7 +399,7 @@ class Jig:
         else:
             if previous:
                 self.store.finish_run(previous["id"], status=RunStatus.FAILED, error="interrupted before any step")
-            messages = [{"role": "system", "content": agent_system_prompt(mode, self.config.runtime.timezone)},
+            messages = [{"role": "system", "content": self._system_prompt(mode)},
                         {"role": "user", "content": prompt}]
             run_id, resume = None, False
 
@@ -464,7 +468,7 @@ class Jig:
             history = self.store.get_session(session_id)
         except NotFound:
             history = []
-        messages = [{"role": "system", "content": agent_system_prompt(mode, self.config.runtime.timezone)},
+        messages = [{"role": "system", "content": self._system_prompt(mode)},
                     *history, {"role": "user", "content": message}]
         run_id = self.store.create_run(kind="chat", mode=mode, session_id=session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
