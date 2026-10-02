@@ -126,15 +126,13 @@ GUIDES: dict[str, dict[str, Any]] = {
         "summary": "Send yourself (and, if you allow it, receive) Signal messages, through signal-cli linked to "
                    "your phone like Signal Desktop.",
         "steps": [
-            _step("Install Java 21 or newer, then download signal-cli and unpack it into a folder in your user "
-                  "profile.", ("https://github.com/AsamK/signal-cli/releases", "Download signal-cli")),
-            _step("Link it to your phone. This one step needs a terminal: run signal-cli link -n Jig, turn the "
-                  "sgnl:// link it prints into a QR code, and scan it in Signal on your phone (Settings > "
-                  "Linked devices > Link new device).",
-                  ("https://github.com/AsamK/signal-cli/wiki/Linking-other-devices-(Provisioning)",
-                  "How to link")),
-            _step("Type your number (like +447700900123) and where signal-cli is (the signal-cli.bat file in its "
-                  "bin folder), and choose Connect. Jig checks that it works before saving anything."),
+            _step("Get signal-cli, which needs Java 25 or newer. In Set up step by step, Jig can download both for "
+                  "you (signal-cli from its GitHub release, Java from Eclipse Temurin), or you can install them "
+                  "yourself.", ("https://github.com/AsamK/signal-cli/releases", "Download signal-cli")),
+            _step("Link it to your phone: Jig shows a QR code; in Signal on your phone, open Settings > Linked "
+                  "devices > Link new device and scan it. Jig says when it's linked."),
+            _step("Choose what Jig may do and Connect. Jig fills in your number and where signal-cli is, and "
+                  "checks that it works before saving anything."),
         ],
     },
 }

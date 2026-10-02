@@ -12,6 +12,9 @@
 let h = null; // helpers from app.js: el, api, act, showError, reload
 const view = { provider: null, key: '', avatar: null, node: null };
 const PROJECT_KEY = 'jig.google.project';
+// Signal: GET /connections/signal/setup (what's installed, the download, the link and its QR code), polled
+// while a download or a link is under way. Kept in memory only: the link's QR code is never stored.
+const signalSetup = { status: null, seen: '', timer: 0, loading: false };
 
 export function initWalkthrough(helpers) {
   h = helpers;
@@ -115,12 +118,155 @@ function accessSelect(row) {
     Object.entries(row.access_levels).map(([k, v]) => h.el('option', { value: k, selected: k === (row.access || row.default_access), text: `${k}: ${v.description}` }))));
 }
 
+/* ---------- Signal: download signal-cli, and link it with a QR code ---------- */
+
+const mb = (n) => `${Math.round(n / 1048576)} MB`;
+const signalBusy = (st) => Boolean(st && ((st.download && st.download.status === 'running')
+  || (st.link && ['starting', 'waiting'].includes(st.link.status))));
+
+async function refreshSignal(row) {
+  if (signalSetup.loading) return;
+  signalSetup.loading = true;
+  clearTimeout(signalSetup.timer);
+  signalSetup.timer = 0;
+  try {
+    signalSetup.status = await h.api('/connections/signal/setup');
+  } catch (err) {
+    signalSetup.status = { error: apiMessage(err) };
+  } finally {
+    signalSetup.loading = false;
+  }
+  const st = signalSetup.status;
+  const s = load(row.provider);
+  const install = row.walkthrough.find((x) => x.action.type === 'signal_install');
+  const link = row.walkthrough.find((x) => x.action.type === 'signal_link');
+  if (st.download && st.download.status === 'done' && install && !(s.results[install.id] && s.results[install.id].ok)) {
+    await runCheck(row, install, 'signal_cli', { signal_cli: st.download.signal_cli }, null);
+  }
+  if (st.link && st.link.status === 'linked' && link && !s.done[link.id]) {
+    s.results[link.id] = { ok: true, say: `Linked to ${st.link.number}.`, number: st.link.number };
+    s.done[link.id] = true;
+    save(row.provider, s);
+    setAvatar('success');
+  }
+  if (signalBusy(st) && view.node && view.node.isConnected && view.provider === row.provider) {
+    signalSetup.timer = setTimeout(() => refreshSignal(row), 1500);
+  }
+  const seen = JSON.stringify(st);
+  if (seen !== signalSetup.seen && view.provider === row.provider) {
+    signalSetup.seen = seen;
+    render(row, true);
+  }
+}
+
+function signalFound(st) {
+  const el = h.el;
+  const java = st.java || {};
+  const cli = st.signal_cli || {};
+  const javaText = java.ok
+    ? `Java ${java.version}${java.managed ? ', downloaded by Jig' : ''}: ready.`
+    : java.older && java.older.length
+      ? `Only older Java here (Java ${java.older.map((o) => o.version).join(', ')}). signal-cli needs Java ${java.needed} or newer.`
+      : `No Java here yet. signal-cli needs Java ${java.needed} or newer.`;
+  const cliText = cli.path ? `signal-cli${cli.managed ? ', downloaded by Jig' : ''}: ${cli.path}` : 'No signal-cli here yet.';
+  return el('ul', { class: 'walk-found', 'data-testid': 'walkthrough-signal-found' },
+    el('li', { class: java.ok ? 'ok' : 'missing', text: javaText }),
+    el('li', { class: cli.path ? 'ok' : 'missing', text: cliText }));
+}
+
+function signalInstallNode(row, step, s) {
+  const el = h.el;
+  const a = step.action;
+  const st = signalSetup.status;
+  if (!st && !signalSetup.loading) queueMicrotask(() => refreshSignal(row));
+  if (!st) return el('div', { class: 'walk-action' }, el('p', { class: 'hint-quiet', role: 'status', text: 'Looking for Java and signal-cli\u2026' }));
+  if (st.error) return el('div', { class: 'walk-action' }, el('p', { class: 'walk-result not-yet', role: 'status', text: st.error }));
+  const dl = st.download || {};
+  const checked = s.results[step.id];
+  const parts = [signalFound(st)];
+  if (dl.status === 'running') {
+    const pct = dl.total_bytes ? Math.round((dl.done_bytes / dl.total_bytes) * 100) : 0;
+    const bar = el('div', { class: 'walk-progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': 'Download' }, el('span'));
+    bar.firstChild.style.width = `${pct}%`;
+    parts.push(el('div', { class: 'walk-download', 'data-testid': 'walkthrough-signal-download' },
+      el('p', { role: 'status', text: `${dl.step}\u2026${dl.total_bytes ? ` ${mb(dl.done_bytes)} of ${mb(dl.total_bytes)}` : ''}` }), bar));
+  } else if (!(checked && checked.ok)) {
+    if (dl.status === 'failed') parts.push(el('p', { class: 'walk-result not-yet', role: 'status', 'data-testid': 'walkthrough-result', text: `The download didn\u2019t work: ${dl.error}` }));
+    const found = Boolean(st.signal_cli && st.signal_cli.path);
+    parts.push(el('div', { class: 'row wrap' },
+      found ? el('button', {
+        type: 'button', class: 'btn btn-primary', 'data-testid': 'walkthrough-signal-use-found', text: 'Use the one I found',
+        onclick: (e) => runCheck(row, step, a.check, { signal_cli: st.signal_cli.path }, e.currentTarget),
+      }) : null,
+      el('button', {
+        type: 'button', class: `btn${found ? '' : ' btn-primary'}`, 'data-testid': 'walkthrough-signal-download-start', text: dl.status === 'failed' ? 'Try the download again' : 'Download for me',
+        onclick: async (e) => {
+          const out = await h.act(e.currentTarget, () => h.api('/connections/signal/setup/download', { method: 'POST', body: { confirm: true } }));
+          if (!out) return;
+          setAvatar('working');
+          await refreshSignal(row);
+        },
+      })));
+  }
+  if (checked) parts.push(result(checked, 'walkthrough-result'));
+  const input = el('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: a.input.placeholder || '', value: (checked && checked[a.input.name]) || '', 'data-testid': `walkthrough-input-${a.input.name}` });
+  const own = el('form', { class: 'form', autocomplete: 'off' },
+    el('div', { class: 'row wrap' }, el('label', {}, a.input.prompt, input), el('button', { type: 'submit', class: 'btn', 'data-testid': 'walkthrough-check', text: 'Check' })));
+  own.addEventListener('submit', (e) => { e.preventDefault(); runCheck(row, step, a.check, { [a.input.name]: input.value }, own.querySelector('button')); });
+  if (!(checked && checked.ok)) parts.push(el('details', { class: 'advanced' }, el('summary', { text: 'I have my own signal-cli' }), own));
+  if (signalBusy(st) && !signalSetup.timer && !signalSetup.loading) queueMicrotask(() => refreshSignal(row));
+  return el('div', { class: 'walk-action' }, parts);
+}
+
+function signalLinkNode(row, step, s) {
+  const el = h.el;
+  const installed = Object.values(s.results).find((r) => r && r.ok && r.signal_cli);
+  if (!installed) return el('div', { class: 'walk-action' }, el('p', { class: 'walk-result not-yet', text: 'Get signal-cli first (the step before), then come back here.' }));
+  const st = signalSetup.status;
+  if (!st && !signalSetup.loading) queueMicrotask(() => refreshSignal(row));
+  if (signalBusy(st) && !signalSetup.timer && !signalSetup.loading) queueMicrotask(() => refreshSignal(row));
+  const link = (st && st.link) || { status: 'idle' };
+  const show = (label, primary = true) => el('button', {
+    type: 'button', class: `btn${primary ? ' btn-primary' : ''}`, 'data-testid': 'walkthrough-signal-link-start', text: label,
+    onclick: async (e) => {
+      const out = await h.act(e.currentTarget, () => h.api('/connections/signal/setup/link', { method: 'POST', body: { confirm: true, signal_cli: installed.signal_cli } }));
+      if (!out) return;
+      setAvatar('thinking');
+      await refreshSignal(row);
+    },
+  });
+  if (s.done[step.id] && s.results[step.id]) {
+    return el('div', { class: 'walk-action' }, el('p', { class: 'walk-result ok', role: 'status', 'data-testid': 'walkthrough-signal-linked', text: `${s.results[step.id].say} On to the last step.` }));
+  }
+  if (link.status === 'starting') {
+    return el('div', { class: 'walk-action' }, el('p', { class: 'hint-quiet', role: 'status', 'data-testid': 'walkthrough-signal-starting', text: link.codes ? 'That code ran out, so I\u2019m getting a fresh one\u2026' : 'Starting signal-cli and asking Signal for a code\u2026' }));
+  }
+  if (link.status === 'waiting') {
+    return el('div', { class: 'walk-action walk-qr', 'data-testid': 'walkthrough-signal-waiting' },
+      el('img', { class: 'qr', src: link.qr, alt: 'QR code to link Jig in Signal on your phone', width: '240', height: '240', 'data-testid': 'walkthrough-signal-qr' }),
+      el('div', { class: 'walk-qr-side' },
+        el('p', { class: 'walk-qr-title', text: 'Scan this with Signal on your phone' }),
+        el('p', { text: 'Settings > Linked devices > Link new device, then point the camera here.' }),
+        el('p', { class: 'hint-quiet', role: 'status', text: 'Waiting for your phone\u2026 This page updates by itself, and shows a fresh code every couple of minutes.' }),
+        el('button', {
+          type: 'button', class: 'btn btn-small', 'data-testid': 'walkthrough-signal-link-stop', text: 'Stop',
+          onclick: async (e) => { await h.act(e.currentTarget, () => h.api('/connections/signal/setup/link/cancel', { method: 'POST', body: { confirm: true } })); await refreshSignal(row); },
+        })));
+  }
+  const parts = [];
+  if (link.status === 'failed' || link.status === 'expired') parts.push(el('p', { class: 'walk-result not-yet', role: 'status', 'data-testid': 'walkthrough-result', text: link.error }));
+  parts.push(el('div', { class: 'row wrap' }, show(['failed', 'expired', 'cancelled'].includes(link.status) ? 'Make a new code' : 'Show the code')));
+  return el('div', { class: 'walk-action' }, parts);
+}
+
 /* ---------- one control per kind of step ---------- */
 
 function actionNode(row, step, s, steps) {
   const a = step.action;
   const el = h.el;
   if (a.type === 'next') return null;
+  if (a.type === 'signal_install') return signalInstallNode(row, step, s);
+  if (a.type === 'signal_link') return signalLinkNode(row, step, s);
 
   if (a.type === 'done') {
     const command = a.command ? a.command.replace('{signal_cli}', (s.results.install && s.results.install.signal_cli) || 'C:\\path\\to\\signal-cli.bat') : null;
@@ -229,7 +375,7 @@ function actionNode(row, step, s, steps) {
     if (row.connected && s.done[step.id]) {
       return el('div', { class: 'walk-action' }, el('p', { class: 'walk-result ok', role: 'status', 'data-testid': 'walkthrough-connected', text: `Connected as ${row.account}, with \u2018${row.access}\u2019 access.` }));
     }
-    const known = { ...(s.results.server || {}), ...(s.results.install || {}) };
+    const known = { ...(s.results.server || {}), ...(s.results.install || {}), ...(s.results.link || {}) };
     const access = accessSelect(row);
     const form = el('form', { class: 'form walk-action', autocomplete: 'off', 'data-testid': 'walkthrough-token-form' },
       el('div', { class: 'row wrap' }, row.inputs.map((i) => field(i, known[i.name]))),

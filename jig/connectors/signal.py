@@ -131,14 +131,17 @@ async def _kill(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
-async def run(command: list[str], *, stdin: bytes | None = None, timeout: float = CHECK_TIMEOUT_S) -> str:
+async def run(command: list[str], *, stdin: bytes | None = None, timeout: float = CHECK_TIMEOUT_S,
+              env: dict[str, str] | None = None) -> str:
     """Run signal-cli and return its standard output. A failure, a timeout or a missing program raises
-    ConnectorError with signal-cli's own error text."""
+    ConnectorError with signal-cli's own error text. It runs with the Java 25 Jig finds (signal_setup.launch)."""
+    from .signal_setup import launch
+    command, env = await launch(command, env=env)
     async with _lock():
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command, stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=_env())
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
         except OSError as exc:
             raise ConnectorError(f"could not start {command[0]}: {exc}") from None
         try:
@@ -165,9 +168,9 @@ async def check_binary(path: str) -> tuple[str, str]:
     return binary, version
 
 
-async def check_account(binary: str, number: str) -> None:
+async def check_account(binary: str, number: str, *, env: dict[str, str] | None = None) -> None:
     """The number is an account signal-cli has on this computer, and Signal's servers accept it."""
-    raw = await run(argv(binary, "-o", "json", "listAccounts"))
+    raw = await run(argv(binary, "-o", "json", "listAccounts"), env=env)
     try:
         accounts = [a.get("number") for a in json.loads(raw or "[]")]
     except (ValueError, AttributeError, TypeError):
@@ -175,9 +178,9 @@ async def check_account(binary: str, number: str) -> None:
             from None
     if number not in accounts:
         raise ConnectorError(f"signal-cli on this computer has no account for {number} (it has {accounts or 'none'}). "
-                             f"Link it first: '{binary} link -n Jig', then scan the code in Signal > Settings > "
-                             "Linked devices")
-    await run(argv(binary, "-a", number, "-o", "json", "listDevices"))
+                             "Link it to your phone first: Settings > Connections > Signal > Set up step by step "
+                             "shows a code to scan in Signal > Settings > Linked devices")
+    await run(argv(binary, "-a", number, "-o", "json", "listDevices"), env=env)
 
 
 async def _connect(http: httpx.AsyncClient, store: ConnectionStore, level: AccessLevel,
@@ -186,8 +189,9 @@ async def _connect(http: httpx.AsyncClient, store: ConnectionStore, level: Acces
         number = e164(values["number"], "number")
     except ToolArgumentError as exc:
         raise ConnectorError(f"{exc}; nothing was connected") from None
+    from .signal_setup import check_ready
     try:
-        binary, version = await check_binary(values["signal_cli"])
+        binary, version = await check_ready(values["signal_cli"])
         await check_account(binary, number)
     except ConnectorError as exc:
         raise ConnectorError(f"{exc}; nothing was connected") from None

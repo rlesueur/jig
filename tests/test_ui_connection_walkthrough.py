@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -192,6 +194,8 @@ def test_discord_matrix_and_signal_checks_ask_the_real_services(server, browser,
         snap(page, shots, "matrix-2-sign-in")
 
         open_walkthrough(page, base, "signal")
+        page.get_by_test_id("walkthrough-signal-found").wait_for(timeout=30_000)
+        page.locator(f"{W} details summary", has_text="I have my own signal-cli").click()
         page.get_by_test_id("walkthrough-input-signal_cli").fill(str(tmp_path / "signal-cli" / "bin" / "signal-cli.bat"))
         page.get_by_test_id("walkthrough-check").click()
         page.wait_for_function("() => document.querySelector('.walk-result.not-yet')", timeout=30_000)
@@ -236,6 +240,97 @@ def test_github_shows_its_sign_in_code_big_and_microsoft_is_one_click(server, br
         snap(page, shots, "github-2-code")
     finally:
         context.close()
+
+
+SIGNAL_TOOLS = os.environ.get("JIG_TEST_SIGNAL_TOOLS", "")
+
+
+def own_jig(tmp_path, tools: str | None = None):
+    """A Jig of its own; with ``tools``, its data folder's tools folder is that one (a junction)."""
+    data = tmp_path / "data"
+    data.mkdir(parents=True)
+    if tools:
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(data / "tools"), tools], check=True, capture_output=True)
+    port = free_port()
+    # signal-cli keeps its accounts in XDG_DATA_HOME: a temporary folder, never the profile's own.
+    proc, log = start_jig(data, port, env={"JIG_SANDBOX_DIR": str(tmp_path / "sandbox"),
+                                           "XDG_DATA_HOME": str(tmp_path / "signal-cli-data")})
+    wait_health(port, proc=proc, log=log)
+    return proc, (data, f"http://127.0.0.1:{port}")
+
+
+@pytest.mark.skipif(not SIGNAL_TOOLS or sys.platform != "win32",
+                    reason="set JIG_TEST_SIGNAL_TOOLS to a folder with java/ and signal-cli/ (Windows)")
+def test_signal_links_with_a_qr_code_shown_in_jig(browser, shots, tmp_path):
+    """Jig finds its Java and signal-cli, runs signal-cli's link step and shows the link as a QR code with the
+    steps for the phone. Never scanned: the test stops the link, and Jig offers a new code."""
+    proc, server = own_jig(tmp_path, SIGNAL_TOOLS)
+    data, base = server
+    context, page = signed_in(browser, server)
+    try:
+        open_walkthrough(page, base, "signal")
+        found = page.get_by_test_id("walkthrough-signal-found")
+        found.wait_for(timeout=60_000)
+        assert "Java 25" in found.inner_text() and "downloaded by Jig: ready" in found.inner_text()
+        assert page.get_by_test_id("walkthrough-next").is_disabled()
+        snap(page, shots, "signal-1-found")
+        page.get_by_test_id("walkthrough-signal-use-found").click()
+        page.wait_for_function("() => document.querySelector('.walk-result.ok')", timeout=60_000)
+        assert page.get_by_test_id("walkthrough-result").inner_text().startswith("signal-cli runs (signal-cli 0.")
+        page.get_by_test_id("walkthrough-next").click()
+        assert step(page) == "link" and page.get_by_test_id("walkthrough-next").is_disabled()
+        snap(page, shots, "signal-2-link")
+
+        page.get_by_test_id("walkthrough-signal-link-start").click()
+        qr = page.get_by_test_id("walkthrough-signal-qr")
+        qr.wait_for(timeout=90_000)
+        uri = httpx.get(f"{base}/connections/signal/setup", headers=token(data), timeout=30).json()["link"]["uri"]
+        assert re.fullmatch(r"sgnl://linkdevice\?uuid=[^&]+&pub_key=\S+", uri)
+        assert qr.get_attribute("src").startswith("data:image/svg+xml")
+        assert page.evaluate("() => document.querySelector('[data-testid=walkthrough-signal-qr]').naturalWidth") > 0
+        assert "Settings > Linked devices > Link new device" in page.locator(W).inner_text()
+        snap(page, shots, "signal-3-qr")
+        (shots / "signal-3-qr-uri.txt").write_text(uri, encoding="utf-8")
+
+        page.get_by_test_id("walkthrough-signal-link-stop").click()
+        page.get_by_test_id("walkthrough-signal-link-start").wait_for(timeout=30_000)
+        assert page.get_by_test_id("walkthrough-signal-link-start").inner_text() == "Make a new code"
+        assert httpx.get(f"{base}/connections/signal/setup", headers=token(data),
+                         timeout=30).json()["link"] == {"status": "cancelled"}
+        snap(page, shots, "signal-4-stopped")
+    finally:
+        context.close()
+        kill(proc)
+
+
+@pytest.mark.network
+@pytest.mark.skipif(os.environ.get("JIG_TEST_SIGNAL_DOWNLOAD") != "1",
+                    reason="set JIG_TEST_SIGNAL_DOWNLOAD=1 to download signal-cli and Java (about 180 MB)")
+def test_signal_download_for_me_gets_signal_cli_ready(browser, shots, tmp_path):
+    proc, server = own_jig(tmp_path)
+    data, base = server
+    context, page = signed_in(browser, server)
+    try:
+        open_walkthrough(page, base, "signal")
+        page.get_by_test_id("walkthrough-signal-found").wait_for(timeout=60_000)
+        snap(page, shots, "signal-0-nothing-yet")
+        page.get_by_test_id("walkthrough-signal-download-start").click()
+        progress = page.get_by_test_id("walkthrough-signal-download")
+        progress.wait_for(timeout=30_000)
+        page.wait_for_function("() => /Downloading .* \\d+ MB of \\d+ MB/.test(document.querySelector("
+                               "'[data-testid=walkthrough-signal-download]')?.textContent || '')", timeout=60_000)
+        snap(page, shots, "signal-0-downloading")
+        page.wait_for_function("() => document.querySelector('.walk-result.ok')", timeout=900_000)
+        assert page.get_by_test_id("walkthrough-result").inner_text().startswith("signal-cli runs (signal-cli 0.")
+        assert "downloaded by Jig" in page.get_by_test_id("walkthrough-signal-found").inner_text()
+        assert page.get_by_test_id("walkthrough-next").is_enabled()
+        snap(page, shots, "signal-0-downloaded")
+        kinds = [r["data"]["what"] for r in httpx.get(f"{base}/audit", params={"kind": "connector.signal_download"},
+                                                      headers=token(data), timeout=30).json()]
+        assert "signal-cli" in kinds
+    finally:
+        context.close()
+        kill(proc)
 
 
 def test_a_chat_link_opens_the_walkthrough_in_the_same_tab(server, browser):

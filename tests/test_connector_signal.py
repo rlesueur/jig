@@ -6,13 +6,15 @@ test_connector_signal_live.py."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
 from jig.config import ConnectorLimits
-from jig.connectors import PROVIDERS, connect, signal
+from jig.connectors import PROVIDERS, connect, signal, signal_setup
 from jig.connectors.base import Connectors, Grant, grant_secret
 from jig.constants import Mode
 from jig.errors import ConnectorError, ToolArgumentError
@@ -28,9 +30,17 @@ TOOLS = {"signal_send_message", "signal_receive"}
 OWN = "+447700900123"
 OTHER = "+447700900456"
 BAT = r"C:\signal-cli\bin\signal-cli.bat"
-INSTALLED = shutil.which("signal-cli")
+INSTALLED = shutil.which("signal-cli") or (os.environ.get("JIG_TEST_SIGNAL_TOOLS") and signal_setup.managed_signal_cli(
+    Path(os.environ["JIG_TEST_SIGNAL_TOOLS"])))
 needs_signal_cli = pytest.mark.skipif(not INSTALLED, reason="signal-cli is not installed on this computer (not on "
-                                      "PATH); install it to run this test (docs/connectors-setup.md)")
+                                      "PATH, and no JIG_TEST_SIGNAL_TOOLS); install it to run this test "
+                                      "(docs/connectors-setup.md)")
+
+
+@pytest.fixture(autouse=True)
+def signal_cli_data(tmp_path, monkeypatch):
+    """signal-cli keeps its accounts in XDG_DATA_HOME: a temporary folder, never the profile's own."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "signal-cli-data"))
 LIMITS = type("C", (), {"connectors": {"signal": ConnectorLimits(allowed_targets=[OWN],
                                                                  required_prefix="[Jig test]")}})()
 
@@ -65,7 +75,7 @@ def test_tools_are_offered_only_with_the_matching_access(jig):
 
 
 # The program --------------------------------------------------------------------------------------------------
-@pytest.mark.skipif(bool(INSTALLED), reason="signal-cli is installed here, so it can't be 'not found'")
+@pytest.mark.skipif(bool(shutil.which("signal-cli")), reason="signal-cli is on PATH here, so it can't be 'not found'")
 def test_signal_cli_not_installed_is_a_clear_error():
     with pytest.raises(ConnectorError, match="signal-cli was not found: 'signal-cli' is not a program"):
         signal.find_binary("signal-cli")

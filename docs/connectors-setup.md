@@ -14,7 +14,7 @@ How much setup each one needs:
 - **Google (Gmail, Calendar, Drive): a one-off setup first.** You make your own small, free Google app, then sign in. The steps are below and in Settings. A shared Google app, checked by Google, so that nobody has to do this, is being looked into for after launch.
 - **Slack and Discord:** you add a Jig bot to your own workspace or server, and paste its token.
 - **Matrix:** your own account, with your password (once) or a token.
-- **Signal:** signal-cli linked to your phone; linking needs one command in a terminal.
+- **Signal:** signal-cli linked to your phone. Jig can download signal-cli (and Java, if needed) for you, and shows the QR code to scan in Signal on your phone.
 
 ## Status
 
@@ -455,10 +455,15 @@ Jig sends (and, if you allow it, receives) Signal messages through [signal-cli](
 
 **What Jig stores.** Nothing secret: only your number and the path to signal-cli. signal-cli keeps the linked device's keys in its own data folder (by default `%USERPROFILE%\.local\share\signal-cli`), outside Jig's vault. Anyone who can read that folder can use your Signal account as that device, so keep it in your user profile only.
 
-1. Install Java 21 or newer (for example the Microsoft Build of OpenJDK or Eclipse Temurin) for your user only, and check that `java -version` works in a new PowerShell window.
-2. Download the latest `signal-cli-<version>.tar.gz` from [its releases](https://github.com/AsamK/signal-cli/releases) and unpack it into a folder in your profile, for example `C:\Users\you\signal-cli`. The program is `bin\signal-cli.bat`.
-3. Link it to your phone: run `C:\Users\you\signal-cli\bin\signal-cli.bat link -n Jig`. It prints a `sgnl://linkdevice?...` link; turn it into a QR code (signal-cli's [linking guide](https://github.com/AsamK/signal-cli/wiki/Linking-other-devices-(Provisioning)) shows how) and scan it in Signal on your phone: **Settings > Linked devices > Link new device**. Check it with `signal-cli.bat listAccounts`.
-4. Connect: in Settings > Connections, under Signal, type your number and where `signal-cli.bat` is, and choose **Connect**. Or:
+Everything happens in **Settings > Connections > Signal > Set up step by step**, with no terminal:
+
+1. **Get signal-cli.** signal-cli 0.14 needs Java 25 or newer. Jig looks for both (in `JAVA_HOME`, on `PATH` and in the usual install folders, so a Java you install while Jig is running is found too) and says what it found. **Download for me** gets signal-cli from [its official GitHub release](https://github.com/AsamK/signal-cli/releases) and, if this computer has no Java 25, the Eclipse Temurin Java runtime from [Adoptium](https://adoptium.net/temurin/releases/?version=25&package=jre). Jig checks each file against the SHA-256 checksum its publisher lists (GitHub's for signal-cli, Adoptium's for Java) and deletes it if it doesn't match. Both go in the `tools` folder of Jig's data folder and are used only by Jig. They are about 120 MB and 60 MB, and neither is part of Jig or its installer: signal-cli is GPL-3.0, and Temurin is GPL-2.0 with the Classpath Exception; both are free. The history records each download with its source and checksum (`connector.signal_download`). If you'd rather install them yourself, install Java 25 or newer (Eclipse Temurin is the simplest free one; its Windows `.msi` installer adds Java to `PATH`), unpack `signal-cli-<version>.tar.gz` into a folder in your profile, and choose **Use the one I found** or type where `bin\signal-cli.bat` is.
+2. **Link it to your phone.** Choose **Show the code**: Jig runs signal-cli's link step (`signal-cli link -n Jig`) and shows the `sgnl://linkdevice` link it prints as a QR code, made on your computer. In Signal on your phone, open **Settings > Linked devices > Link new device** and scan it. signal-cli drops an unscanned code after about two minutes, so Jig shows a fresh one by itself, for up to 10 minutes. When signal-cli reports the number it linked, Jig checks that signal-cli now has that account and says so.
+3. **Connect.** Choose what Jig may do and **Connect**: Jig has filled in your number and where signal-cli is.
+
+Jig starts signal-cli's Java itself, with the classpath and options from signal-cli's Windows start script: run through `cmd.exe`, the script's one long line goes over cmd's 8191-character limit when signal-cli is in a long folder path (such as Jig's data folder for many user names).
+
+You can also connect from a terminal, once signal-cli is linked:
 
    ```powershell
    .\.venv\Scripts\jig connect signal --option number=+447700900123 --option signal_cli=C:\Users\you\signal-cli\bin\signal-cli.bat

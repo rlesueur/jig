@@ -20,6 +20,8 @@ A step's ``action`` tells the page what to show:
   check         a non-secret value to type (``input``) and a check (``check``) to run on it
   pick          a list of channels or rooms found with the connected account; picking one reads it
   try           a final read with the connected account, in plain words
+  signal_install  what Jig found (Java, signal-cli), "Download for me" with progress, or a path to check
+  signal_link   Jig runs signal-cli's link step and shows its link as a QR code until the phone has scanned it
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ import httpx
 
 from ..constants import Effect, Mode, ToolCategory
 from ..errors import ConnectorError, ConnectorNotConnected, JigError
-from . import discord, google, matrix, signal
+from . import discord, google, matrix, signal_setup
 from .base import PROVIDERS, Connectors
 
 SETTINGS_LINK = "#settings/connections/{name}"
@@ -281,30 +283,37 @@ STEPS: dict[str, list[dict[str, Any]]] = {
               action={"type": "pick"}),
     ],
     "signal": [
-        _step("install", "Install signal-cli",
-              "Signal works through a small program called signal-cli, linked to your phone like Signal Desktop. "
-              "It needs Java 21 or newer.",
-              see="signal-cli's releases page on GitHub: download the newest signal-cli-<version>.tar.gz.",
-              do=["Install Java 21 or newer (for example Microsoft's Build of OpenJDK).",
-                  "Download signal-cli and unpack it into a folder in your user profile.",
-                  "Type where its bin\\signal-cli.bat is below. I'll check it runs."],
-              links=[_link("https://learn.microsoft.com/en-us/java/openjdk/download", "Get Java"),
-                     _link("https://github.com/AsamK/signal-cli/releases", "Download signal-cli")],
-              action={"type": "check", "check": "signal_cli",
+        _step("install", "Get signal-cli",
+              "Signal works through signal-cli, a free program that links to your phone the way Signal Desktop "
+              "does. It needs Java 25 or newer. I can download both for you, or use copies you already have.",
+              do=["Choose Download for me. I get signal-cli from its official release on GitHub and, if this "
+                  "computer has no Java 25, Eclipse Temurin's free Java. I check each against the checksum its "
+                  "publisher lists and keep them in my own folder, just for Signal.",
+                  "Already have signal-cli? If I found it, choose Use the one I found. If not, open 'I have my "
+                  "own signal-cli', type where its bin\\signal-cli.bat is, and choose Check."],
+              links=[_link(signal_setup.TEMURIN_PAGE, "Get Java yourself (Eclipse Temurin)"),
+                     _link(signal_setup.RELEASES_PAGE, "Get signal-cli yourself")],
+              note="The download is about 120 MB for signal-cli, plus about 60 MB for Java if you need it. Neither "
+                   "is part of Jig: signal-cli is open source under the GPL-3.0 licence, and Temurin under the "
+                   "GPL-2.0 with the Classpath Exception. Both are free.",
+              action={"type": "signal_install", "check": "signal_cli",
                       "input": {"name": "signal_cli", "prompt": "Where signal-cli.bat is",
                                 "placeholder": "C:\Users\you\\signal-cli\\bin\\signal-cli.bat"}}),
         _step("link", "Link it to your phone",
-              "This one step needs a terminal window: signal-cli prints a link, which you turn into a QR code "
-              "and scan with Signal on your phone.",
-              see="On your phone: Signal, Settings, Linked devices, Link new device, then the camera.",
-              do=["Open PowerShell and run the command below.",
-                  "Turn the sgnl:// link it prints into a QR code (signal-cli's guide shows how) and scan it.",
-                  "When it says it's linked, come back here."],
-              links=[_link(signal.MANAGE_URL, "signal-cli's linking guide")],
-              action={"type": "done", "label": "It's linked", "command": "\"{signal_cli}\" link -n Jig"}),
+              "Now I'll show a code for your phone to scan. It adds me to your Signal account as a linked device "
+              "called Jig, like Signal Desktop. Your phone stays your main Signal.",
+              see="In Signal on your phone: Settings, then Linked devices, then Link new device. Your camera opens "
+                  "to scan the code.",
+              do=["Choose Show the code.",
+                  "On your phone, open Signal and go to Settings > Linked devices > Link new device.",
+                  "Point your phone's camera at the code, and confirm if Signal asks.",
+                  "Keep this page open: I'll say when it's linked."],
+              note="signal-cli keeps the linked device's keys in its own folder in your user profile. To undo the "
+                   "link at any time, open Signal on your phone, Settings > Linked devices, and unlink Jig.",
+              action={"type": "signal_link"}),
         _step("token", "Connect",
-              "Last step: your number, in international format, and the same signal-cli path. I'll check that "
-              "Signal knows the number.",
+              "Last step: choose what I may do. I've filled in your number and where signal-cli is, and I'll "
+              "check that Signal knows the number.",
               action={"type": "token"}),
     ],
 }
@@ -422,8 +431,9 @@ async def _matrix_server(http: httpx.AsyncClient, values: Any) -> dict[str, Any]
                homeserver=base, password_login=False)
 
 
-async def _signal_cli(values: Any) -> dict[str, Any]:
-    binary, version = await signal.check_binary(_value(values, "signal_cli", "path to signal-cli.bat", 500))
+async def _signal_cli(jig: Any, values: Any) -> dict[str, Any]:
+    binary, version = await signal_setup.check_ready(_value(values, "signal_cli", "path to signal-cli.bat", 500),
+                                                     signal_setup.tools_dir(jig.config.data_dir))
     return _ok(f"signal-cli runs ({version}). Now link it to your phone.", signal_cli=binary)
 
 
@@ -520,7 +530,7 @@ async def run_check(jig: Any, name: str, check: str, values: Any) -> dict[str, A
     elif check == "matrix_server":
         out = await _matrix_server(jig.http, values)
     elif check == "signal_cli":
-        out = await _signal_cli(values)
+        out = await _signal_cli(jig, values)
     elif check == "pick":
         if name not in PICK_TOOLS:
             raise ConnectorError(f"{PROVIDERS[name].label} has no channels to pick")
@@ -554,7 +564,7 @@ def _plain(step: dict[str, Any]) -> dict[str, Any]:
     kind = step["action"]["type"]
     if kind in ("token", "google_client"):
         out["typed_where"] = "Settings > Connections only (it goes straight to the vault); never in the chat"
-    elif kind in ("check", "pick", "try", "connect"):
+    elif kind in ("check", "pick", "try", "connect", "signal_install", "signal_link"):
         out["checked_in"] = "Settings > Connections, which checks this step for real"
     return out
 
