@@ -166,6 +166,31 @@ def test_reviewer_failure_is_a_harness_error_not_a_block(tmp_path: Path) -> None
     assert gated.blocked == 0
 
 
+def test_attacks_resolve_the_model_name_for_every_condition() -> None:
+    import yaml
+    from agentdojo.agent_pipeline import AgentPipeline
+    from agentdojo.attacks.attack_registry import load_attack
+    from agentdojo.attacks.base_attacks import get_model_name_from_pipeline
+
+    from jigbench.experiments.d1_agentdojo import pipeline_name
+
+    configs = Path(__file__).resolve().parents[1] / "configs"
+    suite = get_suite("v1", "banking")
+    for path in configs.glob("*/d1_*.yaml"):
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for cond in cfg["conditions"]:
+            pipeline = AgentPipeline([])
+            pipeline.name = pipeline_name(cond["id"])
+            assert get_model_name_from_pipeline(pipeline) == "Local model", cond["id"]
+            for attack in cfg["attacks"]:
+                if attack == "none":
+                    continue
+                user_task = next(iter(suite.user_tasks.values()))
+                injection_task = next(iter(suite.injection_tasks.values()))
+                injections = load_attack(attack, suite, pipeline).attack(user_task, injection_task)
+                assert injections, (path.name, cond["id"], attack)
+
+
 def test_unknown_tool_is_not_classified_silently() -> None:
     with pytest.raises(KeyError):
         classify("totally_made_up_tool")

@@ -38,6 +38,12 @@ AGENTDOJO_VERSION = _pkg_version("agentdojo")
 SYSTEM_MESSAGE = load_system_message(None)
 
 
+def pipeline_name(cond_id: str) -> str:
+    """AgentDojo's attacks address the model by a name looked up from the pipeline name; "local" is the key
+    AgentDojo itself uses for locally served models (-> "Local model")."""
+    return f"local-{cond_id}"
+
+
 def _cond_cfg(cfg: dict[str, Any], cond_id: str) -> dict[str, Any]:
     return next(c for c in cfg["conditions"] if c["id"] == cond_id)
 
@@ -97,7 +103,7 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
             llm,
             ToolsExecutionLoop([gated, llm], max_iters=spec.max_steps),
         ])
-        pipeline.name = cond.id
+        pipeline.name = pipeline_name(cond.id)
 
         if trial["attack"] == "none":
             injection_task = None
