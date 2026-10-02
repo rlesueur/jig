@@ -132,3 +132,32 @@ async def revoke(http: httpx.AsyncClient, vault: Vault, grant: Grant) -> str:
 def authorise_params() -> dict[str, str]:
     # offline: a refresh token; consent: Google issues a fresh one even if the app was allowed before.
     return {"access_type": "offline", "prompt": "consent", "include_granted_scopes": "false"}
+
+
+async def sign_in(http: httpx.AsyncClient, store: Any, level: Any, open_browser, ready, *, api: str,
+                  probe_url: str, account_of) -> tuple[Grant, str]:
+    """The browser sign-in for one Google connector, then one real call to its API to find the account
+    (and to prove the API is enabled in the user's project)."""
+    from . import oauth
+
+    client = store.client(FAMILY)
+    result = await oauth.authorise(authorize_url=AUTHORIZE_URL, client_id=client["client_id"],
+                                   scopes=list(level.scopes), extra=authorise_params(),
+                                   open_browser=open_browser, label="Google", ready=ready)
+    grant = await exchange_code(http, client, code=result.code, redirect_uri=result.redirect_uri,
+                                verifier=result.verifier)
+    try:
+        r = await http.get(probe_url, headers={"Authorization": f"Bearer {grant.access_token}"}, timeout=30)
+    except httpx.HTTPError as exc:
+        r = None
+        problem = f"could not reach the {api}: {type(exc).__name__}"
+    else:
+        problem = (f"signed in, but the {api} refused (HTTP {r.status_code}): {r.text[:300]}. Is the {api} "
+                   "enabled in your Google Cloud project?") if r.status_code != 200 else ""
+    if problem:
+        try:
+            undone = await revoke(http, None, grant)  # type: ignore[arg-type]
+        except ConnectorError as exc:
+            undone = f"revoking the new grant also failed ({exc}); remove it at {MANAGE_URL}"
+        raise ConnectorError(f"{problem} Nothing was connected; the new grant was {undone}.")
+    return grant, account_of(r.json())  # type: ignore[union-attr]

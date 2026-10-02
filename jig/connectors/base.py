@@ -63,18 +63,21 @@ class Grant:
     refresh_token: str | None = None
     expires_at: float | None = None  # epoch seconds
     scopes: list[str] = field(default_factory=list)
-    token_type: str = "Bearer"
+    token_type: str = "Bearer"  # the Authorization scheme ("Bot" for Discord)
+    # Non-secret details of the connection the connector needs (a Matrix homeserver, a Signal number).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
         return json.dumps({"access_token": self.access_token, "refresh_token": self.refresh_token,
-                           "expires_at": self.expires_at, "scopes": self.scopes, "token_type": self.token_type})
+                           "expires_at": self.expires_at, "scopes": self.scopes, "token_type": self.token_type,
+                           "extra": self.extra})
 
     @classmethod
     def from_json(cls, raw: str) -> Grant:
         d = json.loads(raw)
         return cls(access_token=d["access_token"], refresh_token=d.get("refresh_token"),
                    expires_at=d.get("expires_at"), scopes=list(d.get("scopes") or []),
-                   token_type=d.get("token_type") or "Bearer")
+                   token_type=d.get("token_type") or "Bearer", extra=dict(d.get("extra") or {}))
 
     def values(self) -> list[str]:
         return [v for v in (self.access_token, self.refresh_token) if v]
@@ -90,6 +93,15 @@ RevokeFn = Callable[[httpx.AsyncClient, Vault, Grant], Awaitable[str]]
 
 
 @dataclass(frozen=True)
+class Input:
+    """Something ``jig connect`` asks for when a provider has no browser sign-in (a personal token)."""
+
+    name: str
+    prompt: str
+    secret: bool = False  # asked without echo (or read from stdin with --stdin); never printed or logged
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     id: str  # "gmail"
     label: str  # "Gmail"
@@ -101,11 +113,20 @@ class ProviderSpec:
     api_hosts: frozenset[str]
     refresh: RefreshFn | None = None
     revoke: RevokeFn | None = None
-    # connect(http, store, level, open_browser, ready) -> (Grant, account): the provider's sign-in flow.
+    # "oauth": connect(http, store, level, open_browser, ready) -> (Grant, account), a browser sign-in.
+    # "token": connect(http, store, level, values) -> (Grant, account), with ``inputs`` typed in the terminal.
+    kind: str = "oauth"
     connect: Callable[..., Awaitable[tuple[Grant, str]]] | None = None
+    inputs: tuple[Input, ...] = ()
+    needs_client: bool = True  # an app client (connector.<family>.client) must be stored first
+    # Extra hosts that depend on the connection (a Matrix homeserver), from the stored grant.
+    grant_hosts: Callable[[Grant], frozenset[str]] | None = None
     # Where the user removes the app's access on the provider's side.
     manage_url: str = ""
     docs: str = "docs/connectors-setup.md"
+
+    def hosts(self, grant: Grant) -> frozenset[str]:
+        return self.api_hosts | (self.grant_hosts(grant) if self.grant_hosts else frozenset())
 
 
 PROVIDERS: dict[str, ProviderSpec] = {}
@@ -155,7 +176,8 @@ class ConnectionStore:
                 "scopes": row["scopes"] if row else [],
                 "last_error": row["last_error"] if row else None,
                 "connected_at": row["connected_at"] if row else None,
-                "client_configured": self.has_client(spec.family),
+                "kind": spec.kind,
+                "client_configured": self.has_client(spec.family) if spec.needs_client else True,
                 "access_levels": {k: {"scopes": list(v.scopes), "description": v.description}
                                   for k, v in spec.access_levels.items()},
                 "default_access": spec.default_access,
@@ -276,6 +298,10 @@ class Connectors:
         row = self.store.get(name)
         return bool(row and row["status"] == STATUS_CONNECTED and scopes & set(row["scopes"]))
 
+    def details(self, name: str) -> dict[str, Any]:
+        """The connection's non-secret details (``Grant.extra``), without handing its tokens to tool code."""
+        return dict(self.store.grant(name).extra)
+
     def require_scope(self, name: str, scopes: frozenset[str], what: str) -> None:
         row = self.store.get(name)
         label = provider(name).label
@@ -322,15 +348,17 @@ class Connectors:
         """One authorised request. 401 refreshes once; 429 (and, for reads, 5xx) waits as the provider asks,
         within limits. Any other failure raises ConnectorError with the provider's own message."""
         spec = provider(name)
-        host = httpx.URL(url).host
-        if host not in spec.api_hosts:
-            raise ConnectorError(f"{spec.label} requests may only go to {sorted(spec.api_hosts)}, not {host!r}")
+        parsed = httpx.URL(url)
+        host = parsed.host
         grant = await self._current(name)
+        allowed = spec.hosts(grant)
+        if parsed.scheme != "https" or host not in allowed:
+            raise ConnectorError(f"{spec.label} requests may only go to https://{sorted(allowed)}, not {url[:80]!r}")
         refreshed = False
         waited = 0.0
         attempt = 0
         while True:
-            h = {**(headers or {}), "Authorization": f"Bearer {grant.access_token}"}
+            h = {**(headers or {}), "Authorization": f"{grant.token_type} {grant.access_token}"}
             try:
                 r = await self.http.request(method, url, params=params, json=json_body, content=content, headers=h,
                                             timeout=timeout)
@@ -356,12 +384,14 @@ class Connectors:
                 self.store.mark_needs_reconnect(name, why)
                 raise ConnectorAuthError(f"{why}. Reconnect with 'jig connect {name}'.")
             if r.status_code == 403:
-                raise ConnectorError(f"{spec.label} refused this (HTTP 403): {_provider_message(r)}")
+                raise ConnectorError(f"{spec.label} refused this (HTTP 403): {_provider_message(r)}", status=403)
             if r.status_code == 429 or (retryable and r.status_code >= 500):
                 raise ConnectorError(f"{spec.label} is rate-limiting or unavailable (HTTP {r.status_code}) after "
-                                     f"waiting {waited:.0f}s; try again later. {_provider_message(r)}")
+                                     f"waiting {waited:.0f}s; try again later. {_provider_message(r)}",
+                                     status=r.status_code)
             if r.status_code >= 400:
-                raise ConnectorError(f"{spec.label} returned HTTP {r.status_code}: {_provider_message(r)}")
+                raise ConnectorError(f"{spec.label} returned HTTP {r.status_code}: {_provider_message(r)}",
+                                     status=r.status_code)
             return r
 
     async def disconnect(self, name: str, *, via: str) -> dict[str, Any]:

@@ -44,6 +44,7 @@ class ToolCategory(StrEnum):
     TIME = "time"
     CREDENTIALS = "credentials"
     MESSAGES = "messages"  # mail and chat in a connected account
+    CALENDAR = "calendar"  # events in a connected calendar
 
 
 CATEGORY_TO_VARIANT: dict[ToolCategory, TaskVariant] = {
@@ -56,6 +57,7 @@ CATEGORY_TO_VARIANT: dict[ToolCategory, TaskVariant] = {
     ToolCategory.TIME: TaskVariant.SCHEDULING,
     ToolCategory.CREDENTIALS: TaskVariant.WRITING,
     ToolCategory.MESSAGES: TaskVariant.WRITING,
+    ToolCategory.CALENDAR: TaskVariant.SCHEDULING,
 }
 
 # Transient states (success / error) are shown for this long before the
@@ -134,6 +136,8 @@ class EventType(StrEnum):
     MODEL_END = "model.end"
     TOOL_START = "tool.start"
     TOOL_END = "tool.end"
+    # A browser action was recognised as a checkout, payment or booking (before review and approval).
+    TOOL_CHECKOUT = "tool.checkout"
     SENTINEL_VERDICT = "sentinel.verdict"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"

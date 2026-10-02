@@ -29,6 +29,12 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--access", help="access level, for example read, send or manage for Gmail (default: the "
                                     "connector's default)")
     c.add_argument("--client-json", help="Google: the Desktop app client JSON downloaded from the Google Cloud console")
+    c.add_argument("--client-id", help="Microsoft: the Application (client) ID of your Entra app registration")
+    c.add_argument("--option", action="append", default=[], metavar="NAME=VALUE",
+                   help="a non-secret setting the connector asks for (for example homeserver=https://matrix.org)")
+    c.add_argument("--stdin", action="store_true",
+                   help="read the secret(s) the connector asks for from standard input, one per line, instead of "
+                        "prompting")
     c.add_argument("--no-browser", action="store_true", help="print the sign-in link instead of opening a browser")
     c.add_argument("--data-dir", help="data directory (default: from the config)")
     ls = sub.add_parser("connections", help="list your connected accounts and what each can do")
@@ -66,7 +72,60 @@ def _confirm(args: argparse.Namespace, question: str) -> bool:
         return False
 
 
+def _ensure_microsoft_client(args: argparse.Namespace, store: ConnectionStore) -> None:
+    from . import microsoft
+
+    if args.client_id:
+        store.set_client(microsoft.FAMILY, microsoft.client_from_id(args.client_id), via="cli")
+        print("Stored the Microsoft app registration's client ID in the vault (connector.microsoft.client).")
+        return
+    if store.has_client(microsoft.FAMILY):
+        return
+    if not sys.stdin or not sys.stdin.isatty():
+        raise ConnectorError("no Microsoft client ID is stored, and there is no terminal to ask for it; pass "
+                             "--client-id <Application (client) ID> (docs/connectors-setup.md)")
+    print("No Microsoft app registration is stored yet (see docs/connectors-setup.md, 'Microsoft').")
+    store.set_client(microsoft.FAMILY, microsoft.client_from_id(input("Application (client) ID: ").strip()),
+                     via="cli")
+    print("Stored it in the vault (connector.microsoft.client).")
+
+
+def _token_values(args: argparse.Namespace, spec) -> dict[str, str]:
+    """What a token connector asks for: settings from --option, secrets from a hidden prompt or --stdin."""
+    options: dict[str, str] = {}
+    for item in args.option:
+        name, sep, value = item.partition("=")
+        if not sep:
+            raise ConnectorError(f"--option must be NAME=VALUE, not {item!r}")
+        options[name.strip()] = value.strip()
+    known = {i.name for i in spec.inputs if not i.secret}
+    unknown = set(options) - known
+    if unknown:
+        raise ConnectorError(f"{spec.label} has no setting {sorted(unknown)}; it asks for {sorted(known) or 'none'}")
+    values: dict[str, str] = {}
+    lines = iter(sys.stdin.read().splitlines()) if args.stdin else None
+    for item in spec.inputs:
+        if not item.secret:
+            if item.name in options:
+                values[item.name] = options[item.name]
+            elif sys.stdin and sys.stdin.isatty() and not args.stdin:
+                values[item.name] = input(f"{item.prompt}: ").strip()
+            else:
+                raise ConnectorError(f"{spec.label} needs --option {item.name}=... ({item.prompt})")
+        elif lines is not None:
+            values[item.name] = next(lines, "").strip()
+        elif sys.stdin and sys.stdin.isatty():
+            values[item.name] = getpass.getpass(f"{item.prompt} (it won't be shown): ").strip()
+        else:
+            raise ConnectorError(f"{spec.label} needs {item.prompt}; there is no terminal to ask on, so pass it "
+                                 "on standard input with --stdin")
+    return values
+
+
 def _ensure_client(args: argparse.Namespace, store: ConnectionStore, family: str) -> None:
+    if family == "microsoft":
+        _ensure_microsoft_client(args, store)
+        return
     if family != google.FAMILY:
         return
     if args.client_json:
@@ -90,12 +149,18 @@ def _ensure_client(args: argparse.Namespace, store: ConnectionStore, family: str
 
 async def _connect(args: argparse.Namespace, store: ConnectionStore) -> int:
     spec = provider(args.provider)
-    _ensure_client(args, store, spec.family)
+    if spec.needs_client:
+        _ensure_client(args, store, spec.family)
     level = args.access or spec.default_access
     if level not in spec.access_levels:
         print(f"jig: {spec.label} access must be one of {list(spec.access_levels)}", file=sys.stderr)
         return 2
     print(f"Connecting {spec.label} with '{level}' access: {spec.access_levels[level].description}.")
+    if spec.kind == "token":
+        values = _token_values(args, spec)
+        async with http_client() as http:
+            result = await connect(args.provider, access=level, store=store, http=http, values=values, via="cli")
+        return _connected(args, spec, result)
     print("Scopes requested: " + ", ".join(spec.access_levels[level].scopes))
 
     def show(url: str) -> None:
@@ -111,6 +176,10 @@ async def _connect(args: argparse.Namespace, store: ConnectionStore) -> int:
     async with http_client() as http:
         result = await connect(args.provider, access=level, store=store, http=http, open_browser=open_browser,
                                ready=show, via="cli")
+    return _connected(args, spec, result)
+
+
+def _connected(args: argparse.Namespace, spec, result: dict) -> int:
     row = result["connection"]
     print(f"\n{spec.label} is connected as {row['account']} ('{row['access']}' access).")
     print("Granted: " + ", ".join(row["scopes"]))

@@ -748,9 +748,12 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             spec = connector_provider(name)
         except ConnectorError as exc:
             raise HTTPException(404, str(exc)) from None
-        if not jig.connections.has_client(spec.family):
+        if spec.kind != "oauth":
+            raise HTTPException(409, f"{spec.label} is connected with a token you type in a terminal, never in a "
+                                     f"web page: run 'jig connect {name}' (docs/connectors-setup.md)")
+        if spec.needs_client and not jig.connections.has_client(spec.family):
             raise HTTPException(409, f"no {spec.family} app client is stored yet; follow docs/connectors-setup.md, "
-                                     f"then run 'jig connect {name} --client-json <file>' once")
+                                     f"then run 'jig connect {name}' once in a terminal")
         link: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         connect_attempts[name] = {"status": "waiting", "started": now_iso(), "error": None}
 

@@ -178,14 +178,20 @@ class ConnectorLimits:
     """``[connectors.<provider>]``: fixed limits on what Jig may send through a connected account, checked by
     the gate before the safety checker or an approval. Used for testing with your own address only."""
 
-    # Exact addresses (case-insensitive) Jig may send to. Empty: anyone, and every send still needs approval.
+    # Exact addresses (case-insensitive) Jig may send mail or invitations to. Empty: anyone, and every
+    # send still needs approval.
     allowed_recipients: list[str] = field(default_factory=list)
-    # When set, every outgoing subject (after any "Re: ") must start with this, for example "[Jig test]".
+    # Exact names or ids of the only places Jig may change (calendars, folders, repositories, channels,
+    # rooms, phone numbers; each connector's section in docs/connectors-setup.md says which). Empty: any.
+    allowed_targets: list[str] = field(default_factory=list)
+    # When set, everything Jig writes (a subject after any "Re: ", an event or file name, a message or
+    # comment) must start with this, for example "[Jig test]".
     required_prefix: str = ""
 
 
 # Connectors that read [connectors.<id>]; see jig.connectors.
-CONNECTOR_IDS = ("gmail",)
+CONNECTOR_IDS = ("gmail", "google-calendar", "google-drive", "microsoft", "github", "slack", "discord", "matrix",
+                 "signal")
 
 
 @dataclass(frozen=True)
@@ -336,7 +342,10 @@ def _connectors_config(values: dict[str, Any]) -> dict[str, ConnectorLimits]:
         recipients = [str(r).strip().lower() for r in cfg.allowed_recipients]
         if any(not r or "@" not in r or "*" in r or any(c.isspace() for c in r) for r in recipients):
             raise ConfigError(f"[connectors.{name}] allowed_recipients must list exact addresses, without wildcards")
-        out[name] = replace(cfg, allowed_recipients=recipients)
+        targets = [str(t).strip() for t in cfg.allowed_targets]
+        if any(not t or "*" in t for t in targets):
+            raise ConfigError(f"[connectors.{name}] allowed_targets must list exact names or ids, without wildcards")
+        out[name] = replace(cfg, allowed_recipients=recipients, allowed_targets=targets)
     return out
 
 

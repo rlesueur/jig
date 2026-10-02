@@ -87,6 +87,10 @@ class StepLimitExceeded(JigError):
 class ConnectorError(JigError):
     """A connected account (Gmail and so on) refused or failed a request. Never retried as something else."""
 
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status  # the provider's HTTP status, when it answered
+
 
 class ConnectorNotConnected(ConnectorError):
     """The account is not connected, or not with the access this tool needs."""

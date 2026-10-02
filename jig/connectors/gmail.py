@@ -25,7 +25,7 @@ from ..constants import Decision, Effect, TaskVariant, ToolCategory
 from ..errors import ConnectorError, ToolArgumentError
 from ..tools.registry import ToolContext, ToolRegistry
 from ..tools.web import extract_readable
-from . import google, oauth
+from . import google
 from .base import AccessLevel, ConnectionStore, Connectors, Grant, ProviderSpec, register_provider
 
 NAME = "gmail"
@@ -48,20 +48,8 @@ _REPLY_PREFIX = re.compile(r"^\s*((re|fwd?|aw|sv)\s*:\s*)+", re.IGNORECASE)
 
 async def _connect(http: httpx.AsyncClient, store: ConnectionStore, level: AccessLevel, open_browser,
                    ready=None) -> tuple[Grant, str]:
-    client = store.client(google.FAMILY)
-    result = await oauth.authorise(authorize_url=google.AUTHORIZE_URL, client_id=client["client_id"],
-                                   scopes=list(level.scopes), extra=google.authorise_params(),
-                                   open_browser=open_browser, label="Google", ready=ready)
-    grant = await google.exchange_code(http, client, code=result.code, redirect_uri=result.redirect_uri,
-                                       verifier=result.verifier)
-    try:
-        r = await http.get(f"{API}/profile", headers={"Authorization": f"Bearer {grant.access_token}"}, timeout=30)
-    except httpx.HTTPError as exc:
-        raise ConnectorError(f"could not reach the Gmail API: {type(exc).__name__}") from None
-    if r.status_code != 200:
-        raise ConnectorError(f"signed in, but the Gmail API refused (HTTP {r.status_code}): {r.text[:300]}. Is the "
-                             "Gmail API enabled in your Google Cloud project? Nothing was connected.")
-    return grant, r.json()["emailAddress"]
+    return await google.sign_in(http, store, level, open_browser, ready, api="Gmail API",
+                                probe_url=f"{API}/profile", account_of=lambda body: body["emailAddress"])
 
 
 PROVIDER = register_provider(ProviderSpec(
