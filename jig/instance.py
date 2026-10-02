@@ -4,7 +4,9 @@
   for as long as the runtime is open. The OS drops it when the process exits, even after a crash, so a
   stale file never blocks a restart. ``<data_dir>/instance.json`` says who holds it.
 * ``jig stop`` asks the holder to shut down gracefully: on Windows by setting a named event
-  (``Local\\Jig-stop-<hash of the data directory>``), elsewhere with SIGTERM.
+  (``Local\\Jig-stop-<hash of the data directory>``), elsewhere with SIGTERM. ``jig stop`` (Jig only) and
+  ``POST /power/stop`` say what to stop in ``<data_dir>/stop-request.json`` / on the app, so a model
+  server that Jig launched can be left running.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import IO, Any
 
@@ -21,6 +24,7 @@ from .errors import JigError
 
 LOCK_FILENAME = "jig.lock"
 INFO_FILENAME = "instance.json"
+STOP_REQUEST_FILENAME = "stop-request.json"
 EXIT_INSTANCE_LOCKED = 75  # EX_TEMPFAIL: another Jig already uses this data directory
 
 
@@ -116,11 +120,40 @@ def stop_event_name(data_dir: Path) -> str:
     return f"Local\\Jig-stop-{digest}"
 
 
-def request_stop(data_dir: Path) -> dict[str, Any]:
-    """Ask the Jig using ``data_dir`` to shut down gracefully. Raises if none is running."""
+def take_stop_request(data_dir: Path, *, max_age_s: float = 120.0) -> dict[str, Any] | None:
+    """Read and remove the stop request that ``request_stop`` left for this process, if there is one."""
+    path = Path(data_dir) / STOP_REQUEST_FILENAME
+    try:
+        request = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return None
+    path.unlink(missing_ok=True)
+    if request.get("pid") != os.getpid() or time.time() - float(request.get("at", 0)) > max_age_s:
+        return None  # addressed to an earlier Jig, or too old to belong to this shutdown
+    return request
+
+
+def request_stop(data_dir: Path, *, scope: str | None = None, via: str = "cli") -> dict[str, Any]:
+    """Ask the Jig using ``data_dir`` to shut down gracefully. Raises if none is running.
+
+    ``scope`` ("jig" or "jig_and_model") is left in ``stop-request.json`` for that Jig to read while it
+    shuts down; without it, Jig stops as on Ctrl+C (including a model server it launched)."""
     info = running_instance(data_dir)
     if info is None:
         raise JigError(f"no Jig is running for the data directory {data_dir}")
+    request_path = Path(data_dir) / STOP_REQUEST_FILENAME
+    if scope is not None:
+        request_path.write_text(json.dumps({"scope": scope, "via": via, "pid": info.get("pid"), "at": time.time()}),
+                                encoding="utf-8")
+    try:
+        _signal_stop(data_dir, info)
+    except BaseException:
+        request_path.unlink(missing_ok=True)
+        raise
+    return info
+
+
+def _signal_stop(data_dir: Path, info: dict[str, Any]) -> None:
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -143,4 +176,3 @@ def request_stop(data_dir: Path) -> dict[str, Any]:
         if not info.get("pid"):
             raise JigError(f"a Jig holds {data_dir} but {INFO_FILENAME} does not name its pid")
         os.kill(int(info["pid"]), signal.SIGTERM)
-    return info

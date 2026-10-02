@@ -16,6 +16,11 @@
 * ``/health`` (``{"status": "ok"}`` only), the UI's static files and the
   session routes (``GET`` says only whether the caller is signed in; ``POST``
   checks the token or code itself) are the only routes that need no credentials.
+* Other devices reach Jig only through ``tailscale serve`` (see ``jig.remote``). Every request is first
+  classified as local or tailnet; a tailnet request must provably come from tailscaled, from an
+  allowed Tailscale login, and carry a paired device session (``jig.devices``). The master token and
+  browser sign-in are refused over the tailnet. Cookies get the Secure flag there, and the only Origin
+  accepted is the recorded ``https://<machine>.<tailnet>.ts.net``.
 """
 
 from __future__ import annotations
@@ -33,7 +38,9 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 
+from .devices import DEVICE_COOKIE, DeviceStore
 from .errors import JigError
+from .remote import TAILSCALE_HEADERS, Refused, RemoteAccess, RemoteError, RequestSource
 
 TOKEN_FILENAME = "api-token"
 SESSION_COOKIE = "jig_session"
@@ -41,8 +48,9 @@ SESSION_TTL_S = 12 * 3600
 LOGIN_CODE_TTL_S = 120
 
 # GET /auth/session only reports whether the caller is signed in, so the UI can check without a 401.
+# POST /auth/pair checks the pairing code itself.
 PUBLIC_EXACT = {("GET", "/health"), ("GET", "/"), ("GET", "/auth/session"), ("POST", "/auth/session"),
-                ("GET", "/favicon.ico")}
+                ("POST", "/auth/pair"), ("GET", "/favicon.ico")}
 PUBLIC_PREFIXES = ("/web/", "/avatar/")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -233,12 +241,17 @@ def _sign(token: str, message: str) -> str:
 
 @dataclass
 class Principal:
-    via: str  # bearer | cookie
+    via: str  # bearer | cookie | device
+    device: dict[str, Any] | None = None
+
+
+LOCAL_SOURCE = RequestSource("local", origin="", secure=False)
 
 
 class Auth:
-    def __init__(self, tokens: TokenStore):
+    def __init__(self, tokens: TokenStore, devices: DeviceStore | None = None):
         self.tokens = tokens
+        self.devices = devices
         self._codes: dict[str, float] = {}
 
     # Session cookies are signed with the token, so rotating it invalidates every session.
@@ -267,18 +280,28 @@ class Auth:
         expires = self._codes.pop(code, None)
         return expires is not None and expires > time.time()
 
-    def authenticate(self, headers: dict[str, str]) -> Principal | None:
+    def authenticate(self, headers: dict[str, str], source: RequestSource = LOCAL_SOURCE) -> Principal | None:
+        """Over the tailnet only a paired device session counts; locally, the token, a browser session
+        or a device session. Raises Refused for the master token over the tailnet."""
         authz = headers.get("authorization", "")
         scheme, _, value = authz.partition(" ")
-        if scheme.lower() == "bearer" and value and self.token_valid(value.strip()):
-            return Principal("bearer")
+        if scheme.lower() == "bearer" and value:
+            if source.kind == "tailnet":
+                raise Refused(403, "Refused: the master API token is not accepted over the tailnet. Pair this device "
+                                   "instead: Settings > Use Jig from your other devices > Add a device, on the host.")
+            if self.token_valid(value.strip()):
+                return Principal("bearer")
         cookie = SimpleCookie()
         try:
             cookie.load(headers.get("cookie", ""))
         except Exception:
             return None
-        if SESSION_COOKIE in cookie and self.session_valid(cookie[SESSION_COOKIE].value):
+        if source.kind == "local" and SESSION_COOKIE in cookie and self.session_valid(cookie[SESSION_COOKIE].value):
             return Principal("cookie")
+        if self.devices is not None and DEVICE_COOKIE in cookie:
+            device = self.devices.authenticate(cookie[DEVICE_COOKIE].value, tailscale_login=source.login)
+            if device is not None:
+                return Principal("device", device)
         return None
 
 
@@ -286,25 +309,29 @@ def is_public(method: str, path: str) -> bool:
     return (method, path) in PUBLIC_EXACT or (method in SAFE_METHODS and path.startswith(PUBLIC_PREFIXES))
 
 
-def same_origin(headers: dict[str, str], scheme: str) -> bool:
-    origin, host = headers.get("origin"), headers.get("host")
-    return bool(origin and host) and origin == f"{'https' if scheme in ('https', 'wss') else 'http'}://{host}"
+def _cookie(name: str, value: str, max_age: int, secure: bool) -> str:
+    return f"{name}={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}" + ("; Secure" if secure else "")
 
 
-def session_cookie_header(value: str, max_age: int) -> str:
-    return f"{SESSION_COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
+def session_cookie_header(value: str, max_age: int, *, secure: bool = False) -> str:
+    return _cookie(SESSION_COOKIE, value, max_age, secure)
 
 
-def clear_cookie_header() -> str:
-    return f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+def device_cookie_header(value: str, max_age: int, *, secure: bool = False) -> str:
+    return _cookie(DEVICE_COOKIE, value, max_age, secure)
+
+
+def clear_cookie_headers(*, secure: bool = False) -> list[str]:
+    return [_cookie(SESSION_COOKIE, "", 0, secure), _cookie(DEVICE_COOKIE, "", 0, secure)]
 
 
 class AuthMiddleware:
     """Pure ASGI middleware, so it covers HTTP, the SSE stream and the WebSocket handshake alike."""
 
-    def __init__(self, app: Any, auth: Auth):
+    def __init__(self, app: Any, auth: Auth, remote: RemoteAccess):
         self.app = app
         self.auth = auth
+        self.remote = remote
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -312,22 +339,44 @@ class AuthMiddleware:
             return
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         method = scope.get("method", "GET") if scope["type"] == "http" else "WEBSOCKET"
+        try:
+            source = self.remote.classify(scope, headers)
+        except Refused as exc:
+            await self._reject(scope, receive, send, exc.status, exc.message)
+            return
+        except RemoteError as exc:
+            await self._reject(scope, receive, send, 500, str(exc))
+            return
+        if source.kind == "local":
+            # Only tailscaled sets these, so on a local connection they are forged; drop them for every route.
+            for name in TAILSCALE_HEADERS:
+                headers.pop(name, None)
+            scope["headers"] = [(k, v) for k, v in scope.get("headers", [])
+                                if k.decode("latin-1").lower() not in TAILSCALE_HEADERS]
+        state = scope.setdefault("state", {})
+        state["source"] = source
         if scope["type"] == "http" and is_public(method, scope["path"]):
             await self.app(scope, receive, send)
             return
         try:
-            principal = self.auth.authenticate(headers)
+            principal = self.auth.authenticate(headers, source)
         except TokenFileError as exc:
             await self._reject(scope, receive, send, 500, str(exc))
             return
+        except Refused as exc:
+            await self._reject(scope, receive, send, exc.status, exc.message)
+            return
         if principal is None:
             await self._reject(scope, receive, send, 401, "authentication required: send 'Authorization: Bearer "
-                               "<token>' (see 'jig token show') or sign in to the web UI")
+                               "<token>' (see 'jig token show') or sign in to the web UI" if source.kind == "local"
+                               else "authentication required: pair this device first (Settings > Use Jig from your "
+                               "other devices > Add a device, on the host)")
             return
-        if principal.via == "cookie" and method not in SAFE_METHODS and not same_origin(headers, scope["scheme"]):
+        if principal.via != "bearer" and method not in SAFE_METHODS and headers.get("origin") != source.origin:
             await self._reject(scope, receive, send, 403, "cross-origin request refused")
             return
-        scope.setdefault("state", {})["auth_via"] = principal.via
+        state["auth_via"] = principal.via
+        state["principal"] = principal
         await self.app(scope, receive, send)
 
     @staticmethod

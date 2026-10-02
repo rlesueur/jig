@@ -129,6 +129,18 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class RemoteConfig:
+    """``[remote]``: use Jig from your other devices through ``tailscale serve`` (see ``jig.remote``)."""
+
+    # Tailscale logins (for example "you@example.com") allowed through tailscale serve. Empty means only
+    # the login that turned remote access on. Never a wildcard.
+    allowed_logins: list[str] = field(default_factory=list)
+    # Container mode only: the host's tailnet name (machine.tailnet.ts.net) that `tailscale serve` on the
+    # host forwards to the published port. On the host, `jig remote enable` records it instead.
+    hostname: str = ""
+
+
+@dataclass(frozen=True)
 class Config:
     model: EndpointConfig
     sentinel: EndpointConfig
@@ -142,6 +154,7 @@ class Config:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
     # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
     # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
     deployment: str = "host"
@@ -240,8 +253,26 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         sandbox=_sandbox_config(_section(raw, "sandbox"), overrides.get("sandbox_backend")),
         model_launch=model_launch,
         vault=_vault_config(_section(raw, "vault")),
+        remote=_remote_config(_section(raw, "remote"), deployment),
         deployment=deployment,
     )
+
+
+def _remote_config(values: dict[str, Any], deployment: str) -> RemoteConfig:
+    values = dict(values)
+    if v := os.environ.get("JIG_REMOTE_HOSTNAME"):
+        values["hostname"] = v
+    cfg = _build(RemoteConfig, values, "remote")
+    logins = [str(x).strip().lower() for x in cfg.allowed_logins]
+    if any(not x or "*" in x or "?" in x for x in logins):
+        raise ConfigError("[remote] allowed_logins must list exact Tailscale logins; wildcards are not allowed")
+    hostname = cfg.hostname.strip().lower().rstrip(".")
+    if hostname and deployment != "container":
+        raise ConfigError("[remote] hostname is only for container mode; on the host, 'jig remote enable' "
+                          "finds and records the tailnet name itself")
+    if hostname and (not hostname.endswith(".ts.net") or "*" in hostname):
+        raise ConfigError(f"[remote] hostname must be the exact tailnet name ending in .ts.net, not {hostname!r}")
+    return replace(cfg, allowed_logins=logins, hostname=hostname)
 
 
 def _vault_config(values: dict[str, Any]) -> VaultConfig:

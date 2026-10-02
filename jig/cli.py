@@ -1,5 +1,5 @@
 """Command-line entry point: ``jig serve``, ``jig chat``, ``jig health``, ``jig token``, ``jig ui``,
-``jig autostart`` and ``jig stop``."""
+``jig autostart``, ``jig stop [--model]``, ``jig model`` and ``jig remote``."""
 
 from __future__ import annotations
 
@@ -101,14 +101,158 @@ def _auth_headers(args: argparse.Namespace) -> dict[str, str]:
 
 def _token(args: argparse.Namespace) -> int:
     from .auth import TokenStore
+    from .autostart.base import record_audit
+    from .devices import revoke_all_offline
 
-    store = TokenStore(load_config(args.config).data_dir)
+    config = load_config(args.config)
+    store = TokenStore(config.data_dir)
     if args.action == "rotate":
         store.rotate()
-        print(f"New API token written to {store.path}. Programs and browsers using the old one are signed out.",
-              file=sys.stderr)
+        revoked = revoke_all_offline(config.data_dir, "the master API token was rotated")
+        record_audit(config.data_dir, "auth.token_rotated", f"master token rotated; {revoked} device(s) revoked",
+                     via="cli", devices_revoked=revoked)
+        print(f"New API token written to {store.path}. Programs and browsers using the old one are signed out, "
+              f"and {revoked} paired device(s) were revoked.", file=sys.stderr)
         return 0
     print(store.ensure())
+    return 0
+
+
+def running_api(config) -> tuple[str, dict[str, str]]:
+    """The base URL and token headers of the Jig running for this config's data directory."""
+    from .auth import TokenStore
+    from .instance import running_instance
+
+    info = running_instance(config.data_dir)
+    if info is None:
+        raise JigError(f"Jig isn't running for {config.data_dir}. Start it with 'jig serve'.")
+    base = f"http://{info.get('host') or '127.0.0.1'}:{info.get('port') or config.server.port}"
+    return base, {"Authorization": f"Bearer {TokenStore(config.data_dir).get()}"}
+
+
+def _confirmed(args: argparse.Namespace, question: str) -> bool:
+    if args.yes:
+        return True
+    if not sys.stdin or not sys.stdin.isatty():
+        print("Nothing changed: there is no terminal to confirm on. Re-run with --yes to confirm.", file=sys.stderr)
+        return False
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        print("\nNothing changed: no answer was given. Re-run with --yes to confirm.", file=sys.stderr)
+        return False
+
+
+def _api_result(r: httpx.Response, ok: tuple[int, ...] = (200,)) -> dict | None:
+    if r.status_code in ok:
+        return r.json()
+    try:
+        message = r.json().get("error", r.text)
+    except ValueError:
+        message = r.text
+    print(f"jig: {message}", file=sys.stderr)
+    return None
+
+
+def _model(args: argparse.Namespace) -> int:
+    """``jig model status|start|stop``: the model server that the running Jig launched and supervises."""
+    config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
+    base, headers = running_api(config)
+    if args.action == "status":
+        body = _api_result(httpx.get(f"{base}/model", headers=headers, timeout=30))
+        if body is None:
+            return 1
+        if args.json:
+            print(json.dumps(body, indent=2))
+            return 0
+        state = (f"running, launched and supervised by Jig (pid {body['pid']})" if body["managed"] else
+                 "stopped by you ('jig model start' starts it again)" if body["stopped_by_user"] else
+                 "not managed by Jig")
+        print(f"Model server at {body['base_url']}: {state}")
+        if body.get("gpu"):
+            g = body["gpu"]
+            print(f"  GPU memory: {g['vram_mib']} MiB" if g.get("vram_mib") is not None else
+                  f"  GPU: {g.get('note') or g.get('reason')}")
+        if body.get("refusal") and not body["managed"]:
+            print(f"  {body['refusal']}")
+        return 0
+    if args.action == "stop":
+        if not _confirmed(args, "Stop the model server Jig started? Jig keeps running but can't answer until it is "
+                                "started again."):
+            return 1
+        body = _api_result(httpx.post(f"{base}/model/stop", headers=headers, json={"confirm": True}, timeout=60))
+        if body is None:
+            return 1
+        print(f"Stopped the model server (pid {body['pid']}). {body['message']}")
+        return 0
+    timeout = config.model_launch.readiness_timeout_s + 60
+    print(f"Starting the model server and waiting up to {config.model_launch.readiness_timeout_s:.0f}s for it...")
+    body = _api_result(httpx.post(f"{base}/model/start", headers=headers, timeout=timeout))
+    if body is None:
+        return 1
+    print(f"Model server ready (pid {body['pid']})." if body["started"] else
+          "A model server was already running at the endpoint, so Jig did not launch one.")
+    return 0
+
+
+REMOTE_DISCLOSURE = """Use Jig from your other devices (through Tailscale):
+
+  - Runs: tailscale serve --bg --https=443 http://127.0.0.1:{port}
+  - Exposes: the Jig web UI and API at https://<this machine>.<your tailnet>.ts.net, to devices on YOUR
+    tailnet only. It is never put on the public internet (Jig refuses Tailscale Funnel).
+  - Who gets in: only the Tailscale login that turns it on (or [remote] allowed_logins), and only from a
+    device you have paired with a one-time code from Settings on this computer.
+  - Jig itself keeps listening on 127.0.0.1 only. Turn it off with 'jig remote disable'."""
+
+
+def _remote(args: argparse.Namespace) -> int:
+    from .autostart.base import record_audit
+    from .remote import RemoteAccess
+
+    config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
+    port = args.port or config.server.port
+    remote = RemoteAccess(config)
+    if args.action == "status":
+        st = remote.status(port)
+        if args.json:
+            print(json.dumps(st, indent=2, default=str))
+            return 0
+        print(f"Remote access: {'ON at ' + st['url'] if st['enabled'] else 'off'}")
+        if not st["applicable"]:
+            print(f"  {st['reason']}")
+            return 0
+        ts = st["tailscale"]
+        print(f"  Tailscale: {'installed (' + str(ts['version']) + ')' if ts['installed'] else 'NOT installed'}"
+              f"{', ' + str(ts['backend_state']) if ts['backend_state'] else ''}"
+              f"{', signed in as ' + ts['login'] if ts['login'] else ''}")
+        if st["enabled"]:
+            print(f"  Allowed Tailscale logins: {', '.join(st['allowed_logins'])}")
+        for p in st["problems"]:
+            print(f"  PROBLEM: {p}")
+        if st["steps"]:
+            print("  To use Jig from your other devices:")
+            for i, s in enumerate(st["steps"], 1):
+                print(f"    {i}. {s}")
+        return 0
+    if args.action == "enable":
+        print(REMOTE_DISCLOSURE.format(port=port))
+        print()
+        if not _confirmed(args, "Turn on remote access through Tailscale?"):
+            return 1
+        st = remote.enable(port)
+        record_audit(config.data_dir, "remote.enabled", f"remote access on at {st['url']}", via="cli", url=st["url"],
+                     allowed_logins=st["allowed_logins"])
+        print(f"Remote access is on: {st['url']}\nPair a device from Settings > Use Jig from your other devices > "
+              "Add a device (on this computer).")
+        return 0
+    if not _confirmed(args, "Turn off remote access? Your other devices will no longer reach Jig."):
+        return 1
+    st = remote.disable(port)
+    record_audit(config.data_dir, "remote.disabled", "remote access off", via="cli",
+                 removed_serve_entry=st["removed_serve_entry"])
+    print("Remote access is off." + (" Removed Jig's tailscale serve entry." if st["removed_serve_entry"] else ""))
+    for note in st["notes"]:
+        print(f"  {note}")
     return 0
 
 
@@ -212,10 +356,27 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--print-url", action="store_true", help="print the one-time sign-in link instead of opening it")
     sb = sub.add_parser("sandbox", help="manage the container sandbox")
     sb.add_argument("action", choices=["build"], help="build: build the sandbox Docker image")
+    m = sub.add_parser("model", help="the model server that the running Jig launched ([model.launch])")
+    m.add_argument("action", choices=["status", "start", "stop"],
+                   help="status: what Jig manages and its GPU memory; start: launch it again; stop: stop it "
+                        "(only one Jig launched) while Jig keeps running")
+    m.add_argument("--yes", action="store_true", help="confirm 'stop' without the y/N prompt")
+    m.add_argument("--json", action="store_true", help="machine-readable output")
+    m.add_argument("--data-dir", help="data directory (default: from the config)")
+    r = sub.add_parser("remote", help="use Jig from your other devices through Tailscale (tailscale serve)")
+    r.add_argument("action", choices=["enable", "disable", "status"])
+    r.add_argument("--yes", action="store_true", help="confirm without the y/N prompt (for scripts)")
+    r.add_argument("--json", action="store_true", help="machine-readable output")
+    r.add_argument("--port", type=int, help="Jig's port (default: [server] port)")
+    r.add_argument("--data-dir", help="data directory (default: from the config)")
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
             return _serve(args)
+        if args.command == "model":
+            return _model(args)
+        if args.command == "remote":
+            return _remote(args)
         if args.command == "sandbox":
             return _sandbox(args)
         if args.command == "autostart":

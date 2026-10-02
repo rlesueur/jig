@@ -143,3 +143,4 @@ class EventType(StrEnum):
     MEMORY_CHANGED = "memory.changed"
     RULE_CHANGED = "rule.changed"
     AGENT_STATUS = "agent.status"
+    POWER_STOPPING = "power.stopping"

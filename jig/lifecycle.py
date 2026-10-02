@@ -190,8 +190,10 @@ def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: b
     import uvicorn
 
     # Open event streams (SSE, WebSockets) would otherwise hold a graceful shutdown open indefinitely.
+    # proxy_headers=False: X-Forwarded-For/-Proto must never replace the real TCP peer, because remote access
+    # checks that the connection itself belongs to tailscaled (jig.remote).
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info", lifespan="on",
-                                           timeout_graceful_shutdown=10,
+                                           timeout_graceful_shutdown=10, proxy_headers=False,
                                            log_config=None if log_to_file else uvicorn.config.LOGGING_CONFIG))
 
     def request_exit(why: str) -> None:
@@ -199,6 +201,8 @@ def run_server(app: Any, *, host: str, port: int, data_dir: Path, log_to_file: b
             log.info("graceful shutdown requested: %s", why)
         server.should_exit = True
 
+    # POST /power/stop uses this to shut the server down after its response has been sent.
+    app.state.request_exit = request_exit
     signals = StopSignals(request_exit, data_dir)
     signals.start()
     try:

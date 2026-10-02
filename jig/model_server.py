@@ -17,11 +17,18 @@ With a ``command``, the configured endpoint decides what happens at start-up:
 * something else holds the port: Jig fails at once, since a second server could not bind it;
 * nothing listens: Jig launches the command, and if that server later exits on its own, restarts it
   up to ``max_restarts`` times in a row before giving up (logged and audited each time).
+
+Ownership. Jig only ever stops a server it launched. It records that server (pid, process start time and
+command line) in ``<data_dir>/model-server.json``. "Turn Jig off" (``jig stop``, ``POST /power/stop``
+with ``scope = "jig"``) leaves it running and keeps the record, and the next Jig start takes it back
+under supervision ("adopts" it) if the same process, matched on pid *and* start time, still serves the
+endpoint. Anything else at the endpoint is never stopped.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -36,14 +43,22 @@ from urllib.parse import urlsplit
 import httpx
 
 from .config import ModelLaunchConfig
-from .errors import ModelServerUnavailable
+from .errors import JigError, ModelServerUnavailable
 from .model import ModelClient
+from .procinfo import AdoptedProcess, process_start_time
 
 log = logging.getLogger(__name__)
+
+RECORD_FILENAME = "model-server.json"
 
 
 class ModelServerNotReady(ModelServerUnavailable):
     """The model endpoint did not become ready within the readiness timeout, or its launched server exited."""
+
+
+class ModelServerNotManaged(JigError):
+    """Asked to stop (or start) a model server that Jig does not manage. Jig never stops a process it
+    did not start."""
 
 
 # A launched server that ran at least this long before exiting counts as a fresh failure, not a repeated one.
@@ -66,11 +81,16 @@ def _port_in_use(host: str, port: int, timeout_s: float) -> bool:
 
 
 class ModelServerSupervisor:
-    def __init__(self, launch: ModelLaunchConfig, log_dir: Path, *, audit: AuditFn | None = None):
+    def __init__(self, launch: ModelLaunchConfig, log_dir: Path, *, audit: AuditFn | None = None,
+                 state_dir: Path | None = None):
         self.launch = launch
         self.log_path = log_dir / "model-server.log"
-        self.process: subprocess.Popen[bytes] | None = None
+        # Where the ownership record lives (the data directory). Without it, nothing is recorded or adopted.
+        self.record_path = state_dir / RECORD_FILENAME if state_dir is not None else None
+        self.process: subprocess.Popen[bytes] | AdoptedProcess | None = None
         self.reused_running = False
+        self.adopted = False
+        self.stopped_by_user = False
         self.restarts = 0
         self._audit = audit
         self._clients: list[ModelClient] = []
@@ -81,6 +101,11 @@ class ModelServerSupervisor:
     @property
     def configured(self) -> bool:
         return bool(self.launch.command)
+
+    @property
+    def managed(self) -> bool:
+        """True while a server that Jig launched (or adopted) is running under its supervision."""
+        return self.process is not None and self.process.poll() is None
 
     def command_line(self) -> list[str]:
         return [self.launch.command, *self.launch.args]
@@ -105,8 +130,44 @@ class ModelServerSupervisor:
 
     def info(self) -> dict[str, Any]:
         return {"launched": self.process is not None, "pid": self.process.pid if self.process else None,
-                "already_running": self.reused_running, "restarts": self.restarts,
+                "already_running": self.reused_running, "adopted": self.adopted, "managed": self.managed,
+                "stopped_by_user": self.stopped_by_user, "restarts": self.restarts,
                 "command": self.command_line() if self.configured else None}
+
+    # Ownership record ---------------------------------------------------------------------------
+    def _write_record(self) -> None:
+        if self.record_path is None or self.process is None:
+            return
+        self.record_path.parent.mkdir(parents=True, exist_ok=True)
+        self.record_path.write_text(json.dumps({
+            "pid": self.process.pid, "start_time": process_start_time(self.process.pid),
+            "command": self.command_line(), "base_url": self._clients[0].config.base_url if self._clients else None,
+            "launched_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2), encoding="utf-8")
+
+    def _clear_record(self) -> None:
+        if self.record_path is not None:
+            self.record_path.unlink(missing_ok=True)
+
+    def _adoptable(self) -> AdoptedProcess | None:
+        """The server an earlier Jig launched and left running, if this is provably that same process."""
+        if self.record_path is None:
+            return None
+        try:
+            record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return None
+        pid, start = record.get("pid"), record.get("start_time")
+        if record.get("command") != self.command_line() or not isinstance(pid, int) or start is None:
+            log.info("not adopting the model server in %s: it was launched with a different command", self.record_path)
+            return None
+        if process_start_time(pid) != start:
+            self._clear_record()  # that process has exited; the pid may now belong to something else
+            return None
+        try:
+            return AdoptedProcess(pid)
+        except OSError as exc:
+            log.warning("not adopting model server pid %d: %s", pid, exc)
+            return None
 
     async def _launch_unless_running(self, client: ModelClient) -> None:
         base_url = client.config.base_url
@@ -115,6 +176,11 @@ class ModelServerSupervisor:
         except ModelServerUnavailable as exc:
             not_serving = str(exc)
         else:
+            if (adopted := self._adoptable()) is not None:
+                self.process, self.adopted, self._started_at = adopted, True, time.monotonic()
+                log.info("model server at %s is the one an earlier Jig launched (pid %d); supervising it again",
+                         base_url, adopted.pid)
+                return
             self.reused_running = True
             log.info("model server already running at %s (serving %s); not launching %s", base_url,
                      client.model_name, subprocess.list2cmdline(self.command_line()))
@@ -160,6 +226,7 @@ class ModelServerSupervisor:
                 log.error(msg)
                 self._record("model_server.gave_up", msg, pid=p.pid, exit_code=p.returncode, failures=failures)
                 self.process = None
+                self._clear_record()
                 return
             msg = (f"the model server Jig launched (pid {p.pid}) exited with code {p.returncode} after {ran:.0f}s; "
                    f"restarting it in {self.launch.restart_delay_s:.0f}s (restart {failures} of "
@@ -205,18 +272,71 @@ class ModelServerSupervisor:
         finally:
             out.close()
         self._started_at = time.monotonic()
+        self.adopted = False
+        self._write_record()
         log.info("started model server (pid %d): %s; output in %s", self.process.pid,
                  subprocess.list2cmdline(self.command_line()), self.log_path)
 
-    async def stop(self) -> None:
-        """Stop only a server that Jig itself started."""
+    async def _stop_watching(self) -> None:
         self._stopping = True
         if self._watcher is not None:
             self._watcher.cancel()
             await asyncio.gather(self._watcher, return_exceptions=True)
             self._watcher = None
+
+    async def detach(self) -> int | None:
+        """Stop supervising without stopping the server ("Turn Jig off" without the model). The ownership
+        record stays, so the next Jig start adopts it again. Returns its pid, or None if none was running."""
+        await self._stop_watching()
         p, self.process = self.process, None
         if p is None or p.poll() is not None:
+            self._clear_record()
+            return None
+        log.info("leaving the model server (pid %d) running; the next Jig start supervises it again", p.pid)
+        return p.pid
+
+    def _not_managed_reason(self, base_url: str) -> str:
+        if not self.configured:
+            return (f"Jig doesn't manage a model server: [model.launch] has no command, so the server at {base_url} "
+                    "is one you run yourself. Stop it where you started it.")
+        if self.stopped_by_user:
+            return "The model server Jig started is already stopped. Start it again with 'jig model start'."
+        return (f"Jig didn't start the model server at {base_url}: it was already running when Jig started "
+                "(started by hand, or by a service such as Ollama), so Jig won't stop it. Stop it where it runs: "
+                "press Ctrl+C in its window, or stop the service (for Ollama, quit it from the notification-area "
+                "icon, or run 'ollama stop <model>' to unload the model and free the GPU).")
+
+    def require_managed(self, base_url: str) -> None:
+        if not self.managed:
+            raise ModelServerNotManaged(self._not_managed_reason(base_url))
+
+    async def stop_by_user(self, base_url: str) -> int:
+        """Stop the server Jig launched while Jig keeps running ('jig model stop'). Refuses any other."""
+        self.require_managed(base_url)
+        pid = self.process.pid  # type: ignore[union-attr]
+        await self.stop()
+        self.stopped_by_user = True
+        return pid
+
+    async def start_by_user(self) -> dict[str, Any]:
+        """Launch the configured server again after 'jig model stop' (or a give-up), and wait for it."""
+        if not self.configured:
+            raise ModelServerNotManaged("Jig can't start a model server: [model.launch] has no command in the config.")
+        if self.managed:
+            raise ModelServerNotManaged(f"the model server Jig started is already running (pid {self.process.pid})")
+        if not self._clients:
+            raise ModelServerNotManaged("Jig has not finished starting yet; try again in a moment")
+        self._stopping, self.stopped_by_user, self.reused_running, self.restarts = False, False, False, 0
+        return await self.ensure_ready(self._clients)
+
+    async def stop(self) -> None:
+        """Stop only a server that Jig itself started (or adopted)."""
+        await self._stop_watching()
+        p, self.process = self.process, None
+        if p is None:
+            return
+        if p.poll() is not None:
+            self._clear_record()
             return
         log.info("stopping model server (pid %d)", p.pid)
         p.terminate()
@@ -227,6 +347,7 @@ class ModelServerSupervisor:
                         self.launch.stop_timeout_s)
             p.kill()
             await asyncio.to_thread(p.wait)
+        self._clear_record()
 
 
 async def wait_until_ready(client: ModelClient, *, timeout_s: float, poll_interval_s: float = 2.0,

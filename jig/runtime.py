@@ -83,7 +83,7 @@ class Jig:
         self._background: set[asyncio.Task[Any]] = set()
         self.capabilities: dict[str, Any] = {}
         self.model_server = ModelServerSupervisor(
-            config.model_launch, config.data_dir / "logs",
+            config.model_launch, config.data_dir / "logs", state_dir=config.data_dir,
             audit=lambda kind, summary, **data: self.audit.record(kind, summary, actor="runtime", **data))
         self._closed = False
 
@@ -141,7 +141,11 @@ class Jig:
         if self.container:
             self.capabilities["sandbox"] = await self.container.start()
         if self.model_server.configured:
-            if model_server["already_running"]:
+            if model_server["adopted"]:
+                self.audit.record("model_server.adopted", f"supervising the model server an earlier Jig launched "
+                                  f"and left running (pid {model_server['pid']})", actor="runtime",
+                                  base_url=self.config.model.base_url, **model_server)
+            elif model_server["already_running"]:
                 self.audit.record("model_server.already_running", "model server already running; not launching",
                                   actor="runtime", base_url=self.config.model.base_url, model=self.model.model_name,
                                   capabilities_checked=check_capabilities)
@@ -170,9 +174,15 @@ class Jig:
             caps["agent"] |= await self.vision.probe()
         return caps
 
-    async def stop(self) -> None:
+    async def stop(self, *, stop_request: dict[str, Any] | None = None) -> None:
+        """Graceful shutdown. ``stop_request`` comes from 'Turn Jig off' (``POST /power/stop`` or ``jig stop``):
+        with ``scope = "jig"`` a model server that Jig launched is left running for the next start to adopt;
+        with ``"jig_and_model"``, or without a request (Ctrl+C, logoff), it is stopped."""
         if self._closed:
             return
+        scope = (stop_request or {}).get("scope")
+        if stop_request and stop_request.get("via") == "cli":  # the API records its own request before replying
+            self.audit.record("power.stop", f"turn off requested ({scope})", actor="user", scope=scope, via="cli")
         await self.scheduler.stop()
         for t in list(self._background):
             t.cancel()
@@ -180,7 +190,17 @@ class Jig:
         interrupted = self._mark_interrupted("Jig shut down")
         if self.container:
             await self.container.stop()
-        self.audit.record("runtime.stop", "Jig stopped", actor="runtime", interrupted_tasks=interrupted)
+        if self.model_server.managed:
+            pid = self.model_server.process.pid  # type: ignore[union-attr]
+            if scope == "jig":
+                await self.model_server.detach()
+                self.audit.record("model_server.left_running", f"left the model server (pid {pid}) running, as asked; "
+                                  "the next Jig start supervises it again", actor="runtime", pid=pid)
+            else:
+                await self.model_server.stop()
+                self.audit.record("model_server.stopped", f"stopped the model server Jig launched (pid {pid})",
+                                  actor="runtime", pid=pid, scope=scope)
+        self.audit.record("runtime.stop", "Jig stopped", actor="runtime", interrupted_tasks=interrupted, scope=scope)
         await self._close_resources()
 
     async def _close_resources(self) -> None:

@@ -6,6 +6,8 @@ import argparse
 import json
 import sys
 
+import httpx
+
 from ..config import load_config
 from ..instance import request_stop
 from . import AutostartError, LaunchSpec, backend_for, disable, enable, not_applicable_reason
@@ -23,8 +25,10 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
     a.add_argument("--entry", help="task name, launchd label or systemd unit (default: \\Jig\\Jig Agent, "
                                    "io.github.rlesueur.jig or jig.service)")
     a.add_argument("--json", action="store_true", help="machine-readable output")
-    s = sub.add_parser("stop", help="ask the running Jig (for this data directory) to shut down gracefully")
+    s = sub.add_parser("stop", help="turn the running Jig (for this data directory) off gracefully")
     s.add_argument("--data-dir", help="data directory (default: from the config)")
+    s.add_argument("--model", action="store_true",
+                   help="also stop the model server, which frees its GPU memory; only one that Jig launched")
 
 
 def _backend(config, args: argparse.Namespace):
@@ -33,9 +37,30 @@ def _backend(config, args: argparse.Namespace):
 
 
 def run_stop(args: argparse.Namespace) -> int:
+    """``jig stop``: Jig only (a model server Jig launched keeps running). ``jig stop --model``: Jig and the
+    model server, through the running Jig's API, which refuses a server Jig didn't start."""
+    from ..power import CONTAINER_STOP_GUIDANCE, autostart_summary, start_again
+
     config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
-    info = request_stop(config.data_dir)
-    print(f"Asked Jig (pid {info.get('pid')}) to stop; it finishes its shutdown in the background.")
+    if config.deployment == "container":
+        print(f"Not stopped. {CONTAINER_STOP_GUIDANCE}", file=sys.stderr)
+        return 1
+    if args.model:
+        from ..cli import running_api
+
+        base, headers = running_api(config)
+        r = httpx.post(f"{base}/power/stop", headers=headers, json={"scope": "jig_and_model", "confirm": True},
+                       timeout=30)
+        if r.status_code != 202:
+            print(f"Not stopped: {r.json().get('error', r.text)}", file=sys.stderr)
+            return 1
+        body = r.json()
+        print(f"Turning Jig off. Model server: {body['model_server']}.\n{body['start_again']}")
+        return 0
+    info = request_stop(config.data_dir, scope="jig", via="cli")
+    print(f"Asked Jig (pid {info.get('pid')}) to turn off; it finishes its shutdown in the background. A model "
+          "server that Jig started keeps running ('jig stop --model' stops it too).")
+    print(start_again(autostart_summary(config)))
     return 0
 
 
