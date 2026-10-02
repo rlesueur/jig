@@ -44,8 +44,13 @@ Set-Content -Path $Pth.FullName -Encoding ascii -Value @($ZipName, ".", "..\app"
 # Jig and its dependencies, as Windows wheels for this exact Python. Jig itself goes in app\ (next to
 # installed.json, which tells it it was installed this way); its dependencies in Lib\site-packages.
 $Short = ($PyVersion -split "\.")[0..1] -join ""
+# proxy_tools (which pywebview needs) is published only as source. It's one pure-Python module, so its wheel
+# is built here and works on any Windows.
+$Wheels = Join-Path $Cache "wheels"
+& $Python -m pip wheel --disable-pip-version-check --no-deps --wheel-dir $Wheels "proxy_tools==0.1.0"
+if ($LASTEXITCODE -ne 0) { throw "pip couldn't build the proxy_tools wheel" }
 & $Python -m pip install --disable-pip-version-check --no-warn-script-location --only-binary=:all: `
-    --platform win_amd64 --python-version $Short --implementation cp `
+    --platform win_amd64 --python-version $Short --implementation cp --find-links $Wheels `
     --target "$Stage\python\Lib\site-packages" $Root
 if ($LASTEXITCODE -ne 0) { throw "pip couldn't install Jig and its dependencies" }
 Move-Item "$Stage\python\Lib\site-packages\jig" "$Stage\app\jig"
@@ -63,7 +68,7 @@ Set-Content -Path "$Stage\app\installed.json" -Encoding utf8 -Value "{`"installe
 & "$Stage\python\python.exe" -c "import jig.cli, jig.tray, fastapi, uvicorn, cryptography; from jig.api.app import AVATAR_JS, WEB_DIR; assert AVATAR_JS.is_file() and (WEB_DIR / 'index.html').is_file(), 'web UI files missing'; print('Jig loads')"
 if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig" }
 # Jig's window: pywebview, and through pythonnet the .NET Framework that Windows includes.
-& "$Stage\python\python.exe" -c "import jig.desktop, tzlocal, webview, clr; from System.Windows.Forms import Form; import webview.platforms.winforms as w; print('The window loads (engine on this computer: ' + w.renderer + ')')"
+& "$Stage\python\python.exe" -c "import jig.desktop, tzlocal, webview; import webview.platforms.winforms as w; from System.Windows.Forms import Form; print('The window loads (engine on this computer: ' + w.renderer + ')')"
 if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig's window (pywebview and pythonnet)" }
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
