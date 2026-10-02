@@ -6,7 +6,9 @@ $ErrorActionPreference = 'Stop'
 $research = Split-Path -Parent $PSScriptRoot
 $logs = Join-Path $research 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
-$log = Join-Path $logs ("restore-watchdog-{0:yyyyMMdd}.log" -f (Get-Date))
+# Must differ from the Python logger's restore-watchdog-<date>.log: Windows refuses a second open while
+# Out-File below holds this one.
+$log = Join-Path $logs ("restore-watchdog-task-{0:yyyyMMdd}.log" -f (Get-Date))
 $python = Join-Path $research '.venv\Scripts\python.exe'
 Set-Location $research
 "=== $(Get-Date -Format o) restore-watchdog start (pid $PID)" | Add-Content -Path $log -Encoding utf8
