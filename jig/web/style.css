@@ -262,7 +262,8 @@ html[data-jig-state="error"] .avatar-says { color: var(--bad); }
 .msg .content { white-space: pre-wrap; word-break: break-word; }
 .msg .content.md { white-space: normal; }
 .md p, .md ul, .md ol, .md pre, .md hr { margin: 0; }
-.content.md > * + * { margin-top: 0.55em; }
+.content.md > * + *, .md.result > * + * { margin-top: 0.55em; }
+.md.result { margin-top: 6px; }
 .md .md-h { color: var(--heading); }
 .md .md-h1, .md .md-h2 { font-size: 1.12em; }
 .md ul, .md ol { padding-left: 1.4em; }

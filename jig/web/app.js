@@ -1290,13 +1290,18 @@ async function loadApprovals() {
 
 /* ---------- activity detail (one tap deeper) ---------- */
 
+/* Results are Jig's own replies, so they are formatted the same way; errors stay as plain text. */
+function resultBody(text, isError = false) {
+  return isError ? el('pre', { text }) : el('div', { class: 'md result' }, renderMarkdown(text));
+}
+
 function taskItem(t) {
   const outcome = t.error || t.result;
   return el('div', { class: 'item', 'data-testid': 'task', dataset: { id: t.id, status: t.status } },
     el('div', { class: 'item-head' }, statusBadge(t.status), el('span', { class: 'title', text: t.title }),
       el('span', { class: 'status', dataset: { s: 'mode' }, text: t.mode })),
     el('div', { class: 'meta', text: `${t.id} · created ${when(t.created_at)}${t.finished_at ? ` · finished ${when(t.finished_at)}` : ''}` }),
-    outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'Error' : 'Result' }), el('pre', { text: outcome })) : null);
+    outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'Error' : 'Result' }), resultBody(outcome, Boolean(t.error))) : null);
 }
 
 async function loadActivity() {
@@ -1336,7 +1341,7 @@ async function loadActivity() {
       el('div', { class: 'meta', text: `${g.id} · created ${when(g.created_at)}` }),
       g.plan ? el('p', { class: 'body', text: g.plan.summary }) : null,
       g.error ? el('p', { class: 'error-text', text: g.error }) : null,
-      g.result ? el('details', { class: 'body' }, el('summary', { text: 'Result' }), el('pre', { text: g.result })) : null,
+      g.result ? el('details', { class: 'body' }, el('summary', { text: 'Result' }), resultBody(g.result)) : null,
       subtasks.length ? el('div', { class: 'subtasks' }, subtasks.map(taskItem)) : null);
   }));
   if (!goals.length) $('goals').append(empty('No goals yet.'));
@@ -1515,7 +1520,7 @@ function scheduleItem(s) {
     el('p', { class: 'body', 'data-testid': 'schedule-when', text: repeats }),
     el('p', { class: 'hint-quiet', 'data-testid': 'schedule-next', text: next }),
     el('p', { class: t && (t.status === 'failed' || t.status === 'blocked') ? 'error-text' : 'hint-quiet', 'data-testid': 'schedule-last', text: last }),
-    outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'What went wrong' : 'Last result' }), el('pre', { text: outcome })) : null,
+    outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'What went wrong' : 'Last result' }), resultBody(outcome, Boolean(t.error))) : null,
     el('details', { class: 'body' }, el('summary', { text: 'What Jig does each time' }),
       el('p', { text: s.prompt }),
       el('p', { class: 'meta', text: `${s.mode === 'action' ? 'Can act (asks when needed)' : 'Just looks, doesn\u2019t touch'} \u00b7 `
