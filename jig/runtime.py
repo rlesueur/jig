@@ -211,10 +211,10 @@ class Jig:
         return agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
 
     def _turn_context(self, message: str, shown: dict[int, str] | None = None) -> str:
-        """The time, the memories for this message (less those already ``shown``) and the step budget, for
-        the end of the prompt."""
-        return turn_context(self.config.runtime.timezone, chosen_memories(self.memory, shown=shown),
-                            max_steps=self.agent.max_steps)
+        """The time, the memories chosen for this message (less those already ``shown``) and the step budget,
+        for the end of the prompt."""
+        memories = chosen_memories(self.memory, message, how=self.config.runtime.memory_prompt, shown=shown)
+        return turn_context(self.config.runtime.timezone, memories, max_steps=self.agent.max_steps)
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,

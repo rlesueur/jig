@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from ..constants import Effect, Mode, TaskVariant, ToolCategory
-from ..errors import ToolArgumentError, ToolError
+from ..errors import NotFound, ToolArgumentError, ToolError
 from ..recurrence import Recurrence
 from .paging import FIND_ARG, OFFSET_ARG, text_page
 from .registry import ToolContext, ToolRegistry
@@ -223,6 +223,28 @@ def build_registry() -> ToolRegistry:
     async def memory_forget(ctx: ToolContext, memory_id: int) -> dict[str, Any]:
         ctx.memory.forget(memory_id)
         return {"forgotten": memory_id}
+
+    async def describe_memory(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = args.get("memory_id")
+        if not isinstance(memory_id, int) or isinstance(memory_id, bool):
+            return {}
+        try:
+            return {"current_content": ctx.memory.get(memory_id)["content"]}
+        except NotFound:
+            return {"current_content": None, "note": f"memory {memory_id} does not exist"}
+
+    @tool(
+        description="Change what a memory says, by id, when the user corrects it or it is out of date (use the id "
+        "from the memories given to you or from memory_search). Use it only when the user said so; this is "
+        "reviewed like memory_forget.",
+        effect=Effect.SIDE_EFFECT,
+        category=ToolCategory.MEMORY,
+        resolve=describe_memory,
+        args={"memory_id": "Id of the memory to change.", "content": "What it should say now, as one sentence."},
+    )
+    async def memory_update(ctx: ToolContext, memory_id: int, content: str) -> dict[str, Any]:
+        before = ctx.memory.get(memory_id)["content"]
+        return {**ctx.memory.edit(memory_id, content=content), "previous_content": before}
 
     @tool(
         description="Get the current date and time in a timezone (default: the user's own timezone).",

@@ -129,6 +129,9 @@ class RuntimeConfig:
     # Jig starts. After load_config it always holds a checked IANA name (see Config.timezone_from).
     timezone: str = ""
     max_steps: int = 12
+    # Which saved memories each message is given: "recent" (the newest that fit) or "relevant" (all of them when
+    # they fit, otherwise the newest few and the ones that best match the message).
+    memory_prompt: str = "recent"
     max_concurrent_tasks: int = 3
     heartbeat_s: float = 2.0
     # Below this context size Jig logs a warning at start-up (when the server reports its context).
@@ -373,6 +376,8 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         server_raw["port"] = int(v)
 
     runtime = _build(RuntimeConfig, _section(raw, "runtime"), "runtime")
+    if runtime.memory_prompt not in ("relevant", "recent"):
+        raise ConfigError(f'[runtime] memory_prompt must be "relevant" or "recent", not {runtime.memory_prompt!r}')
     timezone_from = "settings" if "timezone" in settings.get("runtime", {}) else "config"
     if runtime.timezone.strip():
         runtime = replace(runtime, timezone=check_timezone(runtime.timezone.strip(), timezone_from))

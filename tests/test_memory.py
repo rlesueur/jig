@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -73,6 +75,49 @@ async def test_conversations_and_tasks_are_given_the_saved_memories(jig):
     assert "What you remember about the user" not in jig._turn_context(ask)
     # The memories are never in the system prompt, which stays the same whatever is remembered.
     assert "Robyn" not in jig._system_prompt(Mode.ACTION)
+
+
+async def test_with_many_memories_the_newest_and_the_matching_ones_are_given(jig):
+    for i in range(80):
+        jig.memory.add(f"Robyn noted fact number {i} about the garden shed and its {i} plant pots")
+    old = jig.memory.add("Robyn's passport number expires in March 2031")
+    for i in range(80, 140):
+        jig.memory.add(f"Robyn noted fact number {i} about the garden shed and its {i} plant pots")
+    newest = jig.memory.list(limit=1)[0]
+    jig.config = replace(jig.config, runtime=replace(jig.config.runtime, memory_prompt="relevant"))
+
+    context = jig._turn_context("When does my passport expire?")
+    assert old["content"] in context, "a memory that matches the message is given, however old"
+    assert newest["content"] in context, "the newest memories are always given"
+    assert f"of {jig.memory.count()} saved memories are shown" in context
+    assert old["content"] not in jig._turn_context("Plan my week"), "a memory that matches nothing is not"
+
+    jig.config = replace(jig.config, runtime=replace(jig.config.runtime, memory_prompt="recent"))
+    assert old["content"] not in jig._turn_context("When does my passport expire?"), "recent: newest only"
+
+
+async def test_memory_update_changes_a_memory_after_review(jig):
+    memory = jig.memory.add("Robyn's dentist is Dr Patel")
+    call = ToolCall(id="u1", name="memory_update", arguments_raw=json.dumps(
+        {"memory_id": memory["id"], "content": "Robyn's dentist is Dr Okafor"}))
+    running = asyncio.create_task(jig.executor.execute(call, CallContext(
+        "r_upd", None, Mode.ACTION, "User message: my dentist is now Dr Okafor, please update your memory")))
+    # The Sentinel may ask the user; the user here says yes.
+    while not running.done():
+        for approval in jig.approvals.list(status="pending"):
+            assert approval["tool"] == "memory_update"
+            jig.approvals.respond(approval["id"], approve=True)
+        await asyncio.sleep(0.25)
+    outcome = running.result()
+    assert outcome.ok, outcome.error
+    assert jig.memory.get(memory["id"])["content"] == "Robyn's dentist is Dr Okafor"
+    assert outcome.policy["sentinel"], "memory_update is reviewed, as memory_forget is"
+
+    research = await jig.executor.execute(
+        ToolCall(id="u2", name="memory_update", arguments_raw=json.dumps({"memory_id": memory["id"],
+                                                                          "content": "x"})),
+        CallContext("r_upd2", None, Mode.RESEARCH, "update"))
+    assert not research.ok and jig.memory.get(memory["id"])["content"] == "Robyn's dentist is Dr Okafor"
 
 
 def test_memory_prompt_is_bounded():
