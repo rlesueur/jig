@@ -2,10 +2,12 @@
 # complete is skipped in seconds, so the queue simply moves on.
 #
 # Safety (D1) runs the published AgentDojo benchmark (MIT) unchanged against Jig's defences; memory (C1)
-# compares long-horizon memory strategies. No attack content is authored; see PROTOCOL.md (v0.4).
+# compares long-horizon memory strategies. No attack content is authored; see PROTOCOL.md (v0.5).
+# C1 runs to completion first. The two D1 v2 runs then take turns, up to per_turn trials each, so both progress.
 # d1_full.yaml (d1-full-v1) is closed: it is the earlier run, superseded by d1_full_v2.yaml.
+# The Qwen reviewer run (d1_full_v2_qwen.yaml) was dropped in v0.5 before it started; see DEVIATIONS.md.
 queue:
   - configs/full/c1_full.yaml
   - configs/full/c1_full_summary.yaml
-  - configs/full/d1_full_v2.yaml
-  - configs/full/d1_full_v2_qwen.yaml
+  - {config: configs/full/d1_full_v2.yaml, per_turn: 200}
+  - {config: configs/full/d1_full_v2_lowmem.yaml, per_turn: 200}

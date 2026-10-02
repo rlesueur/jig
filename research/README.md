@@ -10,6 +10,12 @@ using [Jig](../README.md) as the testbed:
   several model choices, read-only research mode, and the approval queue) reduce the attack success rate of
   **published** prompt-injection benchmarks, and at what cost to utility, false positives and approvals.
 
+**Status (paper version 0.4, protocol v0.5).** The paper is a living preprint. Its safety numbers come from
+an interim AgentDojo run (`d1-full-v1`) and its memory numbers from a pilot, both labelled as such. In
+progress: the full memory run, the whole-suite three-seed safety run `d1-full-v2`, and the low-memory run
+`d1-full-v2-lowmem` (one 8B model as both agent and Sentinel, with peak VRAM measured). The current
+release does not depend on any of them; they are reported as they finish.
+
 This programme authors **no** attack content. Safety is measured only with published benchmark cases run
 unchanged. Nothing here modifies Jig's core. The harness drives the real Jig runtime, real local models
 and real local services.

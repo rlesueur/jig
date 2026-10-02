@@ -45,21 +45,30 @@ names a run (`name`), an experiment (`d1` safety on AgentDojo, `c1` memory on Lo
 A config with `closed: <reason>` is an earlier run that must not be resumed: the runner refuses it.
 `tests/test_configs.py` checks that every model a config names is in the catalogue.
 
-Current protocol runs (v0.4):
+Current protocol runs (v0.5):
 
 | Config | Run | Notes |
 |---|---|---|
 | `full/d1_full.yaml` | `d1-full-v1` | **Closed** earlier run (subsample, seed 0, before the bare-URL fix). |
-| `full/d1_full_v2.yaml` | `d1-full-v2` | Whole suites, seeds 0–2, Jig's default sampling sent explicitly. |
-| `full/d1_full_v2_qwen.yaml` | `d1-full-v2-qwen` | The Qwen reviewer condition (refused by the VRAM guard while 8080 is up). |
+| `full/d1_full_v2.yaml` | `d1-full-v2` | In progress. Whole suites, seeds 0–2, Jig's default sampling sent explicitly. |
+| `full/d1_full_v2_lowmem.yaml` | `d1-full-v2-lowmem` | In progress. granite 4.2 8B Q4_K_M (upstream llama.cpp) as agent and Sentinel; seed 0. |
 | `full/c1_full.yaml` | `c1-full-v1` | Four memory strategies, 30 questions. |
 | `full/c1_full_summary.yaml` | `c1-full-v1-summary-nolimit` | Rolling summary without a word limit. |
 
+The Qwen reviewer run (`d1-full-v2-qwen`) was dropped in v0.5 before it started (see `DEVIATIONS.md`).
+
+Every trial records `vram_peak_mib`: the peak dedicated GPU memory of the model-server processes behind its
+endpoints, read every 2 s from the Windows counter `\GPU Process Memory(*)\Dedicated Usage` (`jigbench/vram.py`;
+nvidia-smi gives no per-process figures under WDDM). The report shows the maximum per row. A server's
+`vram_needed_mib` replaces the VRAM guard's estimate with a measured figure where the estimate is too low.
+
 ## Queue and scheduled tasks
 
-`harness/configs/queue.yaml` lists configs in priority order. `overnight` takes each in turn and resumes it.
-If an entry cannot start (for example, the VRAM guard refuses its server), that entry is logged as an error
-and the queue moves on to the next one. A finished entry is skipped in seconds.
+`harness/configs/queue.yaml` lists configs in priority order. `overnight` goes round the queue and resumes
+each entry. A plain entry runs to completion when its turn comes. An entry written
+`{config: ..., per_turn: N}` runs at most N trials per turn, so such entries alternate. Rounds repeat until
+one finishes no new trial. If an entry cannot start (for example, the VRAM guard refuses its server), that
+entry is logged as an error and the queue moves on to the next one. A finished entry is skipped in seconds.
 
 Two Windows scheduled tasks, both per-user, run only while the user is logged on and never wake the
 computer:

@@ -26,6 +26,7 @@ SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
         ("memories_final", "Memories kept", "mean", None),
         ("approvals", "Approvals/question", "mean", None),
         ("wall_s", "Wall s/question", "mean", None),
+        ("vram_peak_mib", "Peak VRAM MiB", "max", None),
     ]),
     "d1": (["condition", "attack"], [
         ("attack_success", "Attack success", "rate", lambda r: r.get("attack") != "none"),
@@ -34,6 +35,7 @@ SPECS: dict[str, tuple[list[str], list[tuple[str, str, str, Any]]]] = {
         ("tool_errors", "Tool errors", "mean", None),
         ("approvals", "Approvals", "mean", None),
         ("duration_s", "Wall s/task", "mean", None),
+        ("vram_peak_mib", "Peak VRAM MiB", "max", None),
     ]),
 }
 
@@ -87,6 +89,8 @@ def summarise(exp: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if kind == "rate":
                 k = sum(1 for v in vals if v)
                 row[label] = {"k": k, "n": len(vals), "ci": wilson(k, len(vals))}
+            elif kind == "max":
+                row[label] = {"n": len(vals), "max": max(vals) if vals else None}
             else:
                 row[label] = {"n": len(vals), "ci": bootstrap_mean([float(v) for v in vals])}
         out.append(row)
@@ -96,6 +100,8 @@ def summarise(exp: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _cell(v: Any, kind: str) -> str:
     if not isinstance(v, dict):
         return str(v)
+    if kind == "max":
+        return "--" if v["max"] is None else f"{v['max']:,}"
     p, lo, hi = v["ci"]
     if kind == "rate":
         return f"{v['k']}/{v['n']} = {fmt_ci(p, lo, hi)}" if v["n"] else "--"
@@ -130,7 +136,8 @@ def latex(exp: str, run_name: str, table: list[dict[str, Any]], tag: str) -> str
         f"% tag: {tag}",
         r"\begin{table*}[t]\centering\scriptsize",
         rf"\caption{{{tag}{exp.upper()} results ({_tex_escape(run_name)}). Rates are $k/n$ with Wilson 95\% intervals; "
-        r"means have percentile-bootstrap 95\% intervals.}",
+        r"means have percentile-bootstrap 95\% intervals. Peak VRAM is the maximum over the row's trials of the "
+        r"model servers' dedicated GPU memory (-- where trials predate its recording).}",
         rf"\label{{tab:{exp}-{run_name}}}",
         r"\resizebox{\textwidth}{!}{%",
         rf"\begin{{tabular}}{{{cols}}}\toprule",

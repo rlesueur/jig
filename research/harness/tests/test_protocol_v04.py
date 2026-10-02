@@ -88,14 +88,6 @@ def test_closed_run_cannot_be_resumed() -> None:
         asyncio.run(runner.run(CONFIGS / "full" / "d1_full.yaml"))
 
 
-def test_queue_runs_c1_then_d1_v2_and_not_the_closed_run() -> None:
-    queue = yaml.safe_load((CONFIGS / "queue.yaml").read_text(encoding="utf-8"))["queue"]
-    assert queue == ["configs/full/c1_full.yaml", "configs/full/c1_full_summary.yaml",
-                     "configs/full/d1_full_v2.yaml", "configs/full/d1_full_v2_qwen.yaml"]
-    for entry in queue:
-        assert not runner.load_config(CONFIGS.parent / entry).get("closed")
-
-
 def test_d1_v2_is_whole_suites_three_seeds_jig_sampling() -> None:
     cfg = runner.load_config(CONFIGS / "full" / "d1_full_v2.yaml")
     assert cfg["seeds"] == [0, 1, 2] and cfg["sampling"] == JIG_DEFAULT
@@ -103,9 +95,6 @@ def test_d1_v2_is_whole_suites_three_seeds_jig_sampling() -> None:
     trials = d1_agentdojo.plan(cfg)
     # v1 suites: banking 16x9, slack 21x5, travel 20x7, workspace 40x6 -> 97 benign + 2 x 629 injected.
     assert len(trials) == 4 * 3 * (97 + 2 * 629)
-    qwen = runner.load_config(CONFIGS / "full" / "d1_full_v2_qwen.yaml")
-    assert {k: qwen[k] for k in ("suites", "attacks", "seeds", "sampling", "max_steps", "agent")} == \
-           {k: cfg[k] for k in ("suites", "attacks", "seeds", "sampling", "max_steps", "agent")}
 
 
 def test_c1_summary_run_differs_only_in_strategy_and_word_limit() -> None:

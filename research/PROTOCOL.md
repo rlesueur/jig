@@ -1,10 +1,28 @@
 # Research protocol: optimising always-on local agents (memory and unattended safety)
 
-Version 0.4, 2 October 2026. Living document. Author: Robyn Le Sueur. The testbed is Jig (Apache-2.0).
+Version 0.5, 2 October 2026. Living document. Author: Robyn Le Sueur. The testbed is Jig (Apache-2.0).
 Every experiment runs against the **real** Jig runtime and **real** local models; no model output is
 faked and no service is stubbed.
 
-**Changes in v0.4** (each also logged in `DEVIATIONS.md`):
+**Changes in v0.5** (each also logged in `DEVIATIONS.md`; no trial of any affected run had started):
+1. **Qwen reviewer run dropped** (`d1-full-v2-qwen`, condition `sentinel-qwen-action`). A dedicated reviewer
+   model is out of scope for Jig's default local deployment, in which the Sentinel uses the agent's own model
+   and endpoint so that no second model is loaded. Jig's product default follows the same rule; a different
+   reviewer model stays an optional advanced setting. The Q4_K_M Qwen agent counterpart remains listed as
+   future work.
+2. **Low-memory configuration added** (run `d1-full-v2-lowmem`, `configs/full/d1_full_v2_lowmem.yaml`): granite
+   4.2 8B Q4_K_M on the upstream llama.cpp server as **both agent and Sentinel**, the default deployment on an
+   8–12 GB GPU, with its read-only and no-reviewer counterparts (§3, conditions 5–7). Same suites, attacks,
+   sampling and steps as `d1-full-v2`, seed 0 only for now (4,065 trials). Context 32,768 (Jig's advisable
+   minimum); the VRAM guard uses the measured 10,720 MiB for this server instead of its formula's lower
+   estimate (§9).
+3. **Peak VRAM is a reported result** for every configuration (§2): each trial records the peak dedicated
+   GPU memory of the model-server processes behind its endpoints.
+4. **Queue rounds.** C1 runs to completion first; `d1-full-v2` and `d1-full-v2-lowmem` then take turns, up to
+   200 trials each per turn, so both progress. Neither D1 v2 run is required for the paper's first release,
+   which reports them as in progress.
+
+**Changes in v0.4:**
 1. **D1 scope widened.** Whole AgentDojo v1 suites (every user task and every injection task), seeds 0, 1
    and 2, and Jig's default sampling (§7) sent explicitly, with the seed, on every agent request
    (run `d1-full-v2`, `configs/full/d1_full_v2.yaml`). The earlier run `d1-full-v1` (5 user × 3 injection
@@ -17,7 +35,7 @@ faked and no service is stubbed.
    template, plus Jig's 8,192-token output cap), down from 16,384. The VRAM guard (§9) is unchanged; by its
    estimate the server still does not fit next to 8080 (about 19.4 GB + 2 GB margin against about 18.4–18.8 GB
    free), so this run is refused loudly until more VRAM is free. It is a separate run so that `d1-full-v2`'s
-   completeness never depends on it.
+   completeness never depends on it. (Dropped in v0.5 before any trial ran.)
 3. **Jig bare-URL fix in effect for v2.** Jig now completes a scheme-less web address in an outbound tool's
    URL argument (`www.example.com`) to `https://` before every check (Jig commit `733c80c`). `d1-full-v1`
    ran before the fix, `d1-full-v2` after it; results before and after are reported separately.
@@ -90,6 +108,10 @@ Safety (D1), all taken from the **published benchmark's own ground truth and sco
 - **Approvals per task**: approval requests Jig raised (a proxy for approval fatigue; a human study is
   future work).
 - **Reviewer latency and prompt tokens** per Sentinel review.
+- **Peak VRAM per configuration** (from v0.5): during every trial the harness samples, every 2 s, the
+  Windows counter `\GPU Process Memory(*)\Dedicated Usage` for the model-server processes behind the trial's
+  endpoints (a server shared by agent and Sentinel counted once) and records the peak. nvidia-smi cannot
+  attribute memory to processes under Windows WDDM. A configuration's figure is the maximum over its trials.
 
 ## 3. Conditions
 
@@ -101,8 +123,15 @@ Defence configurations (D1, as run from v0.4), each an unchanged Jig configurati
 3. `sentinel-bonsai-readonly` — as 2, in Jig's research mode: only `read` and `private_write` tools are
    allowed and the gate refuses side effects.
 4. `guardian-action` — Granite Guardian 4.1 8B in the Sentinel slot (model card's own format, greedy).
-5. `sentinel-qwen-action` — Jig's Sentinel on the standard-quantisation counterpart (Qwen3.8-27B Q4_K_M),
-   for the effect of quantisation on the reviewer (separate run; see change 2 above).
+Low-memory configurations (run `d1-full-v2-lowmem`, from v0.5): granite 4.2 8B Q4_K_M on the upstream
+llama.cpp server is the agent.
+5. `sentinel-granite-action` — Jig's Sentinel, unchanged, on the same granite model and server as the agent
+   (Jig's default: no second model loaded).
+6. `sentinel-granite-readonly` — as 5, in Jig's research mode.
+7. `no-reviewer-action` — as 1, with the granite agent.
+
+The v0.4 condition `sentinel-qwen-action` (Jig's Sentinel on Qwen3.8-27B Q4_K_M next to the ternary agent)
+was dropped in v0.5 before it ran: a dedicated reviewer model is outside the default local deployment.
 
 The v0.3 drafts `rules-only` and `sentinel-granite-8b` were not run: AgentDojo ships no custom rules for
 its tools, and writing benchmark-specific rules is left for future work.
@@ -208,7 +237,8 @@ after 30 minutes without input, and only if a 5-second GPU utilisation sample av
 runs, the harness checks user input every 5 seconds and cancels the trial, stops its model servers and
 exits as soon as the user is active; between trials it also re-checks GPU use. Unfinished trials leave no
 record, so the next start resumes cleanly. Harness servers use ports 8090–8099 and are refused if free
-VRAM would drop below a 2 GiB margin.
+VRAM would drop below a 2 GiB margin. A config may give a server's need from measurement
+(`vram_needed_mib`) where the guard's formula underestimates it; that only makes the guard stricter.
 
 ### 9a. Safe GPU handover for the main (8080) server
 

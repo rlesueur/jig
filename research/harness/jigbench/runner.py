@@ -29,9 +29,10 @@ from .experiments.common import conditions
 from .paths import RESULTS
 from .servers import LlamaServer, ServerError, ServerSpec
 from .services import BenchServices, ServiceError
+from .vram import PeakSampler, VramError, listening_pid
 
 log = logging.getLogger("jigbench")
-FATAL = (ModelServerUnavailable, ServerError, ServiceError)
+FATAL = (ModelServerUnavailable, ServerError, ServiceError, VramError)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -102,6 +103,11 @@ class RunContext:
                 self.endpoint_info[name] = provenance.endpoint_info(ep["base_url"])
             self.write_run_json()
 
+    def server_pids(self, names: set[str]) -> dict[str, int]:
+        """The process behind each endpoint: ours by handle, any other (e.g. the user's 8080) by its port."""
+        return {n: (self.servers[n].pid if n in self.servers else listening_pid(self.endpoints[n]))
+                for n in sorted(names)}
+
     def stop_all(self) -> None:
         for srv in self.servers.values():
             srv.stop()
@@ -165,21 +171,26 @@ async def run(config_path: Path, *, policy: Policy | NoPolicy | None = None, lim
     if not ok:
         summary["paused"] = why
         return summary
+    sampler = PeakSampler()
     services = BenchServices()
     services.start()
     ctx = RunContext(cfg=cfg, out_dir=out_dir, raw_dir=out_dir / "raw", services=services)
     ctx.write_run_json()
     reason = "finished"
     try:
+        sampler.start()
         for trial in todo:
             if why := policy.between_trials():
                 raise Paused(why)
-            ctx.ensure(endpoints_for(cfg, trial["condition"]))
+            names = endpoints_for(cfg, trial["condition"])
+            ctx.ensure(names)
+            sampler.watch(ctx.server_pids(names))
             started = time.time()
             rec: dict[str, Any]
             try:
                 result = await _guarded(exp.run_trial(ctx, trial), policy)
-                rec = {**result, "status_harness": "ok"}
+                vram = sampler.take()
+                rec = {**result, "status_harness": "ok", "vram_peak_mib": vram["total_mib"], "vram_peak": vram}
             except (Paused, *FATAL):
                 raise
             except Exception as exc:
@@ -202,6 +213,7 @@ async def run(config_path: Path, *, policy: Policy | NoPolicy | None = None, lim
         summary["paused"] = str(p)
         log.warning("run paused: %s", p)
     finally:
+        sampler.stop()
         ctx.stop_all()
         ctx.close_session(reason)
         if stop_services:

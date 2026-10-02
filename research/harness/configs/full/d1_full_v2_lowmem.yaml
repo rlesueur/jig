@@ -1,0 +1,32 @@
+# D1 full v2, low-memory configuration (protocol v0.5): AgentDojo (MIT, arXiv:2406.13352) run unchanged, with
+# one small model as both agent and Sentinel, the default local deployment on an 8-12 GB GPU.
+# granite 4.2 8B Q4_K_M on the upstream llama.cpp server (not the PrismML build). Identical to d1_full_v2.yaml
+# in suites, attacks, sampling and steps; 1 seed for now (more seeds are a later decision, recorded if taken).
+# No attack content is authored here; AgentDojo ships every injection string.
+#
+# Context: 32768, Jig's advisable minimum ([runtime] min_context_tokens). VRAM: measured on 2 Oct 2026 with
+# this model, -ngl 99 -c 32768 --parallel 1 --jinja: server buffers 4,876 MiB weights + 5,120 MiB KV cache +
+# 204 MiB compute, and total GPU memory rose by 10,621 MiB; a 4-trial smoke run of this config on the
+# harness's upstream build (b8664) recorded a per-process peak of 10,718 MiB. The guard uses that
+# measurement (its formula would estimate about 7,150 MiB, too low for this model's KV cache).
+name: d1-full-v2-lowmem
+experiment: d1
+benchmark: {name: AgentDojo, version: v1, licence: MIT, url: "https://github.com/ethz-spylab/agentdojo",
+            citation: "arXiv:2406.13352"}
+
+suites: [banking, slack, travel, workspace]
+attacks: ["none", "important_instructions", "injecagent"]
+seeds: [0]
+max_steps: 20
+sampling: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.05}
+
+endpoints:
+  granite8b: {server: {model: granite42-8b, port: 8094, ctx: 32768, parallel: 1, build: upstream,
+                       vram_needed_mib: 10720}}
+
+agent: {endpoint: granite8b, name: granite42-8b}
+
+conditions:
+  - {id: sentinel-granite-action, reviewer: model, sentinel: {endpoint: granite8b, name: granite42-8b}, mode: action}
+  - {id: sentinel-granite-readonly, reviewer: model, sentinel: {endpoint: granite8b, name: granite42-8b}, mode: research}
+  - {id: no-reviewer-action, reviewer: none, mode: action}

@@ -32,10 +32,23 @@ def _acquire() -> bool:
     return True
 
 
+def entries(queue: Path) -> list[tuple[Path, int | None]]:
+    """Queue entries as (config, trials per turn). A plain path runs to completion when its turn comes; an
+    entry `{config: ..., per_turn: N}` runs at most N trials per turn, so such entries take turns."""
+    out = []
+    for entry in yaml.safe_load(queue.read_text(encoding="utf-8"))["queue"]:
+        path, per_turn = (entry, None) if isinstance(entry, str) else (entry["config"], int(entry["per_turn"]))
+        out.append(((HARNESS / path).resolve() if not Path(path).is_absolute() else Path(path), per_turn))
+    return out
+
+
 def overnight(queue: Path, policy: Policy | NoPolicy | None = None) -> int:
     """Returns 0 when the queue finished or paused politely, 1 when an entry could not start (for example a
     model server refused for lack of VRAM). Such an entry is logged as an error and the queue moves on to the
-    next one; the refused entry is retried in the next window. Its finished trials are kept."""
+    next one; the refused entry is retried in the next window. Its finished trials are kept.
+
+    The queue is gone through in rounds until a round finishes no new trial, so entries with `per_turn`
+    alternate (an entry that keeps erroring stops a round from counting as progress)."""
     if not _acquire():
         return 0
     try:
@@ -44,22 +57,27 @@ def overnight(queue: Path, policy: Policy | NoPolicy | None = None) -> int:
         log.info("compute policy: %s", why)
         if not ok:
             return 0
-        entries = yaml.safe_load(queue.read_text(encoding="utf-8"))["queue"]
+        todo = entries(queue)
         blocked: list[str] = []
-        for entry in entries:
-            cfg = (HARNESS / entry).resolve() if not Path(entry).is_absolute() else Path(entry)
-            log.info("queue: %s", cfg)
-            try:
-                summary = asyncio.run(run(cfg, policy=policy, stop_services=True))
-            except FATAL as exc:
-                log.error("queue: %s could not run now (%s: %s); moving on to the next entry",
-                          cfg.name, type(exc).__name__, exc)
-                blocked.append(cfg.name)
-                continue
-            log.info("queue: %s -> %s", cfg.name, summary)
-            if summary["paused"]:
-                log.info("stopping for now: %s", summary["paused"])
-                return 1 if blocked else 0
+        progressed = True
+        while progressed:
+            progressed = False
+            for cfg, per_turn in todo:
+                if cfg.name in blocked:
+                    continue
+                log.info("queue: %s%s", cfg, f" (up to {per_turn} trials this turn)" if per_turn else "")
+                try:
+                    summary = asyncio.run(run(cfg, policy=policy, limit=per_turn, stop_services=True))
+                except FATAL as exc:
+                    log.error("queue: %s could not run now (%s: %s); moving on to the next entry",
+                              cfg.name, type(exc).__name__, exc)
+                    blocked.append(cfg.name)
+                    continue
+                log.info("queue: %s -> %s", cfg.name, summary)
+                if summary["paused"]:
+                    log.info("stopping for now: %s", summary["paused"])
+                    return 1 if blocked else 0
+                progressed |= summary["ran"] > summary["errors"]
         if blocked:
             log.error("queue incomplete: %s could not run; writing report", ", ".join(blocked))
             report()
