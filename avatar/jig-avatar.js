@@ -114,6 +114,8 @@ const SHOULDER_R = { x: 566, y: 478 };
 const TAIL_TOP = 462;
 const TAIL_TIP = { x: 498, y: 908 };
 const CENTRE = { x: 508, y: 500 };
+/* arms, hands and fingers keep at least this far outside the head (world units) so none of them hides behind it */
+const ARM_MARGIN = 12;
 
 export const STATES = ['idle', 'monitoring', 'thinking', 'working', 'talking', 'approval', 'success', 'error', 'paused', 'dance'];
 export const TASKS = ['browsing', 'writing', 'coding', 'shopping', 'scheduling'];
@@ -145,8 +147,8 @@ const BASE_POSE = {
   tilt: -0.1, drop: 0,
   aL: 208, lL: 222, bL: -42, aR: 8, lR: 215, bR: 34, spreadL: 1, spreadR: 0.85, waveR: 0, typing: 0,
   cool: 0, amber: 0, desat: 0, timeScale: 1, dim: 0,
-  /* expression and life: cheek blush, happy squint, worried brows, ear droop (+) or perk (-), rhythmic groove */
-  blush: 0.55, squint: 0.12, brow: 0, earDroop: 0, groove: 0, fidget: 1,
+  /* expression and life: worried brows, ear droop (+) or perk (-), rhythmic groove */
+  brow: 0, earDroop: 0, groove: 0, fidget: 1,
   wThink: 0, wWatch: 0, wTalk: 0, wApprove: 0, wSuccess: 0, wError: 0, wPause: 0, wDance: 0,
   wBrowse: 0, wWrite: 0, wCode: 0, wShop: 0, wCal: 0,
 };
@@ -157,41 +159,40 @@ const STATE_POSES = {
   monitoring: {
     energy: 0.55, bobAmp: 4, bobFreq: 0.26, breath: 0.7, swirl: 0.03, sway: 14, swayFreq: 0.16, orbit: 0.016, wave: 8,
     eyeOpen: 0, smile: 0.7, tilt: -0.04, drop: 14, aL: 166, lL: 186, bL: -26, aR: 18, lR: 188, bR: 26,
-    spreadL: 0.5, spreadR: 0.5, desat: 0.12, wWatch: 1, blush: 0.4, earDroop: 0.12, fidget: 0.4,
+    spreadL: 0.5, spreadR: 0.5, desat: 0.12, wWatch: 1, earDroop: 0.12, fidget: 0.4,
   },
   thinking: {
     energy: 1.1, bobFreq: 0.75, swirl: 0.42, sway: 36, swayFreq: 0.8, wave: 22, orbit: 0.22, lookX: 0.3, lookY: -1,
-    smile: 0.55, tilt: 0.16, aL: 228, lL: 172, bL: -60, aR: 24, lR: 178, bR: 36, wThink: 1, earDroop: -0.06, squint: 0,
+    smile: 0.55, tilt: 0.16, aL: 228, lL: 172, bL: -60, aR: 24, lR: 178, bR: 36, wThink: 1, earDroop: -0.06,
   },
   working: { energy: 1.05, swirl: 0.2, orbit: 0.1, sway: 30, swayFreq: 0.6, wave: 18, bobFreq: 0.7, groove: 1, fidget: 0.5 },
   talking: {
     energy: 1.05, swirl: 0.12, sway: 30, swayFreq: 0.5, smile: 1.05, aL: 200, aR: 12, spreadL: 1.1, wTalk: 1, groove: 0.4,
-    blush: 0.7, squint: 0.2,
   },
   approval: {
     energy: 1.15, bobAmp: 14, bobFreq: 1.05, swirl: 0.14, eyeOpen: 1.08, smile: 1.15, tilt: 0.16,
-    aL: 196, lL: 200, aR: -34, lR: 232, bR: 46, spreadR: 1.25, waveR: 1, amber: 1, wApprove: 1, earDroop: -0.14, squint: 0,
+    aL: 196, lL: 200, aR: -34, lR: 232, bR: 46, spreadR: 1.25, waveR: 1, amber: 1, wApprove: 1, earDroop: -0.14,
   },
   success: {
     energy: 1.25, bobAmp: 12, bobFreq: 1.2, swirl: 0.32, orbit: 0.2, sway: 40, swayFreq: 0.9, happy: 1, smile: 1.4,
-    mouthOpen: 0.32, tilt: 0, aL: 224, lL: 232, aR: -44, lR: 232, spreadL: 1.3, spreadR: 1.3, wSuccess: 1, blush: 1,
-    squint: 0.5, earDroop: -0.1,
+    mouthOpen: 0.32, tilt: 0, aL: 224, lL: 232, aR: -44, lR: 232, spreadL: 1.3, spreadR: 1.3, wSuccess: 1,
+    earDroop: -0.1,
   },
   /* error is worried and apologetic, never cross: soft frown, brows raised in the middle, ears drooping */
   error: {
     energy: 0.78, bobAmp: 3, bobFreq: 0.28, swirl: 0.025, sway: 10, swayFreq: 0.16, flare: 0.75, orbit: 0.012, wave: 7,
-    eyeOpen: 1.02, lookY: 0.45, sad: 0.45, smile: -0.35, tilt: 0.2, drop: 34, brow: 1, blush: 0.65, squint: 0,
+    eyeOpen: 1.02, lookY: 0.45, smile: -0.35, tilt: 0.2, drop: 34, brow: 1,
     aL: 132, lL: 186, bL: 32, aR: 52, lR: 186, bR: -32, spreadL: 0.6, spreadR: 0.6, cool: 0.6, wError: 1,
     earDroop: 0.42, fidget: 0.3,
   },
   /* paused is peacefully asleep */
   paused: {
-    energy: 0.66, desat: 0.62, timeScale: 0.14, smile: 0.75, eyeOpen: 0, wPause: 1, blush: 0.35, earDroop: 0.26,
+    energy: 0.66, desat: 0.62, timeScale: 0.14, smile: 0.75, eyeOpen: 0, wPause: 1, earDroop: 0.26,
     fidget: 0, tilt: 0.06,
   },
   dance: {
     energy: 1.25, bobAmp: 4, bobFreq: 0.6, swirl: 0.28, orbit: 0.16, sway: 22, swayFreq: 0.5, wave: 18, smile: 1.35,
-    mouthOpen: 0.15, tilt: 0, aL: 214, lL: 228, aR: -6, lR: 226, spreadL: 1.25, spreadR: 1.2, blush: 1, squint: 0.45,
+    mouthOpen: 0.15, tilt: 0, aL: 214, lL: 228, aR: -6, lR: 226, spreadL: 1.25, spreadR: 1.2,
     wDance: 1, fidget: 0,
   },
 };
@@ -1071,6 +1072,11 @@ export class JigAvatar extends HTMLElement {
     const d = this._dpr * scale;
     ctx.setTransform(d, 0, 0, d, this._dpr * (this._cssW / 2) - view.x * d, this._dpr * (this._cssH / 2) - view.y * d);
 
+    if (this._debugLayer) {
+      this._paintDebugLayer();
+      ctx.restore();
+      return;
+    }
     if (shape !== 'none' && !this._light) this._drawBackground(view);
 
     ctx.globalCompositeOperation = this._addOp;
@@ -1082,20 +1088,9 @@ export class JigAvatar extends HTMLElement {
     this._drawTaskBack(shardFrames);
     this._drawSparks(m);
 
-    const P = this._pose;
     this._drawBase();
     ctx.save();
-    /* the whole character hops, sways and squashes about its ribbon foot; the pool stays on the ground */
-    const fx = TAIL_TIP.x + P.footX + P.groupX;
-    ctx.translate(fx, TAIL_TIP.y);
-    ctx.scale(P.sqX, P.sqY);
-    ctx.translate(-fx + P.groupX, -TAIL_TIP.y - P.hop);
-    if (P.spinX !== 1) {
-      const cx = HEAD.x + P.headDX;
-      ctx.translate(cx, 0);
-      ctx.scale(P.spinX, 1);
-      ctx.translate(-cx, 0);
-    }
+    this._applyGroup();
     this._drawTail();
     this._drawArms();
     this._drawHead();
@@ -1107,6 +1102,65 @@ export class JigAvatar extends HTMLElement {
     this._drawBurst();
     this._drawOverlays();
     ctx.restore();
+  }
+
+  /* the whole character hops, sways and squashes about its ribbon foot; the pool stays on the ground */
+  _applyGroup() {
+    const ctx = this._ctx;
+    const P = this._pose;
+    const fx = TAIL_TIP.x + P.footX + P.groupX;
+    ctx.translate(fx, TAIL_TIP.y);
+    ctx.scale(P.sqX, P.sqY);
+    ctx.translate(-fx + P.groupX, -TAIL_TIP.y - P.hop);
+    if (P.spinX !== 1) {
+      const cx = HEAD.x + P.headDX;
+      ctx.translate(cx, 0);
+      ctx.scale(P.spinX, 1);
+      ctx.translate(-cx, 0);
+    }
+  }
+
+  /* Flat masks of one layer of the current frame, for checking that arms never hide behind the head. */
+  _paintDebugLayer() {
+    const ctx = this._ctx;
+    ctx.save();
+    this._applyGroup();
+    if (this._debugLayer === 'arms') {
+      this._drawArms();
+    } else {
+      const h = this._pose.head;
+      ctx.translate(h.x, h.y);
+      ctx.rotate(h.tilt);
+      ctx.scale(h.s, h.s);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, HEAD.rx, HEAD.ry, 0, 0, TAU);
+      ctx.fillStyle = 'rgb(255,0,0)';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Test hook: draws the current frame's arms (green) or head (red) as flat masks and returns the pixels,
+   * then redraws the normal frame. Does not advance time.
+   * @param {'arms'|'head'} layer
+   */
+  layerMask(layer) {
+    if (layer !== 'arms' && layer !== 'head') throw new RangeError(`jig-avatar: unknown mask layer "${layer}". Expected arms or head`);
+    if (!this._pose) throw new Error('jig-avatar: no frame drawn yet');
+    const m = this._reduced ? 0.15 : 1;
+    const light = this._light;
+    this._debugLayer = layer;
+    let data;
+    try {
+      this._paint(m);
+      data = this._ctx.getImageData(0, 0, this._canvas.width, this._canvas.height).data;
+    } finally {
+      this._debugLayer = null;
+      this._light = light;
+      this._render(m);
+    }
+    return data;
   }
 
   _tone(c, amberMix = 0) {
@@ -1226,7 +1280,7 @@ export class JigAvatar extends HTMLElement {
   _danceMoves(dt) {
     const cur = this._cur;
     const out = {
-      w: 0, hop: 0, sway: 0, foot: 0, tilt: 0, aL: 0, aR: 0, spin: 1, happy: 0, squint: 0, smile: 0, mouth: 0,
+      w: 0, hop: 0, sway: 0, foot: 0, tilt: 0, aL: 0, aR: 0, spin: 1, happy: 0, smile: 0, mouth: 0,
       swirl: 0, wave: 0, wink: 0, spread: 0,
     };
     if (this._reduced) return out;
@@ -1277,7 +1331,6 @@ export class JigAvatar extends HTMLElement {
         out.tilt = 0.12 * swing;
         out.aL = 30 * swing;
         out.aR = 30 * swing;
-        out.squint = 0.5;
         out.smile = 0.35;
         out.mouth = 0.2;
         out.wave = 12 * bounce;
@@ -1289,7 +1342,6 @@ export class JigAvatar extends HTMLElement {
         out.tilt = 0.1 * Math.sin(Math.PI * b);
         out.aL = 50 + 18 * Math.sin(TAU * b);
         out.aR = -54 + 18 * Math.sin(TAU * b + Math.PI);
-        out.squint = 0.8;
         out.smile = 0.6;
         out.mouth = 0.45;
         out.wave = 18 * bounce;
@@ -1312,7 +1364,6 @@ export class JigAvatar extends HTMLElement {
         out.aL = 52;
         out.aR = -58;
         out.tilt = 0.14 * ease(clamp(p * 2, 0, 1));
-        out.squint = 0.15;
         out.smile = 0.7;
         out.mouth = 0.5;
         out.wink = Math.sin(Math.PI * clamp((p - 0.15) * 1.6, 0, 1));
@@ -1432,8 +1483,8 @@ export class JigAvatar extends HTMLElement {
       eyeOpen: clamp(eyeOpen, 0, 1.15), lookX: clamp(lookX, -1, 1), lookY: clamp(lookY, -1, 1),
       head, aL, aR, curlL, curlR, audio, faceA: Math.max(0, D.spin),
       earL: earL + cur.earDroop, earR: earR + cur.earDroop,
-      happy, winkR, squint: clamp(cur.squint + D.squint, 0, 0.62), smile: cur.smile + D.smile,
-      mouthOpen: cur.mouthOpen + D.mouth, blush: cur.blush, swirl: D.swirl, waveBoost: D.wave, dance: D.w,
+      happy, winkR, smile: cur.smile + D.smile,
+      mouthOpen: cur.mouthOpen + D.mouth, swirl: D.swirl, waveBoost: D.wave, dance: D.w,
       amberPulse: cur.amber * (0.55 + 0.45 * Math.sin(ph.pulse * 1.6)),
     };
   }
@@ -2145,43 +2196,101 @@ export class JigAvatar extends HTMLElement {
     }
   }
 
-  _drawArm(sx, sy, angDeg, len, bend, spread, side, drag = 0) {
-    const ctx = this._ctx;
+  /* Arm geometry: the arm curve, the hand, and each finger as [start, control, end]. */
+  _armGeom(sx, sy, angDeg, len, bend, spread, side, drag) {
     const a = angDeg * DEG;
     const hx = sx + Math.cos(a) * len;
     const hy = sy + Math.sin(a) * len;
     const nx = -Math.sin(a), ny = Math.cos(a);
     const cx = (sx + hx) / 2 + nx * bend;
     const cy = (sy + hy) / 2 + ny * bend;
-    const arm = new Path2D();
-    arm.moveTo(sx, sy);
-    arm.quadraticCurveTo(cx, cy, hx, hy);
-    const g = ctx.createLinearGradient(sx, sy, hx, hy);
-    g.addColorStop(0, rgba(this._tone(C.violet), 1));
-    g.addColorStop(0.6, rgba(this._tone(C.blue), 1));
-    g.addColorStop(1, rgba(this._tone(mix(C.cyan, C.white, 0.3)), 1));
-    this._neon(arm, g, 6.5, 1);
-
     const dir = Math.atan2(hy - cy, hx - cx);
-    const cur = this._cur;
-    const curl = (side > 0 ? cur.waveR * Math.sin(this._ph.wave * 2) * 0.35 : 0) + drag;
-    const fingers = new Path2D();
+    const curl = (side > 0 ? this._cur.waveR * Math.sin(this._ph.wave * 2) * 0.35 : 0) + drag;
+    const fingers = [];
     const offs = [-1.5, -0.5, 0.5, 1.5];
     for (let k = 0; k < 4; k++) {
       const fa = dir + offs[k] * 0.3 * spread;
       const fl = [27, 34, 33, 26][k] * (this._icon ? 1.15 : 1);
-      const ex = hx + Math.cos(fa) * fl;
-      const ey = hy + Math.sin(fa) * fl;
       const ca = fa + side * (0.25 + curl);
-      fingers.moveTo(hx, hy);
-      fingers.quadraticCurveTo(hx + Math.cos(ca) * fl * 0.6, hy + Math.sin(ca) * fl * 0.6, ex, ey);
+      fingers.push([hx + Math.cos(ca) * fl * 0.6, hy + Math.sin(ca) * fl * 0.6, hx + Math.cos(fa) * fl, hy + Math.sin(fa) * fl]);
     }
     const ta = dir - side * 1.25 * Math.max(0.6, spread);
-    fingers.moveTo(hx, hy);
-    fingers.lineTo(hx + Math.cos(ta) * 20, hy + Math.sin(ta) * 20);
+    const thumb = [hx + Math.cos(ta) * 20, hy + Math.sin(ta) * 20];
+    return { sx, sy, cx, cy, hx, hy, dir, fingers, thumb };
+  }
+
+  /* How far the arm stays outside the head, as the smallest elliptical distance (1 = on the margin). The shoulder
+     sits at the chin, so the margin ramps in along the upper arm. */
+  _armClearance(g, head) {
+    const c = Math.cos(-head.tilt), s = Math.sin(-head.tilt);
+    /* at icon sizes the margin grows so it is still a couple of pixels wide */
+    const M = Math.max(ARM_MARGIN, (this._minW || 0) * 2.2);
+    const d = (x, y, m = M) => {
+      const px = x - head.x, py = y - head.y;
+      const lx = px * c - py * s, ly = px * s + py * c;
+      return Math.hypot(lx / (HEAD.rx * head.s + m), ly / (HEAD.ry * head.s + m));
+    };
+    let min = Infinity;
+    for (let i = 1; i <= 16; i++) {
+      const t = i / 16;
+      const u = 1 - t;
+      const x = u * u * g.sx + 2 * u * t * g.cx + t * t * g.hx;
+      const y = u * u * g.sy + 2 * u * t * g.cy + t * t * g.hy;
+      min = Math.min(min, d(x, y, M * Math.min(1, t * 2.5)));
+    }
+    for (const f of g.fingers) {
+      for (const t of [0.25, 0.5, 0.75, 1]) {
+        const u = 1 - t;
+        min = Math.min(min, d(u * u * g.hx + 2 * u * t * f[0] + t * t * f[2], u * u * g.hy + 2 * u * t * f[1] + t * t * f[3]));
+      }
+    }
+    return Math.min(min, d(g.thumb[0], g.thumb[1]), d((g.hx + g.thumb[0]) / 2, (g.hy + g.thumb[1]) / 2));
+  }
+
+  /* Arms are drawn behind the head, so swing any arm that would pass behind it outwards until it is clear. */
+  _clearArm(sx, sy, angDeg, len, bend, spread, side, drag) {
+    const head = this._pose.head;
+    let ang = angDeg;
+    let g = this._armGeom(sx, sy, ang, len, bend, spread, side, drag);
+    let clear = this._armClearance(g, head);
+    for (let i = 0; i < 90 && clear < 1; i++) {
+      ang += side < 0 ? -1.5 : 1.5;
+      g = this._armGeom(sx, sy, ang, len, bend, spread, side, drag);
+      clear = this._armClearance(g, head);
+    }
+    this._armClear = Math.min(this._armClear, clear);
+    return g;
+  }
+
+  _drawArm(g) {
+    const ctx = this._ctx;
+    const arm = new Path2D();
+    arm.moveTo(g.sx, g.sy);
+    arm.quadraticCurveTo(g.cx, g.cy, g.hx, g.hy);
+    const fingers = new Path2D();
+    for (const f of g.fingers) {
+      fingers.moveTo(g.hx, g.hy);
+      fingers.quadraticCurveTo(f[0], f[1], f[2], f[3]);
+    }
+    fingers.moveTo(g.hx, g.hy);
+    fingers.lineTo(g.thumb[0], g.thumb[1]);
+    if (this._debugLayer === 'arms') {
+      ctx.strokeStyle = 'rgb(0,255,0)';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(6.5, this._minW);
+      ctx.stroke(arm);
+      ctx.lineWidth = Math.max(3.6, this._minW);
+      ctx.stroke(fingers);
+      return [g.hx, g.hy];
+    }
+    const lg = ctx.createLinearGradient(g.sx, g.sy, g.hx, g.hy);
+    lg.addColorStop(0, rgba(this._tone(C.violet), 1));
+    lg.addColorStop(0.6, rgba(this._tone(C.blue), 1));
+    lg.addColorStop(1, rgba(this._tone(mix(C.cyan, C.white, 0.3)), 1));
+    this._neon(arm, lg, 6.5, 1);
     this._neon(fingers, this._tone(mix(C.cyan, C.violet, 0.4)), 3.6, 1);
-    this._glow(hx, hy, 34, this._tone(C.cyan), 0.4);
-    return [hx + Math.cos(dir) * 30, hy + Math.sin(dir) * 30];
+    this._glow(g.hx, g.hy, 34, this._tone(C.cyan), 0.4);
+    return [g.hx + Math.cos(g.dir) * 30, g.hy + Math.sin(g.dir) * 30];
   }
 
   _drawArms() {
@@ -2191,8 +2300,9 @@ export class JigAvatar extends HTMLElement {
     const yR = SHOULDER_R.y + P.bob * 0.9 - P.breath * 2;
     const dx = P.headDX * 0.85;
     const spread = 1 + (P.dance || 0) * 0.15;
-    this._drawArm(SHOULDER_L.x + dx, yL, P.aL, cur.lL, cur.bL, cur.spreadL * spread, -1, P.curlL);
-    this._handR = this._drawArm(SHOULDER_R.x + dx, yR, P.aR, cur.lR, cur.bR, cur.spreadR * spread, 1, P.curlR);
+    this._armClear = Infinity;
+    this._drawArm(this._clearArm(SHOULDER_L.x + dx, yL, P.aL, cur.lL, cur.bL, cur.spreadL * spread, -1, P.curlL));
+    this._handR = this._drawArm(this._clearArm(SHOULDER_R.x + dx, yR, P.aR, cur.lR, cur.bR, cur.spreadR * spread, 1, P.curlR));
   }
 
   /* A soft petal: wide in the middle, rounded at the tip, its tip curling by `bend` (local axis is -y). */
@@ -2342,15 +2452,15 @@ export class JigAvatar extends HTMLElement {
     const r = 50;
     const lx = P.lookX, ly = P.lookY;
     const happy = P.happy;
-    const squint = P.squint * (1 - happy);
     const eyes = [[-80, 26], [80, 26]];
     /* the eyes stay warm amber even when the rest of Jig cools to blue */
     const cool = cur.cool;
     cur.cool = cool * 0.3;
     try {
       for (let e = 0; e < 2; e++) {
-        const open = e === 1 ? P.eyeOpen * (1 - P.winkR) : P.eyeOpen;
-        const closedK = e === 1 ? Math.max(happy, 0) : happy;
+        /* a wink is the same cheerful upturned arc as a happy eye, on one side */
+        const open = P.eyeOpen;
+        const closedK = e === 1 ? Math.max(happy, P.winkR) : happy;
         const ex = eyes[e][0] + lx * 8;
         const ey = eyes[e][1] + ly * 7;
         ctx.save();
@@ -2403,17 +2513,6 @@ export class JigAvatar extends HTMLElement {
             lid.closePath();
             this._fillLid(r, lid, ex, ey);
           }
-          /* a happy squint: the cheeks push the lower lids up into a smile shape */
-          if (squint > 0.01) {
-            const top = r * (1.02 - squint * 0.62);
-            const low = new Path2D();
-            low.moveTo(-r - 4, r + 6);
-            low.lineTo(-r - 4, top + r * 0.2);
-            low.quadraticCurveTo(0, top - r * 0.42 * squint, r + 4, top + r * 0.2);
-            low.lineTo(r + 4, r + 6);
-            low.closePath();
-            this._fillLid(r, low, ex, ey);
-          }
           ctx.globalAlpha = 1;
           ctx.globalCompositeOperation = this._addOp;
           this._neon(eye, this._tone(C.amber, 0.2), 2.4, normalA * clamp(open * 3 - 0.6, 0, 1) * (0.6 + 0.4 * Math.min(1, open)), false);
@@ -2449,20 +2548,6 @@ export class JigAvatar extends HTMLElement {
       }
     } finally {
       cur.cool = cool;
-    }
-
-    /* warm cheeks */
-    if (P.blush > 0.01 && !this._icon) {
-      ctx.globalCompositeOperation = this._addOp;
-      for (const sx of [-1, 1]) {
-        const cx = sx * 108 + lx * 5;
-        const cy = 90 + ly * 4;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(1.25, 0.8);
-        this._glow(0, 0, 36, this._tone(mix(C.pink, C.orange, 0.25)), 0.8 * P.blush * faceA);
-        ctx.restore();
-      }
     }
 
     /* mouth: a filled amber crescent that opens with the voice level */

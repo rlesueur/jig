@@ -235,6 +235,76 @@
       assert(reported(() => el.setAttribute('clock', 'sometimes')).length === 1, 'unknown clock is reported');
     });
 
+    test('no blush and no lower lids in any state', () => {
+      const el = make({ clock: 'manual', seed: '12' });
+      for (const state of STATES) {
+        el.setState(state, state === 'working' ? { task: 'coding' } : {});
+        el.advance(0.6, 30);
+        for (const key of ['blush', 'squint']) {
+          assert(!(key in el._cur) && !(key in el._pose), `${state} has no ${key}`);
+        }
+      }
+    });
+
+    test('the ta-da wink is a happy arc on one eye', () => {
+      const el = make({ clock: 'manual', seed: '13' });
+      el.setState('dance');
+      el.advance(7.45, 60);
+      assert(el._pose.winkR > 0.8, `winking (${el._pose.winkR.toFixed(2)})`);
+      assert(el._pose.happy < 0.05, 'the other eye stays open');
+    });
+
+    /* Every frame (30 fps) of the dance, the success celebration, both flourishes and idle fidgets, in both themes at
+       full and icon size: arm, hand and finger pixels must never fall inside the head, which is drawn over them. */
+    test('arms never hide behind the head', () => {
+      const report = [];
+      const takes = [
+        ['dance state', (el) => el.setState('dance'), 8.5],
+        ['success celebration', (el) => el.setState('success'), 4.6],
+        ['idle flourish', (el) => el.dance(), 4.4],
+        ['full routine once', (el) => el.dance({ routine: 'dance' }), 8.4],
+        ['idle fidgets', () => {}, 20],
+      ];
+      let frames = 0;
+      let edgeOn = 0;
+      for (const theme of ['dark', 'light']) {
+        for (const size of [300, 48]) {
+          for (const [name, start, seconds] of takes) {
+            if (name === 'idle fidgets' && size !== 300) continue;
+            const el = make({ clock: 'manual', seed: '21', theme });
+            el.style.width = el.style.height = `${size}px`;
+            el.step(1 / 60);
+            start(el);
+            const n = Math.round(seconds * 30);
+            for (let f = 0; f < n; f++) {
+              el.step(1 / 60);
+              el.step(1 / 60);
+              frames++;
+              assert(el._armClear >= 1, `${name} ${theme} ${size}px frame ${f}: arm geometry inside the head margin (${el._armClear.toFixed(3)})`);
+              if (Math.abs(el._pose.spinX) < 0.12) {
+                edgeOn++; /* edge-on mid-spin the whole character is a few pixels wide */
+                continue;
+              }
+              const arms = el.layerMask('arms');
+              const head = el.layerMask('head');
+              let armPx = 0;
+              let hidden = 0;
+              for (let i = 0; i < arms.length; i += 4) {
+                if (arms[i + 1] > 128 && arms[i + 3] > 128) {
+                  armPx++;
+                  if (head[i] > 128 && head[i + 3] > 128) hidden++;
+                }
+              }
+              assert(armPx > 0, `${name} ${theme} ${size}px frame ${f}: no arm pixels drawn`);
+              assert(hidden === 0, `${name} ${theme} ${size}px frame ${f}: ${hidden} of ${armPx} arm pixels behind the head`);
+            }
+            el.remove();
+          }
+        }
+      }
+      window.__armReport = { frames, edgeOn };
+    });
+
     test('every state draws in both themes at large and icon sizes', () => {
       for (const theme of ['dark', 'light']) {
         for (const size of [160, 40]) {

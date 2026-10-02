@@ -1,6 +1,6 @@
 # Jig avatar
 
-An animated, dependency-free web component for Jig, the always-on personal agent that runs only on local models. The mascot is drawn live as a vector rig on a single `<canvas>`. Its head, leaf ears, blinking eyes, cheeks, mouth, arms, ribbon tail, prism shards, sparks and vortex are separate parts, so every state can move them independently. Nothing is a pre-rendered raster.
+An animated, dependency-free web component for Jig, the always-on personal agent that runs only on local models. The mascot is drawn live as a vector rig on a single `<canvas>`. Its head, leaf ears, blinking eyes, mouth, arms, ribbon tail, prism shards, sparks and vortex are separate parts, so every state can move them independently. Nothing is a pre-rendered raster.
 
 `assets/jig-mascot-reference.jpg` is the approved artwork the rig is matched against.
 
@@ -87,6 +87,8 @@ Jig is never still and never visibly loops. These run in every state, scaled to 
 - **Gaze.** Eyes dart in small saccades and settle on springs. The head turns and tilts a little towards where Jig looks. When the pointer is over the avatar, Jig watches it; otherwise it follows `look-at`, the task (panes, page, terminal), or glances around by itself and often back at you.
 - **Follow-through.** Ears, arms, fingers and ribbons are on damped springs. Ears flop with every bob and hop, fingers drag behind a swinging arm, and the ribbons trail the head, so movements overshoot slightly and settle rather than stop dead.
 - **Squash and stretch** with a small hop on every state change.
+- **Eyes** are clean round eyes with catch-lights. Expressions come from the upper lids, the eye shape (happy eyes and winks are upturned arcs) and the brows; there are no lower lids.
+- **Arms stay in view.** Arms are drawn behind the head, so each frame any arm, hand or finger that would pass behind it swings outwards until it clears the head by a margin (wider at icon sizes). This holds through the dance, the spin, fidgets and celebrations.
 - **Fidgets** every few seconds, chosen at random: an ear flick, a head tilt, a fresh glance, a finger wiggle, a stretch or (in idle) a little hop.
 - **Groove.** Working states bob to a subtle rhythm, and talking a gentler one.
 
@@ -94,7 +96,7 @@ Jig is never still and never visibly loops. These run in every state, scaled to 
 
 Jig's name is a dance, so it has a repertoire:
 
-- **`dance` state** (aliases `dancing`, `jig`) loops a 16-beat routine, 8 seconds at the default 120 bpm: eight beats of side-steps on the ribbon foot with the body leaning against the step and arms swinging in time; four beats of both hands up, waving, with quick double taps; a two-beat spin with a happy face and the ribbons swirling round; and a ta-da with arms up in a V and a wink. Every landing squashes the body, flops the ears and sends a ripple across the pool. The routine starts from beat 0 each time the state is entered, which keeps video takes repeatable.
+- **`dance` state** (aliases `dancing`, `jig`) loops a 16-beat routine, 8 seconds at the default 120 bpm: eight beats of side-steps on the ribbon foot with the body leaning against the step and arms swinging in time; four beats of both hands up, waving, with quick double taps; a two-beat spin with a happy face and the ribbons swirling round; and a ta-da with arms up in a V and a wink (one eye becomes a happy upturned arc). Every landing squashes the body, flops the ears and sends a ripple across the pool. The routine starts from beat 0 each time the state is entered, which keeps video takes repeatable.
 - **`success`** plays the 8-beat `celebrate` routine once (waving hops, a spin, a ta-da) with the confetti burst, then settles into a happy bob.
 - **Idle flourishes.** Idle breaks into the 8-beat flourish by itself, first after 60–120 seconds and then every 60–135 seconds, never in background work or while `user-typing` is set.
 - **`dance()`** plays a flourish on demand.
@@ -145,9 +147,9 @@ Every pose parameter is interpolated, so changing state never produces a hard cu
 
 | State | Animation |
 | --- | --- |
-| `idle` (alias `resting`) | Gentle bob and irregular breathing, slow ribbon sway, blinks, glances and fidgets, a soft smile and warm cheeks, tumbling glass shards drifting slowly. Now and then a short dance flourish. |
+| `idle` (alias `resting`) | Gentle bob and irregular breathing, slow ribbon sway, blinks, glances and fidgets, a soft smile, tumbling glass shards drifting slowly. Now and then a short dance flourish. |
 | `monitoring` (aliases `sleeping`, `background`) | Dimmed with eyes closed, a slow cyan pulse, a radar sweep and sonar rings. An eye occasionally half-opens and glances around. This is read-only proactive research. |
-| `thinking` | Swirl and orbit speed up, eyes look upwards, a hand goes up to the head, sparks form a halo and thought bubbles rise. |
+| `thinking` | Swirl and orbit speed up, eyes look upwards, a hand goes up beside the head, sparks form a halo and thought bubbles rise. |
 | `working` + `browsing` | Shards become browser panes facing Jig, with a scan sweep. Eyes jump between panes and a reading beam follows them. |
 | `working` + `writing` | A page and an envelope appear. An amber ribbon from the hand writes looping cursive lines, then the envelope flashes as "sent". |
 | `working` + `coding` | A terminal pane types coloured code with a blinking caret. Sparks turn into rising code glyphs, and hands tap in a typing rhythm. |
@@ -155,7 +157,7 @@ Every pose parameter is interpolated, so changing state never produces a hard cu
 | `working` + `scheduling` | Shards become a calendar page of day tiles, with a ticking highlight and a booked tick. A clock ring with a sweeping hand circles the head. |
 | `talking` (aliases `call`, `on-call`) | The mouth opens with the audio level, ribbons widen and ripple, sound arcs radiate and the vortex brightens. |
 | `approval` (alias `needs-approval`) | A cute wave with a curling hand, a bigger bounce, an amber tint, amber pulse rings and an alert bubble. |
-| `success` | A celebration dance (waving hops, a spin and a ta-da), a confetti burst, then happy ^ ^ eyes, rosy cheeks, an open smile and both arms up. |
+| `success` | A celebration dance (waving hops, a spin and a ta-da), a confetti burst, then happy ^ ^ eyes, an open smile and both arms up. |
 | `error` (alias `blocked`) | Worried and apologetic, never cross: the head sinks and tilts, ears droop, arms hang, the tail narrows, brows lift in the middle over big warm eyes, a small soft frown. Colours cool towards blue (the eyes stay amber), shards sink and a small × and sweat drop appear. |
 | `paused` | Peacefully asleep: eyes closed in contented curves, a small smile, drooping ears, slow breathing. Motion slows almost to a stop, colours desaturate and a pause badge appears. |
 | `dance` (aliases `dancing`, `jig`) | The full dance routine, looping (see Dance above). |
@@ -189,13 +191,13 @@ Precedence when several things are true at once, highest first: `approval`, `err
 
 - All instances share one `requestAnimationFrame` loop (manual-clock instances leave it). Off-screen instances are skipped through `IntersectionObserver`. No layout is read inside the loop, except two `getBoundingClientRect` calls per frame when `look-at` names a selector.
 - The neon glow is built from layered strokes with additive blending rather than `shadowBlur`. The demo page, with 17 avatars dancing, holds 60 fps.
-- Icon framing reduces detail: fewer ribbons, sparks and vortex rings, lighter glow passes, no cheeks or ripple rings.
+- Icon framing reduces detail: fewer ribbons, sparks and vortex rings, lighter glow passes, no ripple rings.
 - With reduced motion, amplitudes shrink to about 15% and phases slow down. There is no dancing, hopping, squash and stretch, fidgeting or confetti, only calm breathing, blinks and gentle eye movement. States still cross-fade quickly.
 - The element sets `role="img"` and an `aria-label` such as "Jig is working: coding", "Jig is dancing", or "Jig is working: browsing, in the background" for background work.
 
 ## Tests
 
-`tests.html` runs real-browser tests of the component: the dance state and `dance()`, reduced motion, the success celebration, the manual clock and pixel-identical seeded renders, idle flourishes and `user-typing`, blink timing, `look-at`, attribute validation, and every state in both themes at large and icon sizes. Serve the folder (see Run the demo) and open <http://127.0.0.1:8765/tests.html>. The summary line reads "N passed, 0 failed", and `window.__results` holds the details for automation.
+`tests.html` runs real-browser tests of the component: the dance state and `dance()`, reduced motion, the success celebration, the manual clock and pixel-identical seeded renders, idle flourishes and `user-typing`, blink timing, no blush or lower lids, the wink, arms never hidden behind the head (every 30 fps frame of the dance, the celebration, and both flourishes in both themes at full and icon size, plus 20 s of idle fidgets at full size, comparing arms-only and head-only masks from `layerMask()`), `look-at`, attribute validation, and every state in both themes at large and icon sizes. Serve the folder (see Run the demo) and open <http://127.0.0.1:8765/tests.html>. The summary line reads "N passed, 0 failed", and `window.__results` holds the details for automation.
 
 ## Files
 
