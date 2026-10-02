@@ -1,72 +1,51 @@
-// Look of the web UI. Loaded as a classic script in <head> so the theme is applied before the first paint
-// (the CSP forbids inline scripts). The choice comes from ?theme=, then the saved choice, then the default,
-// and is stored per browser in localStorage. Every theme styles the same live UI; only CSS changes.
-(() => {
-  const THEMES = {
-    neon: 'Classic neon',
-    cosy: 'Cosy evening',
-    sunny: 'Sunny studio',
-    dance: 'Dance hall',
-  };
-  const DEFAULT = 'neon';
-  const KEY = 'jig.theme';
+/*
+ * Light or dark, chosen before the first paint so the page never flashes the wrong colours.
+ * "system" follows prefers-color-scheme live; "light" and "dark" are explicit overrides saved on this device.
+ * A saved value that cannot be read or is not recognised is reported on screen by app.js (jigAppearance.problem).
+ */
+(function () {
+  const KEY = 'jig.appearance';
+  const CHOICES = ['system', 'light', 'dark'];
   const root = document.documentElement;
-  const problems = [];
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  let choice = 'system';
+  let problem = null;
 
-  function saved() {
-    try {
-      return localStorage.getItem(KEY);
-    } catch (err) {
-      problems.push(`Your theme choice can't be remembered in this browser (${err.message}).`);
-      return null;
+  try {
+    const saved = window.localStorage.getItem(KEY);
+    if (saved !== null) {
+      if (CHOICES.includes(saved)) choice = saved;
+      else problem = `The saved appearance "${saved}" isn't one Jig knows, so it is following your system for now. Choose Light, Dark or Follow my system in Settings, Appearance.`;
     }
+  } catch (err) {
+    problem = `Jig couldn't read your saved appearance (${err.message}), so it is following your system for now.`;
   }
 
-  function apply(name, remember) {
-    root.dataset.theme = name;
-    const meta = document.querySelector('meta[name="color-scheme"]');
-    if (meta) meta.content = name === 'sunny' ? 'light' : 'dark';
-    if (!remember) return;
-    try {
-      localStorage.setItem(KEY, name);
-    } catch (err) {
-      problems.push(`Your theme choice can't be remembered in this browser (${err.message}).`);
-    }
+  const resolve = () => (choice === 'system' ? (media.matches ? 'dark' : 'light') : choice);
+
+  function apply() {
+    const theme = resolve();
+    root.dataset.theme = theme;
+    root.dataset.appearance = choice;
+    root.style.colorScheme = theme;
+    document.dispatchEvent(new CustomEvent('jig-themechange', { detail: { theme, choice } }));
   }
 
-  const asked = new URLSearchParams(location.search).get('theme');
-  const stored = saved();
-  if (asked && !(asked in THEMES)) {
-    problems.push(`There is no theme called "${asked}". The themes are: ${Object.keys(THEMES).join(', ')}.`);
-  }
-  if (stored && !(stored in THEMES)) problems.push(`The saved theme "${stored}" no longer exists.`);
-  const initial = asked in THEMES ? asked : stored in THEMES ? stored : DEFAULT;
-  apply(initial, asked in THEMES);
+  media.addEventListener('change', () => { if (choice === 'system') apply(); });
 
-  document.addEventListener('DOMContentLoaded', () => {
-    const select = document.getElementById('theme-select');
-    select.replaceChildren(...Object.entries(THEMES).map(([value, label]) => new Option(label, value)));
-    select.value = root.dataset.theme;
-    select.addEventListener('change', () => apply(select.value, true));
-    const box = document.getElementById('errors');
-    for (const text of problems) {
-      const toast = document.createElement('div');
-      toast.className = 'toast';
-      const body = document.createElement('div');
-      body.className = 'toast-body';
-      const title = document.createElement('p');
-      title.className = 'toast-title';
-      title.textContent = 'A small problem with the theme';
-      const detail = document.createElement('p');
-      detail.className = 'toast-detail';
-      detail.textContent = text;
-      body.append(title, detail);
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = 'Dismiss';
-      b.addEventListener('click', () => toast.remove());
-      toast.append(body, b);
-      box.append(toast);
-    }
-  });
+  window.jigAppearance = {
+    get choice() { return choice; },
+    get theme() { return resolve(); },
+    get problem() { return problem; },
+    /** Save and apply a choice; throws if it is not one of the three, or if it cannot be saved. */
+    set(next) {
+      if (!CHOICES.includes(next)) throw new RangeError(`unknown appearance "${next}"`);
+      window.localStorage.setItem(KEY, next);
+      choice = next;
+      problem = null;
+      apply();
+    },
+  };
+
+  apply();
 })();

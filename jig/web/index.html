@@ -1,251 +1,289 @@
 <!doctype html>
-<html lang="en-GB" data-theme="neon">
+<html lang="en-GB">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>Jig</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="/web/style.css">
-  <link rel="stylesheet" href="/web/themes.css">
   <script src="/web/theme.js"></script>
   <script type="module" src="/web/app.js"></script>
   <script type="module" src="/web/autostart.js"></script>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
+  <a class="skip" href="#chat-input">Skip to the message box</a>
 
   <header class="top">
-    <div class="brand">
-      <jig-avatar id="mini-avatar" shape="circle" framing="icon" aria-hidden="true"></jig-avatar>
-      <h1>Jig</h1>
-    </div>
+    <h1 class="wordmark">Jig</h1>
     <div class="top-actions">
-      <label class="theme-pick" for="theme-select"><span class="theme-label">Theme</span>
-        <select id="theme-select" data-testid="theme-select"></select>
-      </label>
-      <span class="pill" id="conn" role="status" aria-live="polite" data-tone="muted" data-testid="connection">Not connected</span>
-      <button type="button" id="agent-toggle" class="btn" data-testid="agent-toggle" disabled>Pause agent</button>
-      <button type="button" id="logout" class="btn btn-quiet" data-testid="logout" hidden>Sign out</button>
+      <span class="health" id="conn" role="status" aria-live="polite" data-tone="muted" data-testid="connection"><span class="health-dot" aria-hidden="true"></span><span class="sr-only" id="conn-text">Not connected</span></span>
+      <a class="icon-btn" id="open-settings" href="#settings" aria-label="Settings" data-testid="open-settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm8.6-2.3.1-1.2-.1-1.2 2-1.6c.2-.1.2-.4.1-.6l-1.9-3.3c-.1-.2-.4-.3-.6-.2l-2.4 1a7 7 0 0 0-2-1.2L15.4 2c0-.2-.2-.4-.5-.4h-3.8c-.2 0-.4.2-.5.4l-.4 2.6c-.7.3-1.4.7-2 1.2l-2.4-1c-.2-.1-.5 0-.6.2L3.3 8.3c-.1.2-.1.5.1.6l2 1.6-.1 1.2.1 1.2-2 1.6c-.2.1-.2.4-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.6.5 1.3.9 2 1.2l.4 2.6c0 .2.2.4.5.4h3.8c.2 0 .4-.2.5-.4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.4 1c.2.1.5 0 .6-.2l1.9-3.3c.1-.2.1-.5-.1-.6l-2-1.6Z"/></svg>
+      </a>
     </div>
   </header>
 
   <div id="errors" class="errors" role="alert" aria-live="assertive" data-testid="errors"></div>
 
-  <div class="layout" id="app" hidden>
-    <aside class="side" aria-label="Jig's state">
-      <section class="card avatar-card" aria-labelledby="avatar-heading" data-testid="avatar-card">
-        <h2 id="avatar-heading" class="sr-only">Live avatar</h2>
-        <div class="avatar-wrap"><jig-avatar id="avatar" framing="full"></jig-avatar></div>
-        <div class="avatar-words">
-          <p class="avatar-says" id="avatar-says" aria-live="polite" data-testid="avatar-says">Jig is getting ready.</p>
-          <p class="avatar-caption"><span class="sr-only">Technical state: </span><span id="avatar-state">idle</span><span id="avatar-task"></span><span id="avatar-bg" hidden> · background</span></p>
+  <div class="banner" id="health-banner" role="alert" data-testid="health-banner" hidden>
+    <div class="banner-body">
+      <p class="banner-title" id="health-title"></p>
+      <p class="banner-fix" id="health-fix"></p>
+      <p class="banner-detail" id="health-detail"></p>
+    </div>
+    <button type="button" class="btn btn-small" id="health-retry" data-testid="health-retry">Check again</button>
+  </div>
+
+  <div id="app" hidden>
+    <main class="chat-view" id="main" aria-label="Chat" data-testid="chat-view">
+      <section class="stage" aria-label="Live avatar" data-testid="avatar-card">
+        <jig-avatar id="avatar" framing="full" shape="none"></jig-avatar>
+        <p class="avatar-says" id="avatar-says" aria-live="polite" data-testid="avatar-says">Getting ready…</p>
+      </section>
+
+      <div class="chat-log" id="chat-log" role="log" aria-label="Conversation" data-testid="chat-log"></div>
+
+      <section class="doing" id="doing" aria-label="What Jig's up to" data-testid="doing" data-busy="false">
+        <p class="doing-text" id="doing-text" aria-live="polite" data-testid="doing-text">Looking…</p>
+        <div class="doing-actions">
+          <button type="button" class="btn btn-small btn-warn" id="approvals-badge" data-testid="approvals-badge" hidden></button>
+          <button type="button" class="btn btn-small" id="agent-toggle" data-testid="agent-toggle" disabled>Pause</button>
+          <button type="button" class="btn btn-small btn-danger" id="doing-stop" data-testid="doing-stop" hidden>Stop</button>
+          <button type="button" class="btn btn-small btn-quiet" id="doing-open" aria-haspopup="dialog" data-testid="doing-open">Details</button>
         </div>
       </section>
-    </aside>
 
-    <main id="main" tabindex="-1">
-      <nav class="tabs" role="tablist" aria-label="Sections">
-        <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="true" data-testid="tab-chat">Chat</button>
-        <button type="button" role="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false" tabindex="-1" data-testid="tab-activity">Activity</button>
-        <button type="button" role="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false" tabindex="-1" data-testid="tab-approvals">Approvals <span class="badge" id="approvals-badge" hidden>0</span></button>
-        <button type="button" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1" data-testid="tab-memory">Memory</button>
-        <button type="button" role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false" tabindex="-1" data-testid="tab-rules">Rules</button>
-        <button type="button" role="tab" id="tab-audit" aria-controls="panel-audit" aria-selected="false" tabindex="-1" data-testid="tab-audit">Audit log</button>
-      </nav>
-
-      <!-- Chat -->
-      <section class="panel" role="tabpanel" id="panel-chat" aria-labelledby="tab-chat">
-        <div class="chat-log" id="chat-log" aria-live="polite" aria-label="Conversation" data-testid="chat-log"></div>
-        <div class="companion" data-testid="companion">
-          <jig-avatar id="companion-avatar" shape="circle" framing="icon" aria-hidden="true"></jig-avatar>
-          <p class="companion-says" id="companion-says">Jig is getting ready.</p>
-        </div>
-        <form class="chat-form" id="chat-form">
+      <form class="chat-form" id="chat-form">
+        <p class="readonly-note" id="readonly-note" data-testid="read-only-note" hidden>Just looking: Jig won't change, save or send anything. <a href="#settings/chat">Change this</a></p>
+        <div class="composer">
           <label for="chat-input" class="sr-only">Message</label>
-          <textarea id="chat-input" rows="2" placeholder="Message Jig (Enter to send, Shift+Enter for a new line)" required data-testid="chat-input"></textarea>
-          <div class="chat-controls">
-            <label>Mode
-              <select id="chat-mode" data-testid="chat-mode">
-                <option value="action">Action</option>
-                <option value="research">Research (read-only)</option>
-              </select>
-            </label>
-            <button type="button" class="btn btn-quiet" id="chat-new" data-testid="chat-new">New conversation</button>
-            <button type="submit" class="btn btn-primary" id="chat-send" data-testid="chat-send">Send</button>
-          </div>
-        </form>
-      </section>
-
-      <!-- Activity -->
-      <section class="panel" role="tabpanel" id="panel-activity" aria-labelledby="tab-activity" hidden>
-        <div class="grid-2">
-          <form class="card form" id="goal-form">
-            <h2>New goal</h2>
-            <p class="hint" id="goal-hint">Jig plans the steps, works through them and checks with you before anything that needs your OK.</p>
-            <label for="goal-desc">What should Jig achieve?</label>
-            <textarea id="goal-desc" rows="3" required aria-describedby="goal-hint" data-testid="goal-desc"></textarea>
-            <label for="goal-title">Title (optional)</label>
-            <input id="goal-title" type="text" data-testid="goal-title">
-            <button type="submit" class="btn btn-primary" data-testid="goal-create">Create goal</button>
-          </form>
-          <form class="card form" id="task-form">
-            <h2>New task</h2>
-            <label for="task-title">Title</label>
-            <input id="task-title" type="text" required data-testid="task-title">
-            <label for="task-desc">Instructions</label>
-            <textarea id="task-desc" rows="2" required data-testid="task-desc"></textarea>
-            <div class="row">
-              <label>Mode
-                <select id="task-mode" data-testid="task-mode">
-                  <option value="action">Action</option>
-                  <option value="research">Research (read-only, background)</option>
-                </select>
-              </label>
-              <label>Start in (seconds) <input id="task-delay" type="number" min="0" step="1" value="0" data-testid="task-delay"></label>
-            </div>
-            <button type="submit" class="btn btn-primary" data-testid="task-create">Create task</button>
-          </form>
+          <textarea id="chat-input" rows="1" placeholder="Message Jig" required data-testid="chat-input"></textarea>
+          <button type="submit" class="btn btn-primary" id="chat-send" data-testid="chat-send">Send</button>
         </div>
-        <div class="card">
-          <div class="card-head"><h2>Goals</h2><button type="button" class="btn btn-small" data-refresh="activity" data-testid="activity-refresh">Refresh</button></div>
-          <div id="goals" class="list" data-testid="goals"></div>
+        <div class="chat-under">
+          <span class="hint-quiet">Enter to send, Shift+Enter for a new line</span>
+          <button type="button" class="btn-link" id="chat-new" data-testid="chat-new">New conversation</button>
         </div>
-        <div class="card">
-          <h2>Standalone and scheduled tasks</h2>
-          <div id="tasks" class="list" data-testid="tasks"></div>
-        </div>
-        <div class="card">
-          <h2>Recent runs</h2>
-          <div class="table-wrap" tabindex="0" role="group" aria-label="Recent runs, scrolls sideways">
-            <table class="table" id="runs" data-testid="runs">
-              <caption class="sr-only">Recent runs</caption>
-              <thead><tr><th scope="col">Run</th><th scope="col">Kind</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Steps</th><th scope="col">Started</th><th scope="col">Result or error</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- Approvals -->
-      <section class="panel" role="tabpanel" id="panel-approvals" aria-labelledby="tab-approvals" hidden>
-        <div class="card">
-          <div class="card-head"><h2>Waiting for you</h2><button type="button" class="btn btn-small" data-refresh="approvals" data-testid="approvals-refresh">Refresh</button></div>
-          <p class="hint">Jig stops and waits here before doing anything your rules or the Sentinel say you should see first. Nothing happens until you answer.</p>
-          <div id="approvals-pending" class="list" data-testid="approvals-pending"></div>
-        </div>
-        <div class="card">
-          <h2>Recently answered</h2>
-          <div id="approvals-done" class="list" data-testid="approvals-done"></div>
-        </div>
-      </section>
-
-      <!-- Memory -->
-      <section class="panel" role="tabpanel" id="panel-memory" aria-labelledby="tab-memory" hidden>
-        <div class="grid-2">
-          <form class="card form" id="memory-search" role="search">
-            <h2>Search memory</h2>
-            <label for="memory-q">Search words</label>
-            <div class="row">
-              <input id="memory-q" type="search" data-testid="memory-q">
-              <button type="submit" class="btn" data-testid="memory-search">Search</button>
-              <button type="button" class="btn btn-quiet" id="memory-clear" data-testid="memory-clear">Show all</button>
-            </div>
-          </form>
-          <form class="card form" id="memory-add">
-            <h2>Add a memory</h2>
-            <label for="memory-content">Content</label>
-            <textarea id="memory-content" rows="2" required data-testid="memory-content"></textarea>
-            <div class="row">
-              <label>Kind <input id="memory-kind" type="text" value="fact" data-testid="memory-kind"></label>
-              <label>Tags (comma-separated) <input id="memory-tags" type="text" data-testid="memory-tags"></label>
-            </div>
-            <button type="submit" class="btn btn-primary" data-testid="memory-add">Add</button>
-          </form>
-        </div>
-        <div class="card">
-          <h2 id="memory-heading">Memories</h2>
-          <p class="hint">Everything Jig remembers about you lives here, on your machine. Change or forget anything at any time.</p>
-          <div id="memories" class="list" aria-labelledby="memory-heading" data-testid="memories"></div>
-        </div>
-      </section>
-
-      <!-- Rules -->
-      <section class="panel" role="tabpanel" id="panel-rules" aria-labelledby="tab-rules" hidden>
-        <div class="card">
-          <h2>Core rules (read-only)</h2>
-          <p class="muted">Built in. They can't be changed or overridden, and they only ever make a decision stricter.</p>
-          <ul id="core-rules" class="rule-list" data-testid="core-rules"></ul>
-        </div>
-        <form class="card form" id="rule-form">
-          <h2>New custom rule</h2>
-          <div class="row wrap">
-            <label>Tool (glob) <input id="rule-tool" type="text" required placeholder="web_fetch or note_*" data-testid="rule-tool"></label>
-            <label>Decision
-              <select id="rule-decision" data-testid="rule-decision">
-                <option value="allow">Allow</option>
-                <option value="ask" selected>Ask</option>
-                <option value="block">Block</option>
-              </select>
-            </label>
-            <label>Argument (optional) <input id="rule-arg" type="text" placeholder="url" data-testid="rule-arg"></label>
-            <label>Pattern (optional) <input id="rule-pattern" type="text" placeholder="https://shop.*" data-testid="rule-pattern"></label>
-            <label>Priority <input id="rule-priority" type="number" value="0" step="1" data-testid="rule-priority"></label>
-          </div>
-          <label for="rule-note">Note</label>
-          <input id="rule-note" type="text" data-testid="rule-note">
-          <button type="submit" class="btn btn-primary" data-testid="rule-add">Add rule</button>
-        </form>
-        <div class="card">
-          <h2>Custom rules</h2>
-          <div class="table-wrap" tabindex="0" role="group" aria-label="Custom rules, scrolls sideways">
-            <table class="table" id="rules" data-testid="rules">
-              <caption class="sr-only">Custom rules</caption>
-              <thead><tr><th scope="col">Tool</th><th scope="col">Decision</th><th scope="col">Argument</th><th scope="col">Pattern</th><th scope="col">Priority</th><th scope="col">Enabled</th><th scope="col">Note</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- Audit -->
-      <section class="panel" role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden>
-        <form class="card form" id="audit-form">
-          <h2>Audit log</h2>
-          <p class="muted">A permanent record of everything Jig did. Entries can't be changed or deleted. Newest first.</p>
-          <div class="row wrap">
-            <label>Kind <input id="audit-kind" type="text" placeholder="tool, approval, memory…" data-testid="audit-kind"></label>
-            <label>Task id <input id="audit-task" type="text" data-testid="audit-task"></label>
-            <button type="submit" class="btn" data-testid="audit-filter">Filter</button>
-          </div>
-        </form>
-        <div class="card">
-          <div id="audit" class="audit-list" data-testid="audit"></div>
-          <button type="button" class="btn" id="audit-more" data-testid="audit-more" hidden>Load older entries</button>
-        </div>
-      </section>
+      </form>
     </main>
 
-    <aside class="side-status" aria-label="Jig's setup">
-      <section class="card status-card" aria-labelledby="status-heading">
-        <div class="card-head">
-          <h2 id="status-heading">Status</h2>
-          <button type="button" class="btn btn-small" id="status-refresh" data-testid="status-refresh">Refresh</button>
+    <section class="settings" id="settings" aria-labelledby="settings-heading" data-testid="settings" hidden>
+      <div class="settings-head">
+        <a class="btn btn-small btn-quiet" href="#" id="close-settings" data-testid="close-settings">← Back to chat</a>
+        <h2 id="settings-heading">Settings</h2>
+        <button type="button" id="logout" class="btn btn-small btn-quiet" data-testid="logout" hidden>Sign out</button>
+      </div>
+      <div class="settings-grid">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <ul>
+            <li><a href="#settings/model" data-section="model" data-testid="settings-nav-model">Model and connection</a></li>
+            <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
+            <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">What Jig remembers about you</a></li>
+            <li><a href="#settings/history" data-section="history" data-testid="settings-nav-history">History</a></li>
+            <li><a href="#settings/startup" data-section="startup" data-testid="settings-nav-startup">Starting with Windows</a></li>
+            <li><a href="#settings/appearance" data-section="appearance" data-testid="settings-nav-appearance">Appearance</a></li>
+            <li><a href="#settings/chat" data-section="chat" data-testid="settings-nav-chat">In the conversation</a></li>
+          </ul>
+        </nav>
+
+        <div class="settings-body">
+          <!-- Model and connection -->
+          <section class="set-section" id="set-model" data-section="model" aria-labelledby="status-heading" data-testid="settings-model">
+            <div class="section-head">
+              <h3 id="status-heading">Model and connection</h3>
+              <button type="button" class="btn btn-small" id="status-refresh" data-testid="status-refresh">Refresh</button>
+            </div>
+            <p class="hint">Jig runs only on local models. This is what it's using right now.</p>
+            <dl class="kv" id="status-list">
+              <dt>Connection</dt><dd id="st-conn">—</dd>
+              <dt>Model endpoint</dt><dd id="st-endpoint">—</dd>
+              <dt>Model</dt><dd id="st-model">—</dd>
+              <dt>Context</dt><dd id="st-context">—</dd>
+              <dt>Capability check</dt><dd id="st-caps">—</dd>
+              <dt>Sentinel model</dt><dd id="st-sentinel">—</dd>
+              <dt>Agent</dt><dd id="st-agent">—</dd>
+              <dt>Secret store</dt><dd id="st-vault">—</dd>
+            </dl>
+          </section>
+
+          <!-- Rules -->
+          <section class="set-section" id="set-rules" data-section="rules" aria-labelledby="rules-heading" data-testid="settings-rules" hidden>
+            <h3 id="rules-heading">What Jig can do on its own</h3>
+            <p class="hint">Choose what Jig may do without asking you first. Whatever you choose, the Sentinel still checks anything that changes or sends something, and the core rules below always apply.</p>
+            <div class="choices" id="tool-choices" data-testid="tool-choices"></div>
+            <p class="saved" id="choices-saved" aria-live="polite" data-testid="tool-choice-saved"></p>
+
+            <h4 id="core-heading">Core rules: always on</h4>
+            <p class="hint">Built in. They can't be changed or switched off, and they only ever make Jig more careful.</p>
+            <ul class="core-list" id="core-rules" aria-labelledby="core-heading" data-testid="core-rules"></ul>
+
+            <details class="advanced" data-testid="rules-advanced">
+              <summary>Advanced rules</summary>
+              <p class="hint">Rules for groups of tools or particular arguments, for example "ask before fetching any shop's web pages".</p>
+              <form class="form" id="rule-form">
+                <div class="row wrap">
+                  <label>Tool (glob) <input id="rule-tool" type="text" required placeholder="web_fetch or note_*" data-testid="rule-tool"></label>
+                  <label>Decision
+                    <select id="rule-decision" data-testid="rule-decision">
+                      <option value="allow">Allow</option>
+                      <option value="ask" selected>Ask</option>
+                      <option value="block">Block</option>
+                    </select>
+                  </label>
+                  <label>Argument (optional) <input id="rule-arg" type="text" placeholder="url" data-testid="rule-arg"></label>
+                  <label>Pattern (optional) <input id="rule-pattern" type="text" placeholder="https://shop.*" data-testid="rule-pattern"></label>
+                  <label>Priority <input id="rule-priority" type="number" value="0" step="1" data-testid="rule-priority"></label>
+                </div>
+                <label for="rule-note">Note</label>
+                <input id="rule-note" type="text" data-testid="rule-note">
+                <button type="submit" class="btn btn-primary" data-testid="rule-add">Add rule</button>
+              </form>
+              <div class="table-wrap" tabindex="0" role="group" aria-label="Custom rules, scrolls sideways">
+                <table class="table" id="rules" data-testid="rules">
+                  <caption class="sr-only">Custom rules</caption>
+                  <thead><tr><th scope="col">Tool</th><th scope="col">Decision</th><th scope="col">Argument</th><th scope="col">Pattern</th><th scope="col">Priority</th><th scope="col">Enabled</th><th scope="col">Note</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </details>
+          </section>
+
+          <!-- Memory -->
+          <section class="set-section" id="set-memory" data-section="memory" aria-labelledby="memory-section-heading" data-testid="settings-memory" hidden>
+            <h3 id="memory-section-heading">What Jig remembers about you</h3>
+            <p class="hint">Everything Jig remembers lives here, on your machine. Change or forget anything, at any time.</p>
+            <form class="search-row" id="memory-search" role="search" aria-label="Search memories">
+              <label for="memory-q" class="sr-only">Search words</label>
+              <input id="memory-q" type="search" placeholder="Search words" data-testid="memory-q">
+              <button type="submit" class="btn" data-testid="memory-search">Search</button>
+              <button type="button" class="btn btn-quiet" id="memory-clear" data-testid="memory-clear">Show all</button>
+            </form>
+            <h4 id="memory-heading">Memories</h4>
+            <div id="memories" class="list" aria-labelledby="memory-heading" data-testid="memories"></div>
+            <details class="advanced" data-testid="memory-add-details">
+              <summary>Tell Jig something to remember</summary>
+              <form class="form" id="memory-add">
+                <label for="memory-content">Content</label>
+                <textarea id="memory-content" rows="2" required data-testid="memory-content"></textarea>
+                <div class="row">
+                  <label>Kind <input id="memory-kind" type="text" value="fact" data-testid="memory-kind"></label>
+                  <label>Tags (comma-separated) <input id="memory-tags" type="text" data-testid="memory-tags"></label>
+                </div>
+                <button type="submit" class="btn btn-primary" data-testid="memory-add">Add</button>
+              </form>
+            </details>
+          </section>
+
+          <!-- History -->
+          <section class="set-section" id="set-history" data-section="history" aria-labelledby="history-heading" data-testid="settings-history" hidden>
+            <h3 id="history-heading">History</h3>
+            <p class="hint">A permanent record of everything Jig did. Entries can't be changed or deleted.</p>
+            <h4 id="answered-heading">Questions you've answered</h4>
+            <div id="approvals-done" class="list" aria-labelledby="answered-heading" data-testid="approvals-done"></div>
+            <form class="form" id="audit-form">
+              <h4>Audit log</h4>
+              <div class="row wrap">
+                <label>Kind <input id="audit-kind" type="text" placeholder="tool, approval, memory…" data-testid="audit-kind"></label>
+                <label>Task id <input id="audit-task" type="text" data-testid="audit-task"></label>
+                <button type="submit" class="btn" data-testid="audit-filter">Filter</button>
+              </div>
+            </form>
+            <div id="audit" class="audit-list" data-testid="audit"></div>
+            <button type="button" class="btn" id="audit-more" data-testid="audit-more" hidden>Load older entries</button>
+          </section>
+
+          <!-- Starting with Windows -->
+          <section class="set-section" id="set-startup" data-section="startup" aria-labelledby="startup-heading" data-testid="settings-startup" hidden>
+            <h3 id="startup-heading">Starting with Windows</h3>
+            <p class="hint">Jig can start by itself when you sign in to Windows, so it's always ready. Turning it on shows you exactly what will be registered first.</p>
+            <dl class="kv">
+              <dt>Start when I sign in</dt><dd id="st-autostart">—</dd>
+            </dl>
+          </section>
+
+          <!-- Appearance -->
+          <section class="set-section" id="set-appearance" data-section="appearance" aria-labelledby="appearance-heading" data-testid="settings-appearance" hidden>
+            <h3 id="appearance-heading">Appearance</h3>
+            <fieldset class="radio-cards" id="appearance">
+              <legend class="sr-only">Appearance</legend>
+              <label><input type="radio" name="appearance" value="system" aria-label="Follow my system" aria-describedby="appearance-system-hint" data-testid="appearance-system"> <span><strong>Follow my system</strong><span class="hint-quiet" id="appearance-system-hint">Light by day, dark by night if your device does that.</span></span></label>
+              <label><input type="radio" name="appearance" value="light" aria-label="Light" aria-describedby="appearance-light-hint" data-testid="appearance-light"> <span><strong>Light</strong><span class="hint-quiet" id="appearance-light-hint">Warm paper and coral.</span></span></label>
+              <label><input type="radio" name="appearance" value="dark" aria-label="Dark" aria-describedby="appearance-dark-hint" data-testid="appearance-dark"> <span><strong>Dark</strong><span class="hint-quiet" id="appearance-dark-hint">Plum and amber, easy on the eyes at night.</span></span></label>
+            </fieldset>
+          </section>
+
+          <!-- Conversation -->
+          <section class="set-section" id="set-chat" data-section="chat" aria-labelledby="chat-settings-heading" data-testid="settings-chat" hidden>
+            <h3 id="chat-settings-heading">In the conversation</h3>
+            <div class="switch-row">
+              <input type="checkbox" role="switch" id="read-only" aria-describedby="read-only-hint" data-testid="setting-read-only">
+              <div><label for="read-only">Just look, don't touch</label>
+                <p class="hint-quiet" id="read-only-hint">Jig can look things up and keep its own private notes and memories, but it won't change your files, send anything or act on websites. Applies to new messages.</p></div>
+            </div>
+            <div class="switch-row">
+              <input type="checkbox" role="switch" id="show-working" aria-describedby="show-working-hint" data-testid="setting-show-working">
+              <div><label for="show-working">Show Jig's working</label>
+                <p class="hint-quiet" id="show-working-hint">Shows Jig's thinking and each tool it uses under its replies. Problems are always shown, whatever you choose.</p></div>
+            </div>
+          </section>
         </div>
-        <dl class="kv" id="status-list">
-          <dt>Connection</dt><dd id="st-conn">—</dd>
-          <dt>Model endpoint</dt><dd id="st-endpoint">—</dd>
-          <dt>Model</dt><dd id="st-model">—</dd>
-          <dt>Context</dt><dd id="st-context">—</dd>
-          <dt>Capability check</dt><dd id="st-caps">—</dd>
-          <dt>Sentinel</dt><dd id="st-sentinel">—</dd>
-          <dt>Agent</dt><dd id="st-agent">—</dd>
-          <dt>Vault</dt><dd id="st-vault">—</dd>
-          <dt>Autostart</dt><dd id="st-autostart">—</dd>
-        </dl>
-      </section>
-    </aside>
+      </div>
+    </section>
   </div>
+
+  <dialog class="drawer" id="activity" aria-labelledby="activity-heading" data-testid="activity">
+    <div class="drawer-head">
+      <h2 id="activity-heading">What Jig's up to</h2>
+      <button type="button" class="btn btn-small btn-quiet" id="activity-close" data-testid="activity-close">Close</button>
+    </div>
+    <div class="list" id="doing-list" data-testid="doing-list"></div>
+
+    <form class="form card-soft" id="goal-form">
+      <h3>Give Jig a longer job</h3>
+      <p class="hint" id="goal-hint">Jig plans the steps, works through them in the background and asks you before anything that needs your OK.</p>
+      <label for="goal-desc">What should Jig achieve?</label>
+      <textarea id="goal-desc" rows="2" required aria-describedby="goal-hint" data-testid="goal-desc"></textarea>
+      <label for="goal-title">Title (optional)</label>
+      <input id="goal-title" type="text" data-testid="goal-title">
+      <button type="submit" class="btn btn-primary" data-testid="goal-create">Create goal</button>
+    </form>
+
+    <details class="advanced" id="activity-more" data-testid="activity-more">
+      <summary>Everything, in detail</summary>
+      <div class="section-head"><h3>Goals</h3><button type="button" class="btn btn-small" data-refresh="activity" data-testid="activity-refresh">Refresh</button></div>
+      <div id="goals" class="list" data-testid="goals"></div>
+      <h3>Other tasks</h3>
+      <div id="tasks" class="list" data-testid="tasks"></div>
+      <details class="advanced">
+        <summary>Set up a one-off task</summary>
+        <form class="form" id="task-form">
+          <label for="task-title">Title</label>
+          <input id="task-title" type="text" required data-testid="task-title">
+          <label for="task-desc">Instructions</label>
+          <textarea id="task-desc" rows="2" required data-testid="task-desc"></textarea>
+          <div class="row">
+            <label>Mode
+              <select id="task-mode" data-testid="task-mode">
+                <option value="action">Can act (asks when needed)</option>
+                <option value="research">Just look, don't touch (background)</option>
+              </select>
+            </label>
+            <label>Start in (seconds) <input id="task-delay" type="number" min="0" step="1" value="0" data-testid="task-delay"></label>
+          </div>
+          <button type="submit" class="btn btn-primary" data-testid="task-create">Create task</button>
+        </form>
+      </details>
+      <h3>Recent runs</h3>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Recent runs, scrolls sideways">
+        <table class="table" id="runs" data-testid="runs">
+          <caption class="sr-only">Recent runs</caption>
+          <thead><tr><th scope="col">Run</th><th scope="col">Kind</th><th scope="col">Mode</th><th scope="col">Status</th><th scope="col">Steps</th><th scope="col">Started</th><th scope="col">Result or error</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </dialog>
 
   <dialog id="login" aria-labelledby="login-heading">
     <form id="login-form" method="dialog">
