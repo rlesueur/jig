@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -61,6 +63,39 @@ def answered_only(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 m = {**m, "tool_calls": kept} if kept else {k: v for k, v in m.items() if k != "tool_calls"}
         out.append(m)
     return out
+
+
+# A conversation replayed to the model may take this share of its context window; past that, its oldest turns are
+# left out in steps of TRIM_STEP of the window, so the part that is left out only changes at each step and the
+# prompt stays the same from one turn to the next in between.
+HISTORY_SHARE = 0.6
+TRIM_STEP = 0.25
+_CHARS_PER_TOKEN = 3.0
+
+
+def trimmed_history(history: list[dict[str, Any]], context_tokens: int | None) -> tuple[list[dict[str, Any]], int]:
+    """The part of a conversation to replay to the model, and how many of its first messages are left out.
+    It is cut only where a user message starts, so every tool call keeps its result."""
+    if not context_tokens or not history:
+        return history, 0
+    sizes = [len(json.dumps(m, ensure_ascii=False)) / _CHARS_PER_TOKEN for m in history]
+    over = sum(sizes) - HISTORY_SHARE * context_tokens
+    if over <= 0:
+        return history, 0
+    target = math.ceil(over / (TRIM_STEP * context_tokens)) * TRIM_STEP * context_tokens
+    position = 0.0
+    for i, (m, size) in enumerate(zip(history, sizes, strict=True)):
+        if m["role"] == "user" and position >= target:
+            return history[i:], i
+        position += size
+    return [], len(history)
+
+
+def trim_note(left_out: int) -> str:
+    return (f"[Jig] The first {left_out} messages of this conversation are not shown here, because with them it "
+            "would not fit in the model's context. They are still saved, and the user can still see them. If the "
+            "user refers to something from that earlier part that you cannot see here, say so and ask; never guess "
+            "what it said. Saved memories still apply.\n\n")
 
 
 async def probe_capabilities(config: Config, model: ModelClient, sentinel_model: ModelClient,
@@ -163,6 +198,11 @@ class Jig:
     def connection(self) -> dict[str, Any]:
         """Where the agent and the safety checker run (local or cloud), for /status and the audit log."""
         return connection_summary(self.config, self.audit)
+
+    def context_tokens(self) -> int | None:
+        """The agent model's context window: as measured at start-up when it was, otherwise as its server says."""
+        return (self.capabilities.get("agent") or {}).get("context_tokens") or self.model.server_info.get(
+            "context_tokens")
 
     def _system_prompt(self, mode: Mode) -> str:
         return (agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
@@ -558,8 +598,26 @@ class Jig:
             history = self.store.get_session(session_id)
         except NotFound:
             history = []
+        shown, left_out = trimmed_history(history, self.context_tokens())
+        if left_out:
+            self.audit.record("chat.history_trimmed", f"the first {left_out} of {len(history)} messages of a long "
+                              "conversation were left out of the prompt to fit the model's context", actor="runtime",
+                              session_id=session_id, left_out=left_out, messages=len(history))
+        ask = message
+        if left_out:
+            if shown:
+                shown = [{**shown[0], "content": trim_note(left_out) + shown[0]["content"]}, *shown[1:]]
+            else:
+                ask = trim_note(left_out) + ask
         messages = [{"role": "system", "content": self._system_prompt(mode)},
-                    *history, {"role": "user", "content": message}]
+                    *shown, {"role": "user", "content": ask}]
+        turn_start = len(messages) - 1
+        extra = {"history_trimmed": left_out} if left_out else {}
+
+        def saved() -> list[dict[str, Any]]:
+            """The whole conversation, with this turn as the user wrote it."""
+            return [*history, {**messages[turn_start], "content": message}, *messages[turn_start + 1:]]
+
         run_id = self.store.create_run(kind="chat", mode=mode, session_id=session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -580,19 +638,19 @@ class Jig:
                 if not isinstance(exc, (JigError, OSError)):
                     log.exception("chat run %s crashed", run_id)
                 # What was said and done so far stays in the conversation, so it can be read and continued.
-                self.store.save_session(session_id, answered_only([m for m in messages if m["role"] != "system"]))
+                self.store.save_session(session_id, answered_only(saved()))
                 await queue.put({"type": "error", "error": f"{type(exc).__name__}: {exc}", "run_id": run_id,
                                  "session_id": session_id})
                 return
-            self.store.save_session(session_id, [m for m in result.messages if m["role"] != "system"])
+            self.store.save_session(session_id, saved())
             done = {"limit_reached": True} if result.limit_reached else {}
             await queue.put({"type": "done", "final": result.final, "run_id": run_id, "session_id": session_id,
-                             "steps": result.steps, **done})
+                             "steps": result.steps, **done, **extra})
 
         self.bus.add_listener(listener)
         runner = asyncio.create_task(drive())
         try:
-            yield {"type": "start", "run_id": run_id, "session_id": session_id}
+            yield {"type": "start", "run_id": run_id, "session_id": session_id, **extra}
             while True:
                 item = await queue.get()
                 yield item
