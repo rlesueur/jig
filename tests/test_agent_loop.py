@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from jig.agent.loop import RunSpec
-from jig.agent.prompts import agent_system_prompt
+from jig.agent.prompts import CONTEXT_KEY, agent_system_prompt
 from jig.constants import AvatarState, EventType, Mode, RunStatus
 
 from .conftest import audit_kinds
@@ -77,7 +77,8 @@ async def test_a_turn_at_the_step_limit_says_what_it_did_and_can_be_continued(ji
 
     sid = done["session_id"]
     kept = jig.store.get_session(sid)
-    assert kept[0] == {"role": "user", "content": ask}
+    assert kept[0]["content"] == ask, "saved as the user wrote it, with Jig's context kept apart"
+    assert "<jig-context>" in kept[0][CONTEXT_KEY]
     assert any(m["role"] == "tool" for m in kept), "what Jig did before it stopped is kept"
     assert not any("step limit" in m["content"] and m["role"] == "user" for m in kept), \
         "the step-limit instruction is not kept as if the user had said it"
@@ -108,6 +109,42 @@ async def test_a_task_at_the_step_limit_fails_with_its_account_of_what_is_left(j
     task = jig.store.get_task(task["id"])
     assert task["status"] == "failed" and "step limit" in task["error"], task
     assert task["result"] and task["result"].strip()
+
+
+async def test_the_prompt_starts_the_same_every_turn_and_ends_with_what_changes(jig):
+    first = jig._system_prompt(Mode.ACTION)
+    jig.memory.add("Robyn's cat is called Biscuit")
+    assert jig._system_prompt(Mode.ACTION) == first, "memories never change the system prompt"
+    assert "It is now" not in first and "Biscuit" not in first
+
+    items = [item async for item in jig.chat("What is my cat called? Answer in a few words.")]
+    run = jig.store.get_run(items[-1]["run_id"])
+    system, user = run["messages"][0], run["messages"][1]
+    assert system["content"] == first
+    assert user["content"].startswith("What is my cat called?")
+    assert user["content"].rstrip().endswith("</jig-context>") and "It is now" in user["content"]
+    assert "Biscuit" in user["content"]
+    assert "Biscuit" in items[-1]["final"]
+
+
+async def test_a_conversation_reaches_the_model_only_ever_growing_at_the_end(jig):
+    """Each turn's prompt starts with the previous turn's, byte for byte (servers that cannot roll back a cached
+    prompt reuse it whole), and memories shown once are not repeated."""
+    (jig.sandbox.root / "hello.txt").write_text("Hello there", encoding="utf-8")
+    cat = jig.memory.add("Robyn's cat is called Biscuit")
+    first = [item async for item in jig.chat("Use list_files on the workspace root, then name the files.")]
+    sid = first[-1]["session_id"]
+    second = [item async for item in jig.chat("What is my cat called? A few words.", session_id=sid)]
+    before = jig.store.get_run(first[-1]["run_id"])["messages"]
+    after = jig.store.get_run(second[-1]["run_id"])["messages"]
+    assert after[:len(before)] == before
+    assert "Biscuit" in before[1]["content"] and "Biscuit" not in after[len(before)]["content"]
+    assert "Biscuit" in second[-1]["final"], "a memory shown in an earlier turn still holds"
+
+    jig.memory.forget(cat["id"])
+    third = [item async for item in jig.chat("Say hello in one word.", session_id=sid)]
+    ask = jig.store.get_run(third[-1]["run_id"])["messages"][len(after)]["content"]
+    assert f"No longer saved (forgotten): #{cat['id']}." in ask
 
 
 async def test_streaming_chat_yields_deltas_and_done(jig):

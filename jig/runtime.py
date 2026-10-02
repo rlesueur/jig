@@ -11,7 +11,7 @@ from typing import Any
 
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
-from .agent.prompts import MEMORY_PROMPT_LIMIT, agent_system_prompt, memory_prompt
+from .agent.prompts import CONTEXT_KEY, agent_system_prompt, chosen_memories, for_model, shown_memories, turn_context
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -205,8 +205,13 @@ class Jig:
             "context_tokens")
 
     def _system_prompt(self, mode: Mode) -> str:
-        return (agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
-                + memory_prompt(self.memory.list(limit=MEMORY_PROMPT_LIMIT)))
+        """The same for every turn in a mode, so the model server can reuse its prompt cache."""
+        return agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
+
+    def _turn_context(self, message: str, shown: dict[int, str] | None = None) -> str:
+        """The time and the memories for this message (less those already ``shown``), for the end of the
+        prompt."""
+        return turn_context(self.config.runtime.timezone, chosen_memories(self.memory, shown=shown))
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -500,7 +505,7 @@ class Jig:
             if previous:
                 self.store.finish_run(previous["id"], status=RunStatus.FAILED, error="interrupted before any step")
             messages = [{"role": "system", "content": self._system_prompt(mode)},
-                        {"role": "user", "content": prompt}]
+                        {"role": "user", "content": prompt + self._turn_context(prompt)}]
             run_id, resume = None, False
 
         async def on_wait(waiting: bool) -> None:
@@ -603,20 +608,24 @@ class Jig:
             self.audit.record("chat.history_trimmed", f"the first {left_out} of {len(history)} messages of a long "
                               "conversation were left out of the prompt to fit the model's context", actor="runtime",
                               session_id=session_id, left_out=left_out, messages=len(history))
-        ask = message
+        context = self._turn_context(message, shown_memories(shown))
+        ask = message + context
+        replay = [for_model(m) for m in shown]
         if left_out:
-            if shown:
-                shown = [{**shown[0], "content": trim_note(left_out) + shown[0]["content"]}, *shown[1:]]
+            if replay:
+                replay = [{**replay[0], "content": trim_note(left_out) + replay[0]["content"]}, *replay[1:]]
             else:
                 ask = trim_note(left_out) + ask
         messages = [{"role": "system", "content": self._system_prompt(mode)},
-                    *shown, {"role": "user", "content": ask}]
+                    *replay, {"role": "user", "content": ask}]
         turn_start = len(messages) - 1
         extra = {"history_trimmed": left_out} if left_out else {}
 
         def saved() -> list[dict[str, Any]]:
-            """The whole conversation, with this turn as the user wrote it."""
-            return [*history, {**messages[turn_start], "content": message}, *messages[turn_start + 1:]]
+            """The whole conversation, with this turn as the user wrote it; what Jig added for the model is kept
+            apart (``CONTEXT_KEY``) to be replayed with it."""
+            return [*history, {**messages[turn_start], "content": message, CONTEXT_KEY: context},
+                    *messages[turn_start + 1:]]
 
         run_id = self.store.create_run(kind="chat", mode=mode, session_id=session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()

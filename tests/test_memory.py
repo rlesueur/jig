@@ -54,29 +54,32 @@ async def test_every_memory_change_is_published(jig, events):
 
 async def test_conversations_and_tasks_are_given_the_saved_memories(jig):
     """A saved preference must shape an everyday request in a new conversation, without the model having to
-    think of searching for it; edits and forgets apply to the next conversation."""
-    assert "What you remember about the user" not in jig._system_prompt(Mode.ACTION)
+    think of searching for it; edits and forgets apply to the next message."""
+    ask = "Suggest a dinner"
+    assert "What you remember about the user" not in jig._turn_context(ask)
 
     older = jig.memory.add("Robyn cycles to work")
     vegan = jig.memory.add("Robyn is   vegetarian")
-    prompt = jig._system_prompt(Mode.ACTION)
-    assert "What you remember about the user" in prompt
-    assert prompt.index("- Robyn is vegetarian") < prompt.index("- Robyn cycles to work")
-    assert "- Robyn cycles to work" in jig._system_prompt(Mode.RESEARCH)
+    context = jig._turn_context(ask)
+    assert "What you remember about the user" in context
+    assert context.index("- Robyn is vegetarian") < context.index("- Robyn cycles to work")
 
     jig.memory.edit(vegan["id"], content="Robyn is vegan")
-    assert "- Robyn is vegan" in jig._system_prompt(Mode.ACTION)
-    assert "vegetarian" not in jig._system_prompt(Mode.ACTION)
+    assert "- Robyn is vegan" in jig._turn_context(ask)
+    assert "vegetarian" not in jig._turn_context(ask)
 
     jig.memory.forget(vegan["id"])
     jig.memory.forget(older["id"])
-    assert "What you remember about the user" not in jig._system_prompt(Mode.ACTION)
+    assert "What you remember about the user" not in jig._turn_context(ask)
+    # The memories are never in the system prompt, which stays the same whatever is remembered.
+    assert "Robyn" not in jig._system_prompt(Mode.ACTION)
 
 
 def test_memory_prompt_is_bounded():
     from jig.agent.prompts import memory_prompt
 
     long = memory_prompt([{"content": "x" * 2000}])
+    assert long.startswith("What you remember about the user")
     assert long.endswith("- " + "x" * 500 + "…")
     many = memory_prompt([{"content": f"fact {i} " + "y" * 400} for i in range(100)])
     assert 10 <= many.count("\n- ") < 20
