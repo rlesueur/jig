@@ -146,6 +146,8 @@ async def run(config_path: Path, *, policy: Policy | NoPolicy | None = None, lim
               stop_services: bool = False) -> dict[str, Any]:
     policy = policy or NoPolicy()
     cfg = load_config(config_path)
+    if cfg.get("closed"):
+        raise ValueError(f"{config_path}: run {cfg['name']} is closed and must not be resumed: {cfg['closed']}")
     exp = EXPERIMENTS[cfg["experiment"]]
     out_dir = run_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)

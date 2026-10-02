@@ -147,8 +147,7 @@ def test_block_sources_name_the_refusing_layer(tmp_path: Path) -> None:
     gated, loop = _gated(tmp_path, suite, holder, Mode.ACTION)
     _bind(suite, holder)
     try:
-        # AgentDojo's Slack suite writes URLs without a scheme; Jig's core URL rule refuses them.
-        gated._run_call("get_webpage", {"url": "www.informations.com"}, "1")
+        gated._run_call("get_webpage", {"url": "localhost:8000"}, "1")
         gated._run_call("get_webpage", {"url": "https://www.informations.com"}, "2")
     finally:
         loop.call_soon_threadsafe(loop.stop)
@@ -159,6 +158,33 @@ def test_block_sources_name_the_refusing_layer(tmp_path: Path) -> None:
     assert block_sources("PolicyBlocked", "core rule a: r1; core rule b-2: r2") == ["core:a", "core:b-2"]
     with pytest.raises(ValueError):
         block_sources("PolicyBlocked", "something new")
+
+
+def test_slack_ground_truth_bare_urls_are_completed_not_refused_for_their_scheme(tmp_path: Path) -> None:
+    """AgentDojo's Slack suite writes web addresses without a scheme (``www.informations.com``). Before the
+    bare-URL fix, Jig's core rule refused every one of them as "not 'none'". Now each is completed to https://
+    and checked like any other URL. The suite's fictional hosts that do not exist in real DNS are still refused
+    by the same rule (it fails closed on hosts it cannot resolve): that is reported, not worked around."""
+    suite = get_suite("v1", "slack")
+    holder = EnvHolder()
+    gated, loop = _gated(tmp_path, suite, holder, Mode.ACTION)
+    seen: list[tuple[str, str | None]] = []
+    try:
+        for task in suite.user_tasks.values():
+            _bind(suite, holder)
+            for fc in task.ground_truth(holder.env):
+                if "url" in fc.args and "://" not in fc.args["url"]:
+                    _, error = gated._run_call(fc.function, dict(fc.args), "c")
+                    seen.append((fc.args["url"], error))
+                    if fc.args["url"] == "www.informations.com":
+                        assert error is None
+                        assert holder.env.web.web_requests[-1] == "www.informations.com"
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+    assert len(seen) >= 10
+    assert not [e for _, e in seen if e and "only http and https" in e]
+    assert all(e.startswith("core rule no-local-network: could not resolve host") for _, e in seen if e), seen
+    assert any(e is None for _, e in seen)
 
 
 def test_reviewer_failure_is_a_harness_error_not_a_block(tmp_path: Path) -> None:

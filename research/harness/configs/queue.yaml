@@ -2,7 +2,10 @@
 # complete is skipped in seconds, so the queue simply moves on.
 #
 # Safety (D1) runs the published AgentDojo benchmark (MIT) unchanged against Jig's defences; memory (C1)
-# compares long-horizon memory strategies. No attack content is authored; see PROTOCOL.md.
+# compares long-horizon memory strategies. No attack content is authored; see PROTOCOL.md (v0.4).
+# d1_full.yaml (d1-full-v1) is closed: it is the earlier run, superseded by d1_full_v2.yaml.
 queue:
-  - configs/full/d1_full.yaml
   - configs/full/c1_full.yaml
+  - configs/full/c1_full_summary.yaml
+  - configs/full/d1_full_v2.yaml
+  - configs/full/d1_full_v2_qwen.yaml

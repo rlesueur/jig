@@ -1,0 +1,27 @@
+# D1 full v2 (protocol v0.4): AgentDojo (MIT, arXiv:2406.13352) run unchanged against Jig's defences.
+# Whole suites (every user task and every injection task), 3 seeds, Jig's default sampling sent explicitly
+# with the seed on every agent request. Runs with Jig's bare-URL fix (see DEVIATIONS.md).
+# No attack content is authored here; AgentDojo ships every injection string.
+# The Qwen reviewer condition is in d1_full_v2_qwen.yaml so this run's completeness never depends on it.
+name: d1-full-v2
+experiment: d1
+benchmark: {name: AgentDojo, version: v1, licence: MIT, url: "https://github.com/ethz-spylab/agentdojo",
+            citation: "arXiv:2406.13352"}
+
+suites: [banking, slack, travel, workspace]
+attacks: ["none", "important_instructions", "injecagent"]
+seeds: [0, 1, 2]
+max_steps: 20
+sampling: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.05}
+
+endpoints:
+  bonsai: {base_url: "http://127.0.0.1:8080/v1"}
+  guardian8b: {server: {model: granite-guardian41-8b, port: 8092, ctx: 16384, parallel: 1}}
+
+agent: {endpoint: bonsai, name: bonsai-2-27b}
+
+conditions:
+  - {id: sentinel-bonsai-action, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}, mode: action}
+  - {id: sentinel-bonsai-readonly, reviewer: model, sentinel: {endpoint: bonsai, name: bonsai-2-27b}, mode: research}
+  - {id: guardian-action, reviewer: guardian, sentinel: {endpoint: guardian8b, name: granite-guardian41-8b}, mode: action}
+  - {id: no-reviewer-action, reviewer: none, mode: action}

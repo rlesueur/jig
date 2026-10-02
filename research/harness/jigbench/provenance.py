@@ -75,6 +75,9 @@ def endpoint_info(base_url: str) -> dict[str, Any]:
         info["build_info"] = props.get("build_info")
         info["n_ctx"] = (props.get("default_generation_settings") or {}).get("n_ctx")
         info["total_slots"] = props.get("total_slots")
+        # What a request that omits a sampling value gets (d1-full-v1's agent ran on these; see DEVIATIONS.md).
+        params = (props.get("default_generation_settings") or {}).get("params") or {}
+        info["default_sampling"] = {k: params.get(k) for k in ("temperature", "top_p", "top_k", "min_p", "seed")}
     return info
 
 

@@ -26,8 +26,13 @@ from typing import Any
 import openai
 from agentdojo.agent_pipeline import AgentPipeline, InitQuery, OpenAILLM, SystemMessage, ToolsExecutionLoop
 from agentdojo.agent_pipeline.agent_pipeline import load_system_message
+from agentdojo.agent_pipeline.llms.openai_llm import (_function_to_openai, _message_to_openai,
+                                                      _openai_to_assistant_message)
 from agentdojo.attacks.attack_registry import load_attack
+from agentdojo.functions_runtime import EmptyEnv
 from agentdojo.task_suite.load_suites import get_suite
+from openai import NOT_GIVEN
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_random_exponential
 
 from jig.constants import Mode
 
@@ -48,6 +53,44 @@ def pipeline_name(cond_id: str) -> str:
     """AgentDojo's attacks address the model by a name looked up from the pipeline name; "local" is the key
     AgentDojo itself uses for locally served models (-> "Local model")."""
     return f"local-{cond_id}"
+
+
+_OPENAI_SAMPLING = frozenset({"temperature", "top_p", "seed", "presence_penalty", "frequency_penalty"})
+
+
+def sampling_request(sampling: dict[str, Any], seed: int) -> dict[str, Any]:
+    """Request arguments that send every sampling value explicitly (llama.cpp-only keys go in extra_body).
+    AgentDojo's own OpenAILLM sends only `temperature or NOT_GIVEN`, so 0.0 was never sent and the server's
+    defaults applied; see DEVIATIONS.md (protocol v0.4)."""
+    values = {**sampling, "seed": seed}
+    std = {k: v for k, v in values.items() if k in _OPENAI_SAMPLING}
+    extra = {k: v for k, v in values.items() if k not in _OPENAI_SAMPLING}
+    return {**std, "extra_body": extra} if extra else std
+
+
+class SampledOpenAILLM(OpenAILLM):
+    """AgentDojo's OpenAILLM, unchanged except that the configured sampling and seed are sent with every request."""
+
+    def __init__(self, client: openai.OpenAI, model: str, request: dict[str, Any]) -> None:
+        super().__init__(client, model, temperature=request.get("temperature"))
+        self.request = request
+
+    def query(self, query: str, runtime: Any, env: Any = EmptyEnv(), messages: Any = [], extra_args: dict = {}
+              ) -> tuple[str, Any, Any, Any, dict]:
+        openai_messages = [_message_to_openai(m, self.model) for m in messages]
+        openai_tools = [_function_to_openai(t) for t in runtime.functions.values()]
+        completion = _request(self.client, model=self.model, messages=openai_messages,
+                              tools=openai_tools or NOT_GIVEN, tool_choice="auto" if openai_tools else NOT_GIVEN,
+                              **self.request)
+        output = _openai_to_assistant_message(completion.choices[0].message)
+        return query, runtime, env, [*messages, output], extra_args
+
+
+@retry(wait=wait_random_exponential(multiplier=1, max=40), stop=stop_after_attempt(3), reraise=True,
+       retry=retry_if_not_exception_type((openai.BadRequestError, openai.UnprocessableEntityError)))
+def _request(client: openai.OpenAI, **kwargs: Any) -> Any:
+    """Same retry policy as AgentDojo's chat_completion_request."""
+    return client.chat.completions.create(**kwargs)
 
 
 def _cond_cfg(cfg: dict[str, Any], cond_id: str) -> dict[str, Any]:
@@ -99,8 +142,7 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         executor = gated_executor(env.jig, registry)
         loop = asyncio.get_running_loop()
         client = openai.OpenAI(base_url=ctx.endpoints[cond.agent["endpoint"]], api_key="sk-no-key-needed")
-        temperature = float((cfg.get("sampling") or {}).get("temperature", 0.0))
-        llm = OpenAILLM(client, cond.agent.get("name", ""), temperature=temperature)
+        llm = SampledOpenAILLM(client, cond.agent.get("name", ""), sampling_request(cfg["sampling"], trial["seed"]))
         gated = JigGatedToolsExecutor(executor, holder, loop, mode, run_id=trial["trial_id"],
                                       intent=user_task.PROMPT)
         pipeline = AgentPipeline([
@@ -135,6 +177,7 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         "tool_errors": gated.tool_errors,
         "executed_calls": gated.executed,
         "mode": mode.value,
+        "agent_request_sampling": sampling_request(cfg["sampling"], trial["seed"]),
         "benchmark": "AgentDojo",
         "benchmark_version": version,
         "benchmark_licence": cfg.get("benchmark", {}).get("licence", "MIT"),
