@@ -49,17 +49,17 @@ Run them with the same `--config` (and so the same data directory) as the Jig yo
 
 ---
 
-## Google: Gmail (and later Google Calendar and Google Drive)
+## Google: Gmail, Google Calendar and Google Drive
 
-Gmail, Google Calendar and Google Drive share one Google Cloud project and one OAuth client. Each connector gets its own grant with only its own scopes, so you can connect and disconnect them separately.
+Gmail, Google Calendar and Google Drive share one Google Cloud project and one OAuth client, so you do this setup once. Each connector gets its own grant with only its own scopes, so you can connect and disconnect them separately.
 
-Official documentation used for these steps: [Create a Google Cloud project](https://developers.google.com/workspace/guides/create-project), [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis), [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent), [Create access credentials](https://developers.google.com/workspace/guides/create-credentials), [OAuth 2.0 for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app), [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
+Official documentation used for these steps: [Create a Google Cloud project](https://developers.google.com/workspace/guides/create-project), [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis), [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent), [Create access credentials](https://developers.google.com/workspace/guides/create-credentials), [OAuth 2.0 for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app), [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Calendar API scopes](https://developers.google.com/workspace/calendar/api/auth), [Drive API scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
 ### 1. Create a project and turn on the APIs
 
-1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in with the Google account whose mailbox Jig should use.
+1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in with the Google account whose mailbox, calendar and Drive Jig should use.
 2. Create a project: the project picker at the top > **New project**, name it (for example "Jig"), **Create**, and make sure it is selected.
-3. Go to **Menu > APIs & Services > Library**, find **Gmail API** and click **Enable**. While you are there, also enable **Google Calendar API** and **Google Drive API** if you want those connectors later.
+3. Go to **Menu > APIs & Services > Library** and **Enable** each of these three: **Gmail API**, **Google Calendar API** and **Google Drive API**.
 
 ### 2. Set up the consent screen (Google Auth platform)
 
@@ -68,13 +68,21 @@ Official documentation used for these steps: [Create a Google Cloud project](htt
 3. **Audience:** choose **External** (for a personal @gmail.com account; with a Google Workspace account you can choose **Internal** instead). **Next**.
 4. **Contact information:** your address. **Next**, agree to the Google API Services User Data Policy, **Continue**, **Create**.
 5. Go to **Audience** > **Test users** > **Add users**, add your own Google address, **Save**. Leave the app in **Testing**: it is for you only and does not need Google's verification.
-6. Go to **Data access** > **Add or remove scopes** and add the scopes below (paste them into "Manually add scopes"), then **Update** and **Save**:
-   - `https://www.googleapis.com/auth/gmail.readonly`
-   - `https://www.googleapis.com/auth/gmail.compose`
-   - `https://www.googleapis.com/auth/gmail.modify`
-   - For later: `https://www.googleapis.com/auth/calendar.events` and `https://www.googleapis.com/auth/calendar.readonly` (Calendar), `https://www.googleapis.com/auth/drive.file` and `https://www.googleapis.com/auth/drive.readonly` (Drive).
+6. Go to **Data access** > **Add or remove scopes** and add all of the scopes below (paste them into "Manually add scopes", one per line), then **Update** and **Save**:
 
-   Listing a scope here does not grant it. Jig asks for only the scopes of the access level you choose, and Google shows you each one on the consent page.
+   | Scope | Used by | Lets Jig |
+   | --- | --- | --- |
+   | `https://www.googleapis.com/auth/gmail.readonly` | Gmail `read`, `send` | read mail and labels |
+   | `https://www.googleapis.com/auth/gmail.compose` | Gmail `send` | create drafts and send (each send needs your approval) |
+   | `https://www.googleapis.com/auth/gmail.modify` | Gmail `manage` | read, send, label and archive; never permanent deletion |
+   | `https://www.googleapis.com/auth/calendar.calendarlist.readonly` | Calendar | see which calendars you have (not change them) |
+   | `https://www.googleapis.com/auth/calendar.events.readonly` | Calendar `read` | read events |
+   | `https://www.googleapis.com/auth/calendar.events` | Calendar `write` | also create, change and cancel events (each needs your approval) |
+   | `https://www.googleapis.com/auth/drive.readonly` | Drive `read`, `write` | search and read your files |
+   | `https://www.googleapis.com/auth/drive.file` | Drive `write` | create files, and change only files Jig created (each needs your approval) |
+
+   Listing a scope here does not grant it. Jig asks for only the scopes of the connector and access level you choose, and Google shows you each one on the consent page. None of these lets Jig delete calendars or Drive files permanently, and Jig has no tool that does.
+7. In [Google Calendar](https://calendar.google.com/), create a separate calendar for testing: **Other calendars > + > Create new calendar**, name it exactly `[Jig test]`. The live Calendar tests use only that calendar.
 
 **Important: in Testing, Google's refresh tokens expire after 7 days** for these scopes ([Google's documentation](https://developers.google.com/identity/protocols/oauth2#expiration)). After that, Jig's Gmail tools fail with a clear "reconnect" message and you run `jig connect gmail` again. Publishing the app to "In production" removes that limit but, for Gmail's restricted scopes, needs Google's verification, which a personal project does not need.
 
@@ -124,21 +132,33 @@ Anything else is blocked by the gate before it reaches the safety checker or the
 
 ---
 
-## Microsoft: Outlook / Microsoft 365 calendar (and later OneDrive)
+## Microsoft: Outlook calendar and OneDrive
 
-**Not built yet.** These steps prepare the app registration it will use.
+One Microsoft Entra app registration and one Microsoft sign-in cover both your Outlook calendar and your OneDrive, through Microsoft Graph.
 
-Official documentation: [Register an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [Redirect URIs and the localhost exception](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url), [Add a redirect URI](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri), [Microsoft Graph permissions](https://learn.microsoft.com/en-us/graph/permissions-reference).
+Official documentation: [Register an application](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [Redirect URIs and the localhost exception](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url), [Add a redirect URI](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri), [Public client apps](https://learn.microsoft.com/en-us/entra/identity-platform/msal-client-applications), [Microsoft Graph permissions](https://learn.microsoft.com/en-us/graph/permissions-reference).
 
 1. You need a Microsoft Entra tenant to register an app. Microsoft's quickstart asks for an Azure account (a [free one](https://azure.microsoft.com/free/) works) and you can use its **Default Directory**. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com/).
 2. **Entra ID > App registrations > New registration.** Name: "Jig (personal)".
-3. **Supported account types:** for a personal Outlook.com / Hotmail calendar choose **Personal accounts only** (or **Any Entra ID tenant + Personal Microsoft accounts** if you want work accounts too). For a work or school Microsoft 365 account, choose **Single tenant only**.
-4. Leave Redirect URI empty for now and click **Register**. Copy the **Application (client) ID** and, for single tenant, the **Directory (tenant) ID** from the Overview page. These are identifiers, not secrets.
-5. **Authentication > Add redirect URI > Mobile and desktop applications**, enter `http://localhost` and save. (Microsoft ignores the port for localhost, so Jig's random port works.) Under **Advanced settings**, set **Allow public client flows** to **Yes** (needed for the device-code fallback). Do **not** create a client secret: Jig is a public client and uses PKCE.
-6. **API permissions > Add a permission > Microsoft Graph > Delegated permissions:** `Calendars.ReadWrite` (read and change your calendar), `User.Read` (your name and address, to show which account is connected) and `offline_access` (a refresh token, so you don't sign in every hour). For OneDrive later: `Files.ReadWrite`. None of these needs admin consent.
-7. When the connector is built, you will run `jig connect outlook-calendar` and be asked for the client ID (and the tenant: `consumers`, `common` or your tenant ID).
+3. **Supported account types: Personal Microsoft accounts only** (for an Outlook.com, Hotmail or Live account, which is what Jig's tests use). If you later want a work or school Microsoft 365 account as well, choose **Any Entra ID tenant + Personal Microsoft accounts** instead.
+4. Leave Redirect URI empty for now and click **Register**. Copy the **Application (client) ID** from the Overview page. It is an identifier, not a secret.
+5. **Authentication > Add a platform (or Add redirect URI) > Mobile and desktop applications**, enter `http://localhost` and save. Microsoft ignores the port for `localhost`, so Jig's random loopback port works. Do **not** create a client secret or certificate: Jig is a public client and uses PKCE instead.
+6. **API permissions > Add a permission > Microsoft Graph > Delegated permissions**, add:
 
-Microsoft has no endpoint to revoke a single app's refresh token, so `jig disconnect` will delete the tokens locally and tell you to remove the app's access at [account.live.com/consent/Manage](https://account.live.com/consent/Manage) (personal accounts) or [myapps.microsoft.com](https://myapps.microsoft.com) (work accounts).
+   | Permission | Lets Jig |
+   | --- | --- |
+   | `User.Read` | see your name and address, to show which account is connected |
+   | `offline_access` | get a refresh token, so you don't sign in every hour |
+   | `Calendars.Read` | read your Outlook calendar (`read` access) |
+   | `Calendars.ReadWrite` | also create, change and cancel events, each with your approval (`write` access) |
+   | `Files.Read` | search and read your OneDrive files (`read` access) |
+   | `Files.ReadWrite` | also upload files, each with your approval (`write` access) |
+
+   None of these needs admin consent. Jig asks only for the ones of the access level you choose.
+7. In [Outlook calendar](https://outlook.live.com/calendar/), create a calendar for testing: **Add calendar > Create blank calendar**, name it exactly `[Jig test]`. In OneDrive, create a folder named `Jig test`. The live tests use only those.
+8. Connect: `.\.venv\Scripts\jig --config <your config> connect microsoft` asks for the client ID and opens Microsoft's sign-in page in your browser.
+
+Microsoft has no endpoint to revoke a single app's refresh token, so `jig disconnect microsoft` deletes the tokens from the vault and tells you to remove the app's access at [account.live.com/consent/Manage](https://account.live.com/consent/Manage) (personal accounts) or [myapps.microsoft.com](https://myapps.microsoft.com) (work accounts).
 
 ---
 
