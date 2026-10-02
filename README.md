@@ -459,6 +459,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 ## Roadmap
 
 - **A VM sandbox** (for example Firecracker or Hyper-V) as a stronger alternative to the container backend, and per-task egress leases.
+- **A mobile app** that connects to Jig running on your own computer, over the same paired-device, Tailscale-only connection the web UI uses, so you can take Jig with you while the model stays at home.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
 - **Messaging channels** such as email, Signal and Matrix, as human-only actions.
 - **A smaller dedicated Sentinel model** for faster reviews (already configurable via `[sentinel]`).
