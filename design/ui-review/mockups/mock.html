@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jig: UI review mockup</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <link rel="stylesheet" href="/mock/mock.css">
+  <script>
+    (function () {
+      const p = new URLSearchParams(location.search);
+      const root = document.documentElement;
+      root.dataset.theme = p.get('theme') || 'light';
+      root.dataset.dir = p.get('dir') || 'a';
+      root.dataset.size = p.get('size') || 'desktop';
+      root.dataset.screen = p.get('screen') || 'home';
+      root.style.colorScheme = root.dataset.theme;
+    })();
+  </script>
+  <script type="module" src="/mock/mock.js"></script>
+</head>
+<body></body>
+</html>

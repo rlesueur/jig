@@ -1,0 +1,714 @@
+{
+ "light": [
+  {
+   "sel": ".say",
+   "ratio": 15.5,
+   "size": 18,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-h",
+   "ratio": 7.21,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-t",
+   "ratio": 14.92,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-s",
+   "ratio": 7.21,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".corner-tip",
+   "note": "gradient background linear-gradient(color(srgb 1 0.980392 0.94902 / 0.92), color",
+   "page": "a:home",
+   "pass": null
+  },
+  {
+   "sel": ".waiting-pill",
+   "ratio": 6.33,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:approval",
+   "pass": true
+  },
+  {
+   "sel": ".work-line",
+   "ratio": 14.92,
+   "size": 17,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work",
+   "pass": true
+  },
+  {
+   "sel": ".meter-text .pass",
+   "ratio": 6.34,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work",
+   "pass": true
+  },
+  {
+   "sel": ".meter-text .fail",
+   "ratio": 6.49,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work",
+   "pass": true
+  },
+  {
+   "sel": ".count",
+   "ratio": 6.83,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work",
+   "pass": true
+  },
+  {
+   "sel": ".step-title",
+   "ratio": 14.92,
+   "size": 16,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step.now .step-title",
+   "ratio": 7.5,
+   "size": 16,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step-sub",
+   "ratio": 7.21,
+   "size": 14.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step-toggle",
+   "ratio": 7.5,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".pill.ok",
+   "ratio": 5.86,
+   "size": 13,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".pill.bad",
+   "ratio": 5.77,
+   "size": 13,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".change-plain",
+   "ratio": 14.92,
+   "size": 16,
+   "weight": 700,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".diff-head",
+   "ratio": 14.12,
+   "size": 13,
+   "weight": 900,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.ctx .dt",
+   "ratio": 15.5,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.add .dt",
+   "ratio": 5.86,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.del .dt",
+   "ratio": 5.77,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dn",
+   "ratio": 7.49,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".tab[aria-selected=\"true\"]",
+   "ratio": 14.92,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".tab[aria-selected=\"false\"]",
+   "ratio": 6.83,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-label",
+   "ratio": 6.83,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-line",
+   "ratio": 15.5,
+   "size": 14,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-why",
+   "ratio": 6.83,
+   "size": 14,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-name",
+   "ratio": 14.92,
+   "size": 14.5,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r.bad .r-name",
+   "ratio": 5.77,
+   "size": 14.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-id",
+   "ratio": 7.21,
+   "size": 12,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-why",
+   "ratio": 13.27,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".tag",
+   "ratio": 5.86,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:setup",
+   "pass": true
+  },
+  {
+   "sel": ".setup-steps li",
+   "note": "gradient background linear-gradient(color(srgb 1 0.980392 0.94902 / 0.92), color",
+   "page": "a:setup",
+   "pass": null
+  },
+  {
+   "sel": ".done-t",
+   "ratio": 13.81,
+   "size": 16,
+   "weight": 900,
+   "need": 4.5,
+   "page": "a:success",
+   "pass": true
+  },
+  {
+   "sel": ".done-s",
+   "ratio": 6.67,
+   "size": 14,
+   "weight": 700,
+   "need": 4.5,
+   "page": "a:success",
+   "pass": true
+  },
+  {
+   "sel": ".b-live",
+   "ratio": 7.49,
+   "size": 20,
+   "weight": 900,
+   "need": 3,
+   "page": "b:home",
+   "pass": true
+  },
+  {
+   "sel": ".b-sub",
+   "ratio": 7.49,
+   "size": 16,
+   "weight": 700,
+   "need": 4.5,
+   "page": "b:home",
+   "pass": true
+  },
+  {
+   "sel": ".c-hello",
+   "ratio": 13.45,
+   "size": 30,
+   "weight": 900,
+   "need": 3,
+   "page": "c:home",
+   "pass": true
+  },
+  {
+   "sel": ".spot-note",
+   "ratio": 13.26,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "c:approval",
+   "pass": true
+  },
+  {
+   "sel": ".spot-say",
+   "ratio": 13.45,
+   "size": 26,
+   "weight": 900,
+   "need": 3,
+   "page": "c:success",
+   "pass": true
+  }
+ ],
+ "dark": [
+  {
+   "sel": ".say",
+   "ratio": 12.95,
+   "size": 18,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-h",
+   "ratio": 9.86,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-t",
+   "ratio": 14.36,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".glance-s",
+   "ratio": 9.86,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:home",
+   "pass": true
+  },
+  {
+   "sel": ".corner-tip",
+   "note": "gradient background linear-gradient(color(srgb 0.168627 0.109804 0.180392 / 0.92",
+   "page": "a:home",
+   "pass": null
+  },
+  {
+   "sel": ".waiting-pill",
+   "ratio": 7.03,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:approval",
+   "pass": true
+  },
+  {
+   "sel": ".work-line",
+   "ratio": 12.95,
+   "size": 17,
+   "weight": 800,
+   "need": 4.5,
+   "page": "b:work",
+   "pass": true
+  },
+  {
+   "sel": ".meter-text .pass",
+   "ratio": 9.98,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "b:work",
+   "pass": true
+  },
+  {
+   "sel": ".meter-text .fail",
+   "ratio": 7.71,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "b:work",
+   "pass": true
+  },
+  {
+   "sel": ".count",
+   "ratio": 8.89,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work",
+   "pass": true
+  },
+  {
+   "sel": ".step-title",
+   "ratio": 14.36,
+   "size": 16,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step.now .step-title",
+   "ratio": 9.96,
+   "size": 16,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step-sub",
+   "ratio": 9.86,
+   "size": 14.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".step-toggle",
+   "ratio": 10.33,
+   "size": 14,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".pill.ok",
+   "ratio": 7.48,
+   "size": 13,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".pill.bad",
+   "ratio": 5.71,
+   "size": 13,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".change-plain",
+   "ratio": 14.36,
+   "size": 16,
+   "weight": 700,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".diff-head",
+   "ratio": 12.95,
+   "size": 13,
+   "weight": 900,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.ctx .dt",
+   "ratio": 15.63,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.add .dt",
+   "ratio": 7.48,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dl.del .dt",
+   "ratio": 5.71,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".dn",
+   "ratio": 10.73,
+   "size": 13,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".tab[aria-selected=\"true\"]",
+   "ratio": 14.36,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".tab[aria-selected=\"false\"]",
+   "ratio": 8.89,
+   "size": 15,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-open",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-label",
+   "ratio": 8.89,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-line",
+   "ratio": 15.63,
+   "size": 14,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".cmd-why",
+   "ratio": 8.89,
+   "size": 14,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-name",
+   "ratio": 14.36,
+   "size": 14.5,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r.bad .r-name",
+   "ratio": 5.71,
+   "size": 14.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-id",
+   "ratio": 9.86,
+   "size": 12,
+   "weight": 400,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".r-why",
+   "ratio": 9.59,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "a:work-tests",
+   "pass": true
+  },
+  {
+   "sel": ".tag",
+   "ratio": 7.48,
+   "size": 12.5,
+   "weight": 800,
+   "need": 4.5,
+   "page": "a:setup",
+   "pass": true
+  },
+  {
+   "sel": ".setup-steps li",
+   "note": "gradient background linear-gradient(color(srgb 0.168627 0.109804 0.180392 / 0.92",
+   "page": "a:setup",
+   "pass": null
+  },
+  {
+   "sel": ".done-t",
+   "ratio": 9.7,
+   "size": 16,
+   "weight": 900,
+   "need": 4.5,
+   "page": "a:success",
+   "pass": true
+  },
+  {
+   "sel": ".done-s",
+   "ratio": 6.66,
+   "size": 14,
+   "weight": 700,
+   "need": 4.5,
+   "page": "a:success",
+   "pass": true
+  },
+  {
+   "sel": ".b-live",
+   "ratio": 8.89,
+   "size": 20,
+   "weight": 900,
+   "need": 3,
+   "page": "b:home",
+   "pass": true
+  },
+  {
+   "sel": ".b-sub",
+   "ratio": 8.89,
+   "size": 16,
+   "weight": 700,
+   "need": 4.5,
+   "page": "b:home",
+   "pass": true
+  },
+  {
+   "sel": ".c-hello",
+   "ratio": 16.28,
+   "size": 30,
+   "weight": 900,
+   "need": 3,
+   "page": "c:home",
+   "pass": true
+  },
+  {
+   "sel": ".spot-note",
+   "ratio": 14.88,
+   "size": 13.5,
+   "weight": 600,
+   "need": 4.5,
+   "page": "c:approval",
+   "pass": true
+  },
+  {
+   "sel": ".spot-say",
+   "ratio": 16.28,
+   "size": 26,
+   "weight": 900,
+   "need": 3,
+   "page": "c:success",
+   "pass": true
+  }
+ ]
+}

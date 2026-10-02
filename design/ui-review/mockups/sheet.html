@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Jig UI review: contact sheet</title>
+<link rel="stylesheet" href="/web/style.css">
+<style>
+  body { display: block; padding: 28px 32px 40px; min-height: 0; height: auto; overflow: visible; }
+  h1 { font-size: 34px; font-weight: 900; margin: 0; }
+  .lede { margin: 4px 0 18px; font-size: 18px; color: var(--muted); font-weight: 700; max-width: 1500px; }
+  h2 { font-size: 20px; margin: 18px 0 10px; color: var(--heading); }
+  .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+  figure img { display: block; border-radius: 12px; border: 1px solid var(--line-strong); box-shadow: var(--shadow); background: var(--surface); }
+  figcaption { font-weight: 800; font-size: 14px; color: var(--muted); }
+  .d img { width: 540px; }
+  .n img { width: 200px; }
+  .c img { width: 300px; }
+  .col { display: flex; flex-direction: column; gap: 10px; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-strong); font-size: 13px; font-weight: 800; margin-left: 8px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+<script type="module">
+  const p = new URLSearchParams(location.search);
+  const dir = p.get('dir');
+  const variant = p.get('variant');
+  const NAMES = {
+    a: ['Direction A: Side by side', 'Jig has its own corner beside the conversation, always. Approvals, work and celebrations happen in the corner, held by Jig. Narrow windows turn the corner into a band across the top.'],
+    b: ['Direction B: Jig talks to you', 'Jig stands on a stage by the message box and speaks in a big bubble. The bubble is the live reply, the question card or the work status. Earlier turns scroll above.'],
+    c: ['Direction C: Jig\u2019s home', 'A big hello on an empty home, then Jig perches beside the message box. For the moments that matter (a question, a finished job) Jig steps forward into a spotlight.'],
+  };
+  const LABELS = { home: 'Home', chat: 'Reading the web', approval: 'Jig asks first', work: 'Coding: default', 'work-open': 'Coding: steps and the change', 'work-tests': 'Coding: test results', success: 'Done', setup: 'First run', settings: 'Settings', off: 'Jig is off' };
+  const img = (d, s, size, theme) => `/shots/direction-${d}/${d}-${s}-${size}-${theme}.png`;
+  const fig = (cls, d, s, size, theme, extra = '') => `<figure class="${cls}"><img src="${img(d, s, size, theme)}" alt=""><figcaption>${LABELS[s]} \u00b7 ${size} \u00b7 ${theme}${extra}</figcaption></figure>`;
+  let html = '';
+  if (variant === 'overview') {
+    const [title, lede] = NAMES[dir];
+    html += `<h1>${title}</h1><p class="lede">${lede}</p>`;
+    html += `<h2>Desktop and Jig's own window (1200 wide), light</h2><div class="row">${['home', 'chat', 'approval', 'success', 'setup', 'settings', 'off', 'work'].map((s) => fig('d', dir, s, 'desktop', 'light')).join('')}</div>`;
+    html += `<h2>Dark</h2><div class="row">${['home', 'approval', 'success', 'work'].map((s) => fig('d', dir, s, 'desktop', 'dark')).join('')}</div>`;
+    html += `<h2>Phone (390 wide)</h2><div class="row">${['home', 'chat', 'approval', 'success', 'work'].map((s) => fig('n', dir, s, 'narrow', 'light')).join('')}${['home', 'approval', 'work'].map((s) => fig('n', dir, s, 'narrow', 'dark')).join('')}</div>`;
+  } else if (variant === 'work') {
+    const [title] = NAMES[dir];
+    html += `<h1>${title}: the coding work view</h1><p class="lede">By default, one friendly line, plus a test meter while there are tests. Show the steps for what Jig read, ran and changed. Each step opens to the command and its results, or the change as a before and after.</p>`;
+    html += `<h2>Desktop</h2><div class="row">${['work', 'work-open', 'work-tests'].map((s) => fig('d', dir, s, 'desktop', 'light')).join('')}</div>`;
+    html += `<div class="row" style="margin-top:16px">${['work', 'work-open', 'work-tests'].map((s) => fig('d', dir, s, 'desktop', 'dark')).join('')}</div>`;
+    html += `<h2>Phone and a small window</h2><div class="row">${['work', 'work-open', 'work-tests'].map((s) => fig('n', dir, s, 'narrow', 'light')).join('')}${['work', 'work-open'].map((s) => fig('n', dir, s, 'narrow', 'dark')).join('')}${fig('c', dir, 'work', 'compact', 'light')}</div>`;
+  } else if (variant === 'current') {
+    const cur = (f, label, cls = 'd') => `<figure class="${cls}"><img src="/shots/current/${f}.png" alt=""><figcaption>${label}</figcaption></figure>`;
+    html += `<h1>Jig today (commit 87b7e81), from a spare Jig on a real local model</h1><p class="lede">Jig shrinks to a 76px sprite once a conversation starts (56px on a phone), and isn\u2019t in Settings or the activity drawer at all. During a real coding task Jig mostly showed \u201cThinking\u2026\u201d and \u201cTalking\u2026\u201d. The page also grows instead of scrolling the conversation, so Jig and the message box scroll away.</p>`;
+    html += `<h2>Main screens</h2><div class="row">${cur('01-chat-idle-desktop-light', 'Home, idle')}${cur('02-chat-thinking-desktop-light', 'Thinking')}${cur('04-approval-card-desktop-dark', 'Approval card, dark')}${cur('06-coding-live-6-talking-desktop-light', 'Coding task, live')}</div>`;
+    html += `<div class="row" style="margin-top:16px">${cur('07-coding-done-desktop-light', 'Coding finished: page scrolled away')}${cur('08-coding-done-show-working-desktop-dark', 'Show Jig\u2019s working on')}${cur('10-activity-desktop-light', 'What Jig\u2019s up to')}${cur('20-settings-02-rules-desktop-light', 'Settings')}</div>`;
+    html += `<div class="row" style="margin-top:16px">${cur('30-setup-1-desktop-light', 'First run')}${cur('42-jig-is-off-desktop-dark', 'Jig is off, dark')}</div>`;
+    html += `<h2>Phone</h2><div class="row">${cur('01-chat-idle-narrow-light', 'Home', 'n')}${cur('03-chat-reply-narrow-light', 'Reply', 'n')}${cur('04-approval-card-narrow-light', 'Approval', 'n')}${cur('09-background-job-narrow-light', 'Long reply', 'n')}${cur('10-activity-narrow-dark', 'Activity', 'n')}${cur('42-jig-is-off-narrow-light', 'Off', 'n')}</div>`;
+  } else {
+    document.body.style.setProperty('--dw', '500px');
+    document.head.insertAdjacentHTML('beforeend', '<style>.d img { width: 500px; } .row { flex-wrap: nowrap; }</style>');
+    html += `<h1>Three directions side by side</h1><p class="lede">Same moments, same copy, the real avatar. A: Side by side. B: Jig talks to you. C: Jig\u2019s home.</p>`;
+    for (const s of ['home', 'chat', 'approval', 'work', 'work-open', 'success']) {
+      html += `<h2>${LABELS[s]}</h2><div class="row">${['a', 'b', 'c'].map((d) => fig('d', d, s, 'desktop', 'light', ` <span class="tag">${d.toUpperCase()}</span>`)).join('')}${['a', 'b', 'c'].map((d) => fig('n', d, s, 'narrow', 'light', ` <span class="tag">${d.toUpperCase()}</span>`)).join('')}</div>`;
+    }
+  }
+  document.getElementById('out').innerHTML = html;
+  await Promise.all([...document.images].map((i) => i.decode().catch(() => { throw new Error(`missing ${i.src}`); })));
+  window.__ready = true;
+</script>
+</body>
+</html>
