@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -27,7 +28,10 @@ from ..code_execution import code_execution_status
 from ..config import MODEL_KEY_PREFIX, Config
 from ..connectors import SECRET_PREFIX as CONNECTOR_SECRET_PREFIX
 from ..connectors import connect as connect_account
+from ..connectors import google as google_connector
+from ..connectors import microsoft as microsoft_connector
 from ..connectors import provider as connector_provider
+from ..connectors.guide import guide as connector_guide
 from ..constants import EventType, Mode
 from ..db import now_iso
 from ..devices import DeviceStore, PairingError
@@ -151,6 +155,18 @@ class MemoryWipeIn(ConfirmIn):
 
 class ConnectIn(ConfirmIn):
     access: str | None = None
+    method: str | None = None  # one of the provider's methods: "oauth", "device" or "token"
+    # What a token sign-in asks for. Typed Any and checked by hand, so a malformed value is never echoed
+    # back in a validation error.
+    values: Any = None
+
+
+class ClientIn(ConfirmIn):
+    # Google: the text of the client file downloaded from the Google Cloud console. Microsoft: your own app
+    # registration's client ID (and tenant). Typed Any for the same reason as ConnectIn.values.
+    client_json: Any = None
+    client_id: Any = None
+    tenant: Any = None
 
 
 class PairingIn(BaseModel):
@@ -375,6 +391,13 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.exception_handler(ToolArgumentError)
     async def bad_request(_: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # Only where and what went wrong: FastAPI's default also echoes the submitted value, which may be a
+        # secret someone typed.
+        problems = [f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg', 'invalid')}" for e in exc.errors()]
+        return JSONResponse({"error": "; ".join(problems) or "invalid request"}, status_code=422)
 
     @app.exception_handler(ApprovalConflict)
     async def conflict(_: Request, exc: Exception) -> JSONResponse:
@@ -774,65 +797,150 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig.audit.record("vault.deleted", f"secret {name!r} deleted", actor="user", secret=name)
 
     # Connected accounts ------------------------------------------------------------------------
+    # The latest sign-in per provider started from the web UI. A device sign-in's code is only shown to
+    # this computer, where the sign-in was started.
     connect_attempts: dict[str, dict[str, Any]] = {}
 
     @app.get("/connections")
     async def connections(request: Request) -> list[dict[str, Any]]:
+        local = _source(request).kind == "local"
         rows = J(request).connections.status()
         for r in rows:
-            r["attempt"] = connect_attempts.get(r["provider"])
+            attempt = connect_attempts.get(r["provider"])
+            if attempt is not None and not local:
+                attempt = {k: v for k, v in attempt.items() if k not in ("user_code", "verification_uri")}
+            r["attempt"] = attempt
+            r["guide"] = connector_guide(r["provider"], install_url=r["install_url"])
         return rows
+
+    def _connector(name: str):
+        try:
+            return connector_provider(name)
+        except ConnectorError as exc:
+            raise HTTPException(404, str(exc)) from None
 
     @app.post("/connections/{name}/connect")
     async def connection_connect(request: Request, name: str, body: ConnectIn) -> dict[str, Any]:
-        """Start the provider's sign-in on this computer. Returns the link for the UI to open; the
-        connection completes in the background when the browser comes back to Jig's loopback listener."""
+        """Connect an account from this computer. A browser sign-in returns the link for the UI to open, and a
+        device sign-in the code to show; both complete in the background. A token sign-in checks what was
+        typed and stores it in the vault before answering. Typed values are never echoed, logged or audited."""
         _require_local(request, "Connecting an account")
         _require_confirm(body, "Connecting an account")
         jig = J(request)
-        try:
-            spec = connector_provider(name)
-        except ConnectorError as exc:
-            raise HTTPException(404, str(exc)) from None
-        if spec.kind != "oauth":
-            raise HTTPException(409, f"{spec.label} is connected with a token you type in a terminal, never in a "
-                                     f"web page: run 'jig connect {name}' (docs/connectors-setup.md)")
-        if spec.needs_client and not jig.connections.has_client(spec.family):
-            raise HTTPException(409, f"no {spec.family} app client is stored yet; follow docs/connectors-setup.md, "
-                                     f"then run 'jig connect {name}' once in a terminal")
-        link: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        connect_attempts[name] = {"status": "waiting", "started": now_iso(), "error": None}
+        spec = _connector(name)
+        method = body.method or spec.kind
+        if method not in spec.methods:
+            raise HTTPException(400, f"{spec.label} connects by {' or '.join(spec.methods)}, not {method!r}")
+        if body.access is not None and body.access not in spec.access_levels:
+            raise HTTPException(400, f"{spec.label} access must be one of {list(spec.access_levels)}")
+        if method == "token":
+            values = body.values if isinstance(body.values, dict) else None
+            if values is None or not all(isinstance(k, str) and isinstance(v, str) for k, v in values.items()):
+                raise HTTPException(400, f"{spec.label}: send what it asks for as text fields in \"values\"")
+            known = {i.name for i in spec.inputs}
+            if set(values) - known:
+                raise HTTPException(400, f"{spec.label} asks for {sorted(known)} only")
+            try:
+                result = await connect_account(name, access=body.access, store=jig.connections, http=jig.http,
+                                               values=values, method="token", via="api")
+            except JigError as exc:
+                message = str(exc)
+                jig.audit.record("connector.connect_failed", f"{spec.label}: {message}", actor="user",
+                                 provider=name, error=message, via="api")
+                raise HTTPException(400, message) from None
+            finally:
+                values.clear()
+            connect_attempts.pop(name, None)
+            return {"provider": name, "connected": True, "account": result["connection"]["account"],
+                    "not_granted": result["not_granted"]}
+        client = jig.connections.client_state(spec)
+        if not client["configured"]:
+            raise HTTPException(409, client["problem"])
+        started = now_iso()
+        shown: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        connect_attempts[name] = {"status": "waiting", "method": method, "started": started, "error": None}
+
+        def ready_link(url: str) -> None:
+            if not shown.done():
+                shown.set_result({"auth_url": url})
+
+        def show_code(info: dict[str, Any]) -> None:
+            connect_attempts[name] = {**connect_attempts[name], "user_code": info["user_code"],
+                                      "verification_uri": info["verification_uri"],
+                                      "expires_in": info["expires_in"]}
+            if not shown.done():
+                shown.set_result(dict(info))
 
         async def flow() -> None:
             try:
-                await connect_account(name, access=body.access, store=jig.connections, http=jig.http,
-                                      open_browser=lambda _url: None, ready=link.set_result, via="api")
-                connect_attempts[name] = {"status": "connected", "started": connect_attempts[name]["started"],
+                if method == "device":
+                    await connect_account(name, access=body.access, store=jig.connections, http=jig.http,
+                                          show_code=show_code, method="device", via="api")
+                else:
+                    await connect_account(name, access=body.access, store=jig.connections, http=jig.http,
+                                          open_browser=lambda _url: None, ready=ready_link, method=method,
+                                          via="api")
+                connect_attempts[name] = {"status": "connected", "method": method, "started": started,
                                           "error": None}
             except Exception as exc:  # reported to the UI and the audit log, never swallowed
                 message = f"{type(exc).__name__}: {exc}"
-                connect_attempts[name] = {"status": "failed", "started": connect_attempts[name]["started"],
+                connect_attempts[name] = {"status": "failed", "method": method, "started": started,
                                           "error": message}
                 jig.audit.record("connector.connect_failed", f"{spec.label}: {message}", actor="user",
                                  provider=name, error=message, via="api")
-                if not link.done():
-                    link.set_exception(exc)
+                if not shown.done():
+                    shown.set_exception(exc)
 
         jig._spawn(flow())
         try:
-            url = await asyncio.wait_for(asyncio.shield(link), 15)
+            out = await asyncio.wait_for(asyncio.shield(shown), 30)
         except (JigError, OSError) as exc:
             raise HTTPException(400, str(exc)) from None
-        return {"provider": name, "auth_url": url}
+        return {"provider": name, "method": method, **out}
+
+    @app.post("/connections/{family}/client")
+    async def connection_client(request: Request, family: str, body: ClientIn) -> dict[str, Any]:
+        """Store the app a provider family signs in with: Google's client file (its text, read in the browser
+        and sent here), or the client ID of a Microsoft app registration. It goes straight into the vault and
+        is never echoed back."""
+        _require_local(request, "Setting up an app for connecting accounts")
+        _require_confirm(body, "Setting up an app for connecting accounts")
+        jig = J(request)
+        if family == google_connector.FAMILY:
+            if not isinstance(body.client_json, str) or not body.client_json.strip():
+                raise HTTPException(400, "send the downloaded client file's text as \"client_json\"")
+            try:
+                client = google_connector.client_from_text(body.client_json)
+            except ConnectorError as exc:
+                raise HTTPException(400, str(exc)) from None
+        elif family == microsoft_connector.FAMILY:
+            if not isinstance(body.client_id, str) or not (body.tenant is None or isinstance(body.tenant, str)):
+                raise HTTPException(400, "send your app registration's Application (client) ID as \"client_id\"")
+            try:
+                client = microsoft_connector.client_from_id(body.client_id, body.tenant or "")
+            except ConnectorError as exc:
+                raise HTTPException(400, str(exc)) from None
+        else:
+            raise HTTPException(404, f"only google and microsoft take an app here, not {family!r}")
+        jig.connections.set_client(family, client, via="api")
+        return {"family": family, "stored": True, "client_id": client["client_id"]}
+
+    @app.delete("/connections/{family}/client")
+    async def connection_client_delete(request: Request, family: str) -> dict[str, Any]:
+        _require_local(request, "Removing an app for connecting accounts")
+        jig = J(request)
+        if family not in (google_connector.FAMILY, microsoft_connector.FAMILY):
+            raise HTTPException(404, f"only google and microsoft take an app here, not {family!r}")
+        users = [r["label"] for r in jig.connections.status() if r["family"] == family and r["status"] != "not_connected"]
+        if users:
+            raise HTTPException(409, f"disconnect {', '.join(users)} first; they use this app")
+        return {"family": family, "deleted": jig.connections.delete_client(family, via="api")}
 
     @app.post("/connections/{name}/disconnect")
     async def connection_disconnect(request: Request, name: str, body: ConfirmIn) -> dict[str, Any]:
         _require_confirm(body, "Disconnecting an account")
         jig = J(request)
-        try:
-            connector_provider(name)
-        except ConnectorError as exc:
-            raise HTTPException(404, str(exc)) from None
+        _connector(name)
         connect_attempts.pop(name, None)
         return await jig.connectors.disconnect(name, via="api")
 

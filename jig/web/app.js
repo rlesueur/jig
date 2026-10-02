@@ -2357,6 +2357,7 @@ const SCOPE_WORDS = {
   'Files.ReadWrite': 'read and save OneDrive files (each save needs your OK)',
 };
 let connectionPoll = null;
+const connectionRows = new Map(); // provider -> [JSON of its row, its rendered item]
 
 async function loadConnections() {
   let rows;
@@ -2366,56 +2367,234 @@ async function loadConnections() {
     if (err.status !== 401) $('connection-list').replaceChildren(el('p', { class: 'error-text', text: err.message }));
     return;
   }
-  $('connection-list').replaceChildren(...rows.map(connectionItem));
+  // Only redraw the accounts that changed, so a poll never wipes what you're typing into another one.
+  const items = rows.map((r) => {
+    const key = JSON.stringify(r);
+    const old = connectionRows.get(r.provider);
+    if (old && old[0] === key) return old[1];
+    const item = connectionItem(r);
+    connectionRows.set(r.provider, [key, item]);
+    return item;
+  });
+  $('connection-list').replaceChildren(...items);
   const waiting = rows.some((r) => r.attempt && r.attempt.status === 'waiting');
   clearTimeout(connectionPoll);
   if (waiting && currentSection() === 'connections') connectionPoll = setTimeout(loadConnections, 2000);
 }
 
-const FAMILY_NAMES = { google: 'Google', microsoft: 'Microsoft' };
+const FAMILY_NAMES = { google: 'Google', microsoft: 'Microsoft', github: 'GitHub' };
+const CLIENT_SOURCES = {
+  config: 'Signing in with your organisation\u2019s own app (from jig.toml).',
+  vault: 'Signing in with your organisation\u2019s own app.',
+};
+
+const guideLinks = (links) => el('span', { class: 'conn-links' }, links.map((l) => el('a', {
+  href: l.url, target: '_blank', rel: 'noopener noreferrer', text: `${l.label} \u2197`,
+})));
+
+const APP_ID_SLOT = 'YOUR_APPLICATION_ID';
+
+function guideSteps(steps) {
+  return el('ol', { class: 'conn-steps' }, steps.map((s) => {
+    const slotted = s.links.filter((l) => l.url.includes(APP_ID_SLOT));
+    if (!slotted.length) return el('li', {}, s.text, s.links.length ? guideLinks(s.links) : null);
+    // A link that needs the user's own application ID: they paste it once and the link is built for them.
+    const links = guideLinks(s.links);
+    const anchors = [...links.querySelectorAll('a')].filter((a) => a.href.includes(APP_ID_SLOT));
+    anchors.forEach((a) => { a.dataset.template = a.getAttribute('href'); a.hidden = true; });
+    const id = el('input', {
+      type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', placeholder: '123456789012345678',
+      oninput: () => {
+        const v = id.value.trim();
+        anchors.forEach((a) => {
+          a.hidden = !/^\d{17,20}$/.test(v);
+          a.href = a.dataset.template.replace(APP_ID_SLOT, v);
+        });
+      },
+    });
+    return el('li', {}, s.text, el('label', { class: 'conn-slot' }, 'Application ID', id), links);
+  }));
+}
+
+function secretField(input, provider) {
+  // Typed secrets go straight to Jig on this computer and into its vault: the field is never prefilled,
+  // saved by the browser or shown again.
+  return el('label', {}, input.prompt + (input.optional ? ' (optional)' : ''), el('input', {
+    type: input.secret ? 'password' : 'text', name: input.name, autocomplete: input.secret ? 'new-password' : 'off',
+    spellcheck: 'false', autocapitalize: 'off', 'data-testid': `connection-input-${provider}-${input.name}`,
+  }));
+}
 
 function connectionItem(c) {
   const state = c.connected ? { s: 'done', text: 'connected' }
     : c.status === 'needs_reconnect' ? { s: 'failed', text: 'needs reconnecting' }
       : { s: 'interrupted', text: 'not connected' };
+  const g = c.guide || { summary: '', steps: [] };
+  const host = onHost();
   const lines = [];
   if (c.connected) lines.push(`${c.account} \u00b7 \u2018${c.access}\u2019 access \u00b7 since ${when(c.connected_at)}`);
   if (c.status === 'needs_reconnect' && c.last_error) lines.push(c.last_error);
-  if (c.attempt && c.attempt.status === 'waiting') lines.push('Waiting for you to finish signing in, in the tab that opened\u2026');
-  if (c.attempt && c.attempt.status === 'failed') lines.push(`Connecting didn\u2019t work: ${c.attempt.error}`);
-  if (!c.client_configured) lines.push(`First, set up the ${FAMILY_NAMES[c.family] || c.family} app once (docs/connectors-setup.md), then run \u2018jig connect ${c.provider}\u2019 in a terminal.`);
-  if (c.kind === 'token' && !c.connected) lines.push(`Connect it in a terminal with \u2018jig connect ${c.provider}\u2019: it asks for the token there, so it never goes through a web page (docs/connectors-setup.md).`);
-  const scopes = c.scopes.length ? el('ul', { class: 'confirm-list' }, c.scopes.map((s) => el('li', { text: SCOPE_WORDS[s] || s }))) : null;
-  const actions = [];
-  if (c.kind === 'oauth' && c.client_configured && onHost()) {
-    const select = el('select', { 'aria-label': `${c.label} access level`, 'data-testid': `connection-access-${c.provider}` },
-      Object.entries(c.access_levels).map(([k, v]) => el('option', { value: k, selected: k === (c.access || c.default_access), text: `${k}: ${v.description}` })));
-    actions.push(select, el('button', {
-      type: 'button', class: 'btn btn-small btn-primary', 'data-testid': `connection-connect-${c.provider}`,
-      text: c.connected ? 'Reconnect' : 'Connect', onclick: (e) => connectAccount(e.currentTarget, c, select.value),
-    }));
+  if (CLIENT_SOURCES[c.client_source]) lines.push(CLIENT_SOURCES[c.client_source]);
+  const a = c.attempt;
+  if (a && a.status === 'waiting' && a.method === 'oauth') lines.push('Waiting for you to finish signing in, in the tab that opened\u2026');
+  if (a && a.status === 'waiting' && a.method === 'device' && !a.user_code) lines.push('Getting a code from GitHub\u2026');
+  if (a && a.status === 'failed') lines.push(`Connecting didn\u2019t work: ${a.error}`);
+
+  const parts = [];
+  if (a && a.status === 'waiting' && a.user_code) {
+    parts.push(el('div', { class: 'conn-code', 'data-testid': `connection-code-${c.provider}` },
+      el('p', { class: 'hint-quiet', text: 'Type this code on GitHub\u2019s page, then choose Authorise:' }),
+      el('p', { class: 'code-big', text: a.user_code }),
+      el('div', { class: 'item-actions' },
+        el('a', { class: 'btn btn-small btn-primary', href: a.verification_uri, target: '_blank', rel: 'noopener noreferrer', text: 'Open GitHub \u2197' }),
+        el('button', { type: 'button', class: 'btn btn-small', text: 'Copy code', onclick: () => navigator.clipboard.writeText(a.user_code) })),
+      el('p', { class: 'hint-quiet', text: 'Waiting for you to finish on GitHub\u2026 It connects by itself.' })));
   }
+
+  const actions = [];
   if (c.connected || c.status === 'needs_reconnect') {
     actions.push(el('button', {
       type: 'button', class: 'btn btn-small btn-danger', 'data-testid': `connection-disconnect-${c.provider}`,
       text: 'Disconnect\u2026', onclick: (e) => disconnectAccount(e.currentTarget, c),
     }));
   }
+
+  if (!host) {
+    parts.push(el('p', { class: 'hint-quiet', text: 'Connecting an account only works on the computer Jig runs on.' }));
+  } else {
+    const steps = [];
+    if (g.setup && !c.client_configured) {
+      // Google's one-off setup covers Gmail, Calendar and Drive: shown in full once, under Gmail.
+      if (c.provider === 'gmail') steps.push(...g.setup);
+      else steps.push({ text: 'First do the one-off Google setup shown under Gmail (it covers Calendar and Drive too), and choose the file it gives you here or there.', links: [] });
+    }
+    steps.push(...g.steps);
+    const how = el('details', { class: 'advanced conn-how', open: !c.connected && !(a && a.user_code) },
+      el('summary', { text: c.connected ? 'How it was connected' : 'How to connect' }),
+      guideSteps(steps),
+      g.note ? el('p', { class: 'hint-quiet', text: g.note }) : null);
+    parts.push(how);
+    parts.push(connectForm(c));
+    const adv = advancedForm(c);
+    if (adv) parts.push(adv);
+  }
+
   return el('div', { class: 'item', 'data-testid': 'connection-item', dataset: { provider: c.provider } },
     el('div', { class: 'item-head' },
       el('span', { class: 'title', text: c.label }),
       el('span', { class: 'status', dataset: { s: state.s }, text: state.text }),
       el('div', { class: 'item-actions' }, actions)),
+    g.summary ? el('p', { class: 'hint-quiet body', text: g.summary }) : null,
     ...lines.map((t) => el('p', { class: 'hint-quiet body', text: t })),
-    scopes);
+    c.scopes.length ? el('ul', { class: 'confirm-list' }, c.scopes.map((s) => el('li', { text: SCOPE_WORDS[s] || s }))) : null,
+    ...parts);
+}
+
+function accessSelect(c) {
+  return el('label', {}, 'What Jig may do', el('select', { 'data-testid': `connection-access-${c.provider}` },
+    Object.entries(c.access_levels).map(([k, v]) => el('option', { value: k, selected: k === (c.access || c.default_access), text: `${k}: ${v.description}` }))));
+}
+
+function connectForm(c) {
+  const access = accessSelect(c);
+  const label = c.connected ? 'Reconnect' : 'Connect';
+  if (c.kind === 'token') {
+    const form = el('form', { class: 'form conn-form', autocomplete: 'off', 'data-testid': `connection-form-${c.provider}` },
+      el('div', { class: 'row wrap' }, c.inputs.map((i) => secretField(i, c.provider))),
+      el('div', { class: 'row wrap' }, access,
+        el('button', { type: 'submit', class: 'btn btn-small btn-primary', 'data-testid': `connection-connect-${c.provider}`, text: label })));
+    form.addEventListener('submit', (e) => { e.preventDefault(); connectWithValues(form, c, access.querySelector('select').value); });
+    return form;
+  }
+  const parts = [];
+  if (c.family === 'google' && !c.client_configured) {
+    const file = el('input', { type: 'file', accept: '.json,application/json', 'data-testid': `connection-client-file-${c.provider}` });
+    parts.push(el('div', { class: 'row wrap' },
+      el('label', {}, 'Choose the downloaded file', file),
+      el('button', { type: 'button', class: 'btn btn-small', text: 'Use this file', onclick: (e) => uploadGoogleClient(e.currentTarget, file) })));
+  } else if (!c.client_configured) {
+    parts.push(el('p', { class: 'error-text', text: c.client_problem }));
+  }
+  if (c.client_configured) {
+    parts.push(el('div', { class: 'row wrap' }, access, el('button', {
+      type: 'button', class: 'btn btn-small btn-primary', 'data-testid': `connection-connect-${c.provider}`,
+      text: label, onclick: (e) => connectAccount(e.currentTarget, c, access.querySelector('select').value),
+    })));
+  }
+  return el('div', { class: 'form conn-form' }, parts);
+}
+
+function advancedForm(c) {
+  const g = c.guide || {};
+  if (c.methods.includes('token') && c.kind !== 'token') {
+    const access = accessSelect(c);
+    const form = el('form', { class: 'form', autocomplete: 'off' },
+      el('div', { class: 'row wrap' }, c.inputs.map((i) => secretField(i, c.provider))),
+      el('div', { class: 'row wrap' }, access,
+        el('button', { type: 'submit', class: 'btn btn-small', 'data-testid': `connection-token-${c.provider}`, text: 'Connect with this token' })));
+    form.addEventListener('submit', (e) => { e.preventDefault(); connectWithValues(form, c, access.querySelector('select').value); });
+    return el('details', { class: 'advanced' }, el('summary', { text: 'Advanced: use a personal access token' }),
+      el('p', { class: 'hint-quiet' }, g.advanced || '', (g.advanced_links || []).length ? guideLinks(g.advanced_links) : null),
+      form);
+  }
+  if (c.family === 'microsoft') {
+    const id = el('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: '00000000-0000-0000-0000-000000000000', 'data-testid': 'connection-client-id-microsoft' });
+    const tenant = el('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'common' });
+    const own = c.client_source === 'vault';
+    return el('details', { class: 'advanced', open: own },
+      el('summary', { text: 'Advanced: your organisation\u2019s own app' }),
+      el('p', { class: 'hint-quiet', text: g.advanced || '' }),
+      el('div', { class: 'row wrap' },
+        el('label', {}, 'Application (client) ID', id),
+        el('label', {}, 'Tenant (optional)', tenant),
+        el('button', { type: 'button', class: 'btn btn-small', text: 'Use this app', onclick: (e) => setMicrosoftClient(e.currentTarget, id.value, tenant.value) })),
+      own ? el('button', { type: 'button', class: 'btn btn-small', text: 'Go back to Jig\u2019s own app', onclick: (e) => removeClient(e.currentTarget, 'microsoft') }) : null);
+  }
+  return null;
+}
+
+async function uploadGoogleClient(button, file) {
+  const f = file.files && file.files[0];
+  if (!f) { showError('Choose the file you downloaded from Google first.'); return; }
+  if (f.size > 20000) { showError('That file is too big to be the client file Google downloads.'); return; }
+  const text = await f.text();
+  file.value = '';
+  const out = await act(button, () => api('/connections/google/client', { method: 'POST', body: { confirm: true, client_json: text } }));
+  if (out) $('connections-saved').textContent = 'Your Google app is set up. You can delete the downloaded file now, then choose Connect.';
+  await loadConnections();
+}
+
+async function setMicrosoftClient(button, clientId, tenant) {
+  const out = await act(button, () => api('/connections/microsoft/client', { method: 'POST', body: { confirm: true, client_id: clientId.trim(), tenant: tenant.trim() || null } }));
+  if (out) $('connections-saved').textContent = 'Jig will sign in to Microsoft with your organisation\u2019s app.';
+  await loadConnections();
+}
+
+async function removeClient(button, family) {
+  const out = await act(button, () => api(`/connections/${family}/client`, { method: 'DELETE' }));
+  if (out) $('connections-saved').textContent = `${FAMILY_NAMES[family] || family}: back to Jig\u2019s own app.`;
+  await loadConnections();
+}
+
+async function connectWithValues(form, c, access) {
+  const values = {};
+  for (const i of c.inputs) values[i.name] = form.elements[i.name].value;
+  const button = form.querySelector('button[type=submit]');
+  const out = await act(button, () => api(`/connections/${encodeURIComponent(c.provider)}/connect`, { method: 'POST', body: { confirm: true, access, method: 'token', values } }));
+  for (const i of c.inputs) if (i.secret) form.elements[i.name].value = '';
+  if (out) $('connections-saved').textContent = `${c.label}: connected as ${out.account}.`;
+  await loadConnections();
 }
 
 async function connectAccount(button, c, access) {
   const level = c.access_levels[access];
+  const where = FAMILY_NAMES[c.family] || c.label;
   const ok = await askConfirm({
     title: `Connect ${c.label}?`,
     body: [bullets([
-      `A new tab opens at ${c.family === 'google' ? 'Google' : c.label} so you can sign in and allow access.`,
+      c.kind === 'device'
+        ? `Jig shows a short code, and you type it in on ${where}\u2019s page.`
+        : `A new tab opens at ${where} so you can sign in and allow access.`,
       `Jig asks for \u2018${access}\u2019 access: ${level.description}.`,
       'The keys it gets are kept in Jig\u2019s vault on this computer. The model never sees them.',
     ])],
@@ -2424,7 +2603,7 @@ async function connectAccount(button, c, access) {
   if (!ok) return;
   const out = await act(button, () => api(`/connections/${encodeURIComponent(c.provider)}/connect`, { method: 'POST', body: { confirm: true, access } }));
   if (!out) return;
-  window.open(out.auth_url, '_blank', 'noopener');
+  window.open(out.auth_url || out.verification_uri, '_blank', 'noopener');
   await loadConnections();
 }
 
