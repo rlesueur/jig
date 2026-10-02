@@ -9,10 +9,10 @@ from pathlib import Path
 
 import yaml
 
-from .compute_policy import Policy
+from .compute_policy import NoPolicy, Policy
 from .paths import HARNESS, LOGS
 from .report import report
-from .runner import run
+from .runner import FATAL, run
 
 log = logging.getLogger("jigbench.overnight")
 LOCK = LOGS / "overnight.lock"
@@ -32,24 +32,38 @@ def _acquire() -> bool:
     return True
 
 
-def overnight(queue: Path) -> int:
+def overnight(queue: Path, policy: Policy | NoPolicy | None = None) -> int:
+    """Returns 0 when the queue finished or paused politely, 1 when an entry could not start (for example a
+    model server refused for lack of VRAM). Such an entry is logged as an error and the queue moves on to the
+    next one; the refused entry is retried in the next window. Its finished trials are kept."""
     if not _acquire():
         return 0
     try:
-        policy = Policy()
+        policy = policy or Policy()
         ok, why = policy.may_start()
         log.info("compute policy: %s", why)
         if not ok:
             return 0
         entries = yaml.safe_load(queue.read_text(encoding="utf-8"))["queue"]
+        blocked: list[str] = []
         for entry in entries:
             cfg = (HARNESS / entry).resolve() if not Path(entry).is_absolute() else Path(entry)
             log.info("queue: %s", cfg)
-            summary = asyncio.run(run(cfg, policy=policy, stop_services=True))
+            try:
+                summary = asyncio.run(run(cfg, policy=policy, stop_services=True))
+            except FATAL as exc:
+                log.error("queue: %s could not run now (%s: %s); moving on to the next entry",
+                          cfg.name, type(exc).__name__, exc)
+                blocked.append(cfg.name)
+                continue
             log.info("queue: %s -> %s", cfg.name, summary)
             if summary["paused"]:
                 log.info("stopping for now: %s", summary["paused"])
-                return 0
+                return 1 if blocked else 0
+        if blocked:
+            log.error("queue incomplete: %s could not run; writing report", ", ".join(blocked))
+            report()
+            return 1
         log.info("queue complete; writing report")
         report()
         return 0
