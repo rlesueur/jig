@@ -77,6 +77,45 @@ INSPECT_JS = """
 }
 """ % FIELD_JS.strip()
 
+# The page's visible fields and buttons, each with a selector that matches only it, and never a field's value.
+# The accessibility snapshot names them ('textbox "Username"') but gives nothing to select them by.
+CONTROLS_JS = """
+(limit) => {
+  const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : s);
+  const quote = (s) => '"' + s.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"') + '"';
+  const unique = (sel) => { try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; } };
+  const shown = (e) => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const out = [];
+  for (const e of document.querySelectorAll('input, select, textarea, button, [role=button]')) {
+    if (out.length >= limit) break;
+    const tag = e.tagName.toLowerCase();
+    const type = tag === 'input' ? (e.getAttribute('type') || 'text').toLowerCase() : '';
+    if (type === 'hidden' || !shown(e)) continue;
+    const isButton = tag === 'button' || e.getAttribute('role') === 'button' || ['submit', 'button', 'reset'].includes(type);
+    const labels = e.labels ? Array.from(e.labels).map((l) => l.innerText || '').join(' ') : '';
+    const words = (isButton ? (e.innerText || (type ? e.value : '') || e.getAttribute('aria-label') || '')
+      : (labels || e.getAttribute('aria-label') || e.getAttribute('placeholder') || '')).trim().replace(/\\s+/g, ' ');
+    const candidates = [];
+    if (e.id) candidates.push('#' + esc(e.id));
+    for (const attr of ['data-test', 'data-testid', 'name']) {
+      const v = e.getAttribute(attr);
+      if (v) candidates.push(`${tag}[${attr}=${quote(v)}]`);
+    }
+    if ((type === 'radio' || type === 'checkbox') && e.name && e.getAttribute('value') !== null) {
+      candidates.push(`${tag}[name=${quote(e.name)}][value=${quote(e.getAttribute('value'))}]`);
+    }
+    if (type && type !== 'text') candidates.push(`${tag}[type=${quote(type)}]`);
+    let selector = candidates.find(unique) || '';
+    if (!selector && isButton && words) selector = `${tag}:has-text(${quote(words.slice(0, 60))})`;
+    if (!selector) continue;
+    out.push({ selector, kind: isButton ? 'button' : (tag === 'input' ? type : tag), label: words.slice(0, 80),
+               ...(e.disabled ? { disabled: true } : {}) });
+  }
+  return out;
+}
+"""
+
 _PAYMENT_AUTOCOMPLETE = ("cc-", "transaction-amount")
 _PAYMENT_WORDS = ("card", "cvv", "cvc", "csc", "security code", "securitycode", "expir", "expmonth", "expyear",
                   "exp-month", "exp-year", "iban", "sort code", "sortcode", "account number", "accountnumber",
@@ -208,7 +247,8 @@ class Browser:
     def read(self, format: str = "text", max_chars: int = 12000) -> dict:
         if format == "snapshot":
             snap = self.page.locator("body").aria_snapshot()
-            return self._state(snapshot=snap[:max_chars], truncated=len(snap) > max_chars)
+            return self._state(snapshot=snap[:max_chars], truncated=len(snap) > max_chars,
+                               controls=self.page.evaluate(CONTROLS_JS, 60))
         return self._state(**self._page_text(max_chars))
 
     def screenshot(self, path: str, full_page: bool = False) -> dict:

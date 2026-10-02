@@ -109,6 +109,28 @@ async def test_form_submission_pauses_for_approval(bjig):
     assert '"custname": "Robyn"' in page.result["text"], page.result["text"][:500]
 
 
+async def test_the_snapshot_gives_selectors_for_fields_and_buttons_without_their_values(bjig):
+    intent = "Fill in the customer name on the httpbin.org test order form with Robyn."
+    assert (await gated_call(bjig, "browser_open", {"url": "https://httpbin.org/forms/post"}, intent=intent))[0].ok
+    first, _ = await gated_call(bjig, "browser_read", {"format": "snapshot"}, intent=intent)
+    assert first.ok, first.error
+    controls = first.result["controls"]
+    by_label = {c["label"]: c for c in controls}
+    name = by_label["Customer name:"]
+    assert name["kind"] == "text" and name["selector"] == 'input[name="custname"]', name
+    assert by_label["Submit order"]["kind"] == "button", controls
+    assert by_label["Medium"] == {"selector": 'input[name="size"][value="medium"]', "kind": "radio",
+                                  "label": "Medium"}, controls
+    assert by_label["Delivery instructions:"]["kind"] == "textarea", controls
+    filled, _ = await gated_call(bjig, "browser_fill", {"selector": name["selector"], "value": "Robyn"}, intent=intent)
+    assert filled.ok, filled.error
+    again, _ = await gated_call(bjig, "browser_read", {"format": "snapshot"}, intent=intent)
+    assert "Robyn" not in str(again.result["controls"])
+    clicked, _ = await gated_call(bjig, "browser_click", {"selector": by_label["Submit order"]["selector"]},
+                                  intent=intent)
+    assert clicked.ok and clicked.result["url"].endswith("/forms/post"), "a click still never submits the form"
+
+
 async def test_denied_submission_sends_nothing(bjig):
     intent = "Fill in the httpbin.org test order form with the name Robyn and submit it."
     assert (await gated_call(bjig, "browser_open", {"url": "https://httpbin.org/forms/post"}, intent=intent))[0].ok

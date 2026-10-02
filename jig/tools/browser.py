@@ -62,7 +62,8 @@ def register_browser_tools(registry: ToolRegistry) -> None:
 
     @tool(
         description="Read the page currently open in the browser, as readable text or as an accessibility "
-        "snapshot (roles and names of buttons, links, fields; useful for choosing selectors).",
+        "snapshot (roles and names of buttons, links, fields) with 'controls': each visible field and button "
+        "with a selector that matches only it. Use those selectors for clicking, typing, filling and signing in.",
         effect=Effect.READ, **web,
         args={"format": "text or snapshot.", "max_chars": "Maximum characters to return."},
     )
