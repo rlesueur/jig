@@ -83,6 +83,39 @@ async def test_outlook_calendar_end_to_end_on_test_events_only(capabilities):
         assert cancelled.ok and cancelled.result["cancelled"], cancelled.error
 
 
+async def test_a_calendar_can_be_named_and_a_miscopied_id_gets_the_real_calendars_back(capabilities):
+    async with live_runtime(CONFIG, ms.NAME) as live:
+        _limits(live)
+        intent = f"Test Jig's Outlook connector with a '{PREFIX}' event in the '{PREFIX}' calendar, named not by id"
+        cals = await call(live, "outlook_list_calendars", {}, intent=intent)
+        assert cals.ok, cals.error
+        cal_id = next(c["calendar_id"] for c in cals.result["calendars"] if c["name"] == PREFIX)
+        # What a model sent in a capability test: the real id with a repeated stretch from the middle left out.
+        miscopied = cal_id[:72] + cal_id[106:] if len(cal_id) > 110 else cal_id[:-6] + cal_id[-3:]
+        start = (datetime.now(timezone.utc) + timedelta(days=3)).replace(minute=0, second=0, microsecond=0)
+        iso = lambda d: d.isoformat(timespec="seconds")  # noqa: E731
+        wrong = await call(live, "outlook_list_events", {
+            "calendar_id": miscopied, "time_min": iso(start), "time_max": iso(start + timedelta(hours=1))},
+            intent=intent)
+        assert wrong.error_type == "ToolArgumentError" and repr(PREFIX) in wrong.error, wrong.error
+        tag = uuid.uuid4().hex[:8]
+        created = await call(live, "outlook_create_event", {
+            "calendar_id": PREFIX.lower(), "subject": f"{PREFIX} by name {tag}", "start": iso(start),
+            "end": iso(start + timedelta(hours=1))}, intent=intent)
+        assert created.ok, created.error
+        event_id = created.result["event_id"]
+        try:
+            assert created.result["calendar_id"] == cal_id and created.policy["resolved"]["calendar"] == PREFIX
+            listed = await call(live, "outlook_list_events", {
+                "calendar_id": PREFIX, "time_min": iso(start), "time_max": iso(start + timedelta(hours=1))},
+                intent=intent)
+            assert listed.ok and event_id in [e["event_id"] for e in listed.result["events"]], listed.error
+        finally:
+            cancelled = await call(live, "outlook_cancel_event", {"calendar_id": PREFIX, "event_id": event_id},
+                                   intent=intent)
+        assert cancelled.ok and cancelled.result["cancelled"], cancelled.error
+
+
 async def test_onedrive_end_to_end_on_a_test_file_only(capabilities):
     async with live_runtime(CONFIG, ms.NAME) as live:
         _limits(live)

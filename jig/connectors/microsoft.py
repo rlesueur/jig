@@ -264,6 +264,28 @@ def _cal_base(calendar_id: str) -> str:
     return "/me/calendar" if calendar_id == "default" else f"/me/calendars/{_seg(_graph_id(calendar_id, 'calendar_id'))}"
 
 
+async def _calendar_id(ctx: ToolContext, calendar_id: str | None) -> str:
+    """'default', or the Graph id of the calendar that ``calendar_id`` names or identifies. Outlook calendar ids
+    are long and repetitive, and models drop pieces of them when copying, so the calendar's name is accepted too,
+    and anything else is refused with the user's real calendars rather than Graph's bare 'The Id is invalid'."""
+    ref = str(calendar_id or "").strip() or "default"
+    if ref == "default":
+        return ref
+    cals = (await _get(ctx, "/me/calendars", **{"$select": "id,name", "$top": 100})).get("value", [])
+    if any(c.get("id") == ref for c in cals):
+        return ref
+    named = [c for c in cals if (c.get("name") or "").strip().casefold() == ref.casefold()]
+    if len(named) == 1:
+        return named[0]["id"]
+    if named:
+        raise ToolArgumentError(f"more than one Outlook calendar is called {ref!r}; give its calendar_id from "
+                                "outlook_list_calendars")
+    names = ", ".join(repr(c.get("name", "")) for c in cals)
+    raise ToolArgumentError(f"calendar_id {ref[:48]!r} is not one of the user's Outlook calendars ({names}); give "
+                            "'default', the calendar's name, or its calendar_id exactly as outlook_list_calendars "
+                            "returned it")
+
+
 def _when(value: str, what: str, time_zone: str) -> tuple[dict[str, str], bool]:
     """Graph's {dateTime, timeZone}, and whether it was a date (all day). Times with an offset go as UTC."""
     value = str(value or "").strip()
@@ -384,7 +406,7 @@ async def _get(ctx: ToolContext, path: str, **params: Any) -> dict[str, Any]:
 
 # Lookups and limits ----------------------------------------------------------------------------------------
 async def resolve_calendar(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    calendar_id = args.get("calendar_id") or "default"
+    calendar_id = await _calendar_id(ctx, args.get("calendar_id"))
     cal = await _get(ctx, _cal_base(calendar_id), **{"$select": "id,name,canEdit,isDefaultCalendar"})
     out: dict[str, Any] = {"calendar": cal.get("name", ""), "calendar_id": cal.get("id"),
                            "calendar_can_edit": cal.get("canEdit")}
@@ -463,7 +485,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         description="List events in one of the user's Outlook calendars between two times (recurring events as "
         "single occurrences, in start order). Times come back in UTC.",
         effect=Effect.READ, available=lambda: has(NAME, CAN_READ_CAL), **cal,
-        args={"calendar_id": "'default' or an id from outlook_list_calendars.",
+        args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.",
               "time_min": "Start of the range, RFC 3339 with offset (2026-10-04T00:00:00+01:00).",
               "time_max": "End of the range, RFC 3339 with offset.", "max_results": "How many events (1 to 50)."},
     )
@@ -471,6 +493,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
                                   max_results: int = 20) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_READ_CAL, "read events")
         lo, hi = _utc(time_min, "time_min"), _utc(time_max, "time_max")
+        calendar_id = await _calendar_id(ctx, calendar_id)
         body = await _get(ctx, f"{_cal_base(calendar_id)}/calendarView", startDateTime=lo, endDateTime=hi,
                           **{"$top": max(1, min(50, max_results)), "$orderby": "start/dateTime",
                              "$select": EVENT_FIELDS.replace(",body,", ",")})
@@ -481,10 +504,11 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
     @tool(
         description="Read one event from the user's Outlook calendar in full.",
         effect=Effect.READ, available=lambda: has(NAME, CAN_READ_CAL), **cal,
-        args={"calendar_id": "'default' or an id from outlook_list_calendars.", "event_id": "Event id."},
+        args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.", "event_id": "Event id."},
     )
     async def outlook_get_event(ctx: ToolContext, event_id: str, calendar_id: str = "default") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_READ_CAL, "read events")
+        calendar_id = await _calendar_id(ctx, calendar_id)
         e = await _get(ctx, f"{_cal_base(calendar_id)}/events/{_seg(_graph_id(event_id, 'event_id'))}",
                        **{"$select": EVENT_FIELDS})
         return {"source": "outlook", "untrusted": UNTRUSTED_CAL, **_event(e, calendar_id, notes_chars=MAX_NOTES)}
@@ -493,7 +517,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         description="Create an event in one of the user's Outlook calendars. Guests listed get Outlook's "
         "invitation email. Always needs the user's approval.",
         **cal_write,
-        args={"calendar_id": "'default' or an id from outlook_list_calendars.", "subject": "Event title.",
+        args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.", "subject": "Event title.",
               "start": "Start: a date (2026-10-04) for all day, or RFC 3339 date-time with offset.",
               "end": "End, in the same form as start (for all-day events, the day after the last day).",
               "time_zone": "Optional time zone (Europe/London) for times without an offset, and for all-day events.",
@@ -509,6 +533,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         (s, s_day), (e, e_day) = _when(start, "start", time_zone), _when(end, "end", time_zone)
         if s_day != e_day or (s["timeZone"] == e["timeZone"] and e["dateTime"] <= s["dateTime"]):
             raise ToolArgumentError("end must be after start, and both all-day or both timed")
+        calendar_id = await _calendar_id(ctx, calendar_id)
         await enforce_calendar(ctx, {"calendar_id": calendar_id, "subject": subject, "attendees": guests})
         body: dict[str, Any] = {"subject": subject, "start": s, "end": e, "isAllDay": s_day}
         if location:
@@ -525,7 +550,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         description="Change an event in one of the user's Outlook calendars. Only the fields given are changed; "
         "guests are told of the change. Always needs the user's approval.",
         **cal_write,
-        args={"calendar_id": "'default' or an id from outlook_list_calendars.", "event_id": "Event id.",
+        args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.", "event_id": "Event id.",
               "subject": "New title.", "start": "New start.", "end": "New end.", "time_zone": "Optional time zone.",
               "location": "New place.", "notes": "New notes.",
               "attendees": "The full new guest list (replaces the old one)."},
@@ -553,6 +578,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
             body["attendees"] = [{"emailAddress": {"address": g}, "type": "required"} for g in guests]
         if not body:
             raise ToolArgumentError("give at least one field to change")
+        calendar_id = await _calendar_id(ctx, calendar_id)
         resolved = await enforce_calendar(ctx, {"calendar_id": calendar_id, "event_id": event_id, "subject": subject,
                                                 "attendees": guests or []})
         r = await ctx.connectors.request(
@@ -565,10 +591,11 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
         description="Cancel (delete) an event in one of the user's Outlook calendars. If the user organised it, "
         "the guests are sent a cancellation. Always needs the user's approval.",
         **cal_write,
-        args={"calendar_id": "'default' or an id from outlook_list_calendars.", "event_id": "Event id."},
+        args={"calendar_id": "'default', the calendar's name, or its id from outlook_list_calendars.", "event_id": "Event id."},
     )
     async def outlook_cancel_event(ctx: ToolContext, event_id: str, calendar_id: str = "default") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_WRITE_CAL, "cancel events")
+        calendar_id = await _calendar_id(ctx, calendar_id)
         resolved = await enforce_calendar(ctx, {"calendar_id": calendar_id, "event_id": event_id})
         await ctx.connectors.request(
             NAME, "DELETE", f"{API}{_cal_base(calendar_id)}/events/{_seg(_graph_id(event_id, 'event_id'))}")
