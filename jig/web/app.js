@@ -469,6 +469,12 @@ if (!STATES.includes('paused')) showError('This avatar component does not suppor
 
 /* ---------- model and connection ---------- */
 
+const VAULT_PLACES = {
+  dpapi: 'Windows\u2019 protected store, locked to your account',
+  keyring: 'your system keychain',
+  keyfile: 'Jig\u2019s database, encrypted with your key file',
+};
+
 function capsText(c) {
   if (!c) return 'not run';
   const parts = [];
@@ -497,7 +503,7 @@ async function loadStatus() {
   $('st-context').textContent = s.model.context_tokens ? `${s.model.context_tokens.toLocaleString('en-GB')} tokens` : 'not reported';
   $('st-caps').textContent = capsText(s.capabilities.agent);
   $('st-sentinel').textContent = `${s.sentinel_model.model}: ${capsText(s.capabilities.sentinel)}`;
-  $('st-vault').textContent = s.vault_backend;
+  $('st-vault').textContent = VAULT_PLACES[s.vault_backend] || `an unrecognised store (${s.vault_backend})`;
   setAgentPaused(s.agent.paused);
   const caps = s.capabilities.agent;
   health.model = caps && caps.tool_calling === false
@@ -733,8 +739,10 @@ async function sendChat(message) {
       const ev = item.event;
       if (ev.type === 'approval.requested') {
         if (!ev.data.resumed) placeApproval(ev.data.approval_id, msg);
+        content.classList.remove('typing');
       } else if (ev.type === 'approval.resolved') {
         refreshCard(ev.data.approval_id);
+        content.classList.add('typing');
         const text = describeWorking(ev);
         if (text) note(text);
       } else if (ev.type === 'tool.end') {
