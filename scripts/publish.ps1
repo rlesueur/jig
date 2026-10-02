@@ -9,17 +9,20 @@
       c. sets the author and committer of every commit whose author or committer is 'Jig <jig@localhost>'
          or has the name 'rlesueur' to 'Robyn Le Sueur <2302916+rlesueur@users.noreply.github.com>' with
          git filter-repo, replaces local absolute paths (C:\Users\<name>\...) in the history with portable
-         ones, then stops unless that is the only author and committer identity left in the history;
+         ones, and in the same pass strips the self-authored attack content (listed in $AttackPaths) from
+         every commit, then stops unless that is the only author and committer identity left in the history;
          a bundle of the original history is saved first;
-      d. scans the rewritten history (gitleaks plus explicit checks) and stops on any finding;
+      d. verifies that no removed attack path and no distinctive marker from those files survives anywhere
+         in the rewritten history, then scans it (gitleaks plus explicit checks) and stops on any finding;
       e. creates github.com/rlesueur/<repo> as a public repository and pushes main;
       f. sets the topics;
       g. enables GitHub Pages with GitHub Actions as the source, and private vulnerability reporting;
       h. waits for the Pages workflow and prints the live URL;
       i. verifies that the repository's owner is the user account rlesueur.
 
-    With -DryRun it only runs the non-destructive checks: (a), (b), and (c) plus (d) on a throwaway
-    clone in the temporary folder. The real repository, its history and GitHub are not touched.
+    With -DryRun it only runs the non-destructive checks: (a), (b), and (c) plus the attack-content
+    verification and (d) on a throwaway clone in the temporary folder. The real repository, its history
+    and GitHub are not touched.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\publish.ps1 -DryRun
@@ -44,6 +47,31 @@ $PagesUrl = "https://$Owner.github.io/$Repo/"
 $Description = 'An open-source, always-on personal AI agent for your own local model. Memory, rules, audit trail and secrets stay on your machine.'
 $Topics = @('local-ai', 'ai-agents', 'local-llm', 'privacy', 'self-hosted', 'llama-cpp', 'ollama', 'open-source')
 $MaxBlobBytes = 50MB
+
+# Self-authored attack content from the early research commits. It was removed from the working tree in
+# commit e6a3913, but still lives in the history; it is stripped from every commit during the rewrite so
+# it can never reach the public repository. Paths are repository-relative; a trailing slash means a whole
+# directory. Keep this list and $AttackMarkers in step with anything removed as authored attack content.
+$AttackPaths = @(
+    'research/benchmark/'
+    'research/harness/scenarios/'
+    'research/harness/jigbench/experiments/d1_sentinel.py'
+    'research/harness/jigbench/experiments/d2_injection.py'
+    'research/harness/jigbench/experiments/cd1_poisoning.py'
+    'research/harness/configs/full/d1_full.yaml'
+    'research/harness/configs/full/d2_full.yaml'
+    'research/harness/configs/full/cd1_full.yaml'
+    'research/harness/configs/pilot/d1_pilot.yaml'
+    'research/harness/configs/pilot/d2_pilot.yaml'
+    'research/harness/configs/pilot/d2_pilot_e4b.yaml'
+    'research/harness/configs/pilot/cd1_pilot.yaml'
+    'research/results/d1/'
+    'research/results/d2/'
+)
+# Distinctive, benign identifiers (a function name from the D1 experiment and the D2 injection-variant
+# label) that only ever appeared inside the removed files. After the rewrite none of them may remain in
+# any blob; these are plain source identifiers, not attack text.
+$AttackMarkers = @('tool_mimic', 'decision_of', 'items_for')
 
 function Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
 function Ok([string]$Text) { Write-Host "    OK  $Text" -ForegroundColor Green }
@@ -135,12 +163,15 @@ function Invoke-Rewrite([string]$Python, [string]$RepoPath) {
     New-Item -ItemType Directory -Path $work | Out-Null
     $driver = Join-Path $work 'rewrite.py'
     $replacements = Join-Path $work 'replacements'
-    # A mailmap cannot match on a name alone, so the identities are rewritten in a commit callback.
+    $attackPaths = Join-Path $work 'attack-paths'
+    # A mailmap cannot match on a name alone, so the identities are rewritten in a commit callback. The same
+    # pass strips the authored attack paths from every commit (--invert-paths over the listed --path values).
     [IO.File]::WriteAllText($driver, @'
 import sys
 import git_filter_repo as fr
 
-new_name, new_email, replacements = sys.argv[1].encode(), sys.argv[2].encode(), sys.argv[3]
+new_name, new_email, replacements, attack_paths_file = (
+    sys.argv[1].encode(), sys.argv[2].encode(), sys.argv[3], sys.argv[4])
 
 def stale(name, email):
     return name == b'rlesueur' or (name, email) == (b'Jig', b'jig@localhost')
@@ -150,9 +181,13 @@ def fix_identity(commit, metadata):
         commit.author_name = commit.committer_name = new_name
         commit.author_email = commit.committer_email = new_email
 
-args = fr.FilteringOptions.parse_args(['--force', '--replace-text', replacements])
+with open(attack_paths_file, encoding='utf-8') as fh:
+    path_args = [arg for line in fh if line.strip() for arg in ('--path', line.strip())]
+
+args = fr.FilteringOptions.parse_args(['--force', '--invert-paths', '--replace-text', replacements] + path_args)
 fr.RepoFilter(args, commit_callback=fix_identity).run()
 '@)
+    [IO.File]::WriteAllText($attackPaths, (($script:AttackPaths) -join "`n") + "`n")
     # Order matters: the repository path first, then any other profile path. The profile path is read at
     # run time so that this script never contains it (filter-repo would otherwise rewrite its own rules).
     [IO.File]::WriteAllText($replacements, (@(
@@ -161,7 +196,7 @@ fr.RepoFilter(args, commit_callback=fix_identity).run()
     ) -join "`n") + "`n")
     Push-Location $RepoPath
     try {
-        Run $Python $driver $NewName $NewEmail $replacements | Out-Null
+        Run $Python $driver $NewName $NewEmail $replacements $attackPaths | Out-Null
     } finally { Pop-Location }
     Remove-Item -Recurse -Force $work
 
@@ -173,6 +208,26 @@ fr.RepoFilter(args, commit_callback=fix_identity).run()
     }
     $count = (Run git -C $RepoPath rev-list --all --count).Trim()
     Ok "rewrote history: $count commits, all authored and committed as $NewIdent"
+}
+
+# --- Attack-content verification -----------------------------------------------------------
+# Fails publishing if any removed attack path, or any distinctive marker from those files, survives the
+# rewrite anywhere in the history. Run this straight after Invoke-Rewrite, before anything is pushed.
+function Assert-NoAttackContent([string]$RepoPath) {
+    Step "Verifying that no authored attack content remains in $RepoPath"
+    foreach ($p in $script:AttackPaths) {
+        $hits = @(Run git -C $RepoPath log --all --oneline -- $p)
+        if ($hits) { Fail "attack path '$p' still appears in history ($($hits.Count) commit(s), e.g. $($hits[0]))." }
+    }
+    Ok "none of the $($script:AttackPaths.Count) removed attack paths appear in any commit"
+
+    $revs = @(Run git -C $RepoPath rev-list --all)
+    foreach ($m in $script:AttackMarkers) {
+        $grep = Try-Run git -C $RepoPath grep -I -l -F $m @revs
+        if ($grep.Code -gt 1) { Fail "git grep for marker '$m' failed (exit code $($grep.Code)): $($grep.Output)" }
+        if ($grep.Code -eq 0 -and $grep.Output.Trim()) { Fail "attack marker '$m' still appears in history:`n      $($grep.Output -replace "`n", "`n      ")" }
+    }
+    Ok "none of the attack markers ($($script:AttackMarkers -join ', ')) appear in any blob"
 }
 
 # --- (d) Secret and privacy scan ------------------------------------------------------------
@@ -230,6 +285,7 @@ if ($DryRun) {
     Run git clone --quiet --no-local $repoRoot $clone | Out-Null
     Write-Host "    Rehearsing on a throwaway clone: $clone"
     Invoke-Rewrite $python $clone
+    Assert-NoAttackContent $clone
     $problems = @(Invoke-Scan $clone)
     Remove-Item -Recurse -Force $clone
     if ($problems) { $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }; Fail 'the rehearsal scan found problems (listed above).' }
@@ -241,6 +297,7 @@ $bundle = Join-Path ([IO.Path]::GetTempPath()) "jig-before-publish-$(Get-Date -F
 Run git bundle create --quiet $bundle --all | Out-Null
 Ok "original history saved to $bundle"
 Invoke-Rewrite $python $repoRoot
+Assert-NoAttackContent $repoRoot
 $problems = @(Invoke-Scan $repoRoot)
 if ($problems) { $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }; Fail "the scan found problems (listed above). Nothing was pushed. The original history is in $bundle." }
 
