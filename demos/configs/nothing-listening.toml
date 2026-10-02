@@ -1,0 +1,20 @@
+# Demo 5: a model endpoint with nothing listening on it, to show Jig's real start-up failure.
+# demos/run.ps1 checks that port 8779 really is free before using this file.
+
+[model]
+base_url = "http://127.0.0.1:8779/v1"
+name = ""
+connect_timeout_s = 3.0
+
+[sentinel]
+
+[paths]
+data_dir = "../.work/unused-data"
+sandbox_dir = "../.work/unused-sandbox"
+
+[runtime]
+agent_id = "demo"
+
+[server]
+host = "127.0.0.1"
+port = 8770

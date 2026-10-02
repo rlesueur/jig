@@ -1,0 +1,132 @@
+/*
+ * Structure only: positions and sizes come from the format (lib/formats.mjs) as CSS variables.
+ * Colours, fonts, borders and shadows live in themes/<name>.css, so the look can follow the UI's theme.
+ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { overflow: hidden; background: #000; }
+
+#stage {
+  position: relative;
+  width: var(--W);
+  height: var(--H);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+#bg { position: absolute; inset: 0; background: var(--bg-art); }
+
+.box {
+  position: absolute;
+  left: var(--sx);
+  top: var(--sy);
+  width: var(--sw);
+  height: var(--sh);
+  border-radius: var(--screen-radius);
+  overflow: hidden;
+  opacity: 0;
+}
+#screen-box { background: var(--screen-bg); border: var(--screen-border); box-shadow: var(--screen-shadow); }
+#screen-layer { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+#screen-layer img { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+#rings { position: absolute; inset: 0; pointer-events: none; }
+.ring { position: absolute; border-radius: var(--ring-radius); border: var(--ring-border); box-shadow: var(--ring-shadow); }
+
+#term-box { border: var(--screen-border); box-shadow: var(--screen-shadow); background: var(--term-bg); }
+.term-window { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.term-bar {
+  flex: none;
+  height: var(--term-bar-h);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px;
+  background: var(--term-bar-bg);
+  border-bottom: var(--term-bar-border);
+  font-family: var(--font-label);
+  font-size: calc(var(--term-bar-h) * 0.4);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.dots { display: flex; gap: 9px; }
+.dots i { width: 13px; height: 13px; border-radius: 50%; background: var(--dot-1); display: block; }
+.dots i:nth-child(2) { background: var(--dot-2); }
+.dots i:nth-child(3) { background: var(--dot-3); }
+#term-host { flex: 1; padding: var(--term-pad); }
+#term-host .xterm-viewport { overflow: hidden !important; background: transparent !important; }
+
+#card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--card-gap);
+  opacity: 0;
+  flex-direction: var(--card-direction);
+  text-align: var(--card-align);
+  padding: 0 var(--safeX);
+}
+#card-avatar { width: var(--card-avatar); height: var(--card-avatar); flex: none; }
+#card-avatar jig-avatar { width: 100%; height: 100%; display: block; }
+#card-text { max-width: var(--card-text-w); display: flex; flex-direction: column; gap: calc(var(--fs-card-sub) * 0.5); align-items: var(--card-items); }
+.card-title { font-size: var(--fs-card-title); line-height: 1.04; }
+.card-sub { font-size: var(--fs-card-sub); line-height: 1.3; }
+.card-lines { list-style: none; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; align-items: var(--card-items); }
+.card-lines li { font-size: var(--fs-card-line); }
+
+#header {
+  position: absolute;
+  left: var(--safeX);
+  right: var(--safeX);
+  top: var(--hy);
+  height: var(--hh);
+  display: var(--header-display);
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+#header-title { font-size: var(--fs-header); line-height: 1.08; }
+
+#band {
+  position: absolute;
+  left: var(--bx);
+  top: var(--by);
+  width: var(--bw);
+  height: var(--bh);
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-direction: var(--band-direction);
+  justify-content: var(--band-justify);
+  padding-right: var(--band-pad-right);
+  box-sizing: border-box;
+}
+.chapter { flex: none; white-space: nowrap; font-size: var(--fs-chapter); opacity: 0; }
+.caption { flex: 1; font-size: var(--fs-caption); line-height: 1.22; text-wrap: balance; text-align: var(--caption-align); opacity: 0; }
+
+#badges {
+  position: absolute;
+  right: var(--badge-right);
+  top: var(--badge-top);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.badge { font-size: var(--fs-badge); white-space: nowrap; opacity: 0; }
+.callout {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--sy) + var(--sh) * 0.36);
+  transform: translateX(-50%);
+  max-width: calc(var(--sw) * 0.62);
+  font-size: var(--fs-callout);
+  line-height: 1.35;
+  opacity: 0;
+}
+.watermark { position: absolute; right: 22px; bottom: 16px; font-size: 18px; opacity: 0; }
+.hl { color: var(--hl-ink); background: var(--hl-bg); -webkit-background-clip: var(--hl-clip); background-clip: var(--hl-clip); }

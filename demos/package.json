@@ -1,0 +1,17 @@
+{
+  "name": "jig-demos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reproducible demo videos of Jig: real runs of the real runtime, captured and rendered.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "capture": "node lib/capture.mjs",
+    "render": "node lib/render.mjs"
+  },
+  "devDependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "playwright": "1.63.0",
+    "ws": "^8.18.0"
+  }
+}

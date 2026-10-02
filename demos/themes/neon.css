@@ -1,0 +1,133 @@
+/*
+ * Theme: neon. The look of the existing Jig promo (navy-black, magenta, violet, cyan, amber;
+ * Segoe UI Variable and Bahnschrift). Copy this file to make a new theme, then render with --theme=<name>.
+ */
+@font-face { font-family: 'Jig Sans'; src: url('/fonts/SegUIVar.ttf') format('truetype'); font-weight: 100 900; }
+@font-face { font-family: 'Jig Label'; src: url('/fonts/bahnschrift.ttf') format('truetype'); font-weight: 300 700; font-stretch: 75% 100%; }
+@font-face { font-family: 'Jig Mono'; src: url('/fonts/CascadiaMono.ttf') format('truetype'); font-weight: 200 700; }
+
+:root {
+  --font-sans: 'Jig Sans';
+  --font-label: 'Jig Label';
+  --font-mono: 'Jig Mono';
+
+  --magenta: rgb(255, 64, 236);
+  --violet: rgb(154, 84, 255);
+  --cyan: rgb(64, 214, 255);
+  --amber: rgb(255, 178, 70);
+  --mint: rgb(120, 255, 214);
+  --ink: #f7f1ff;
+  --muted: rgba(226, 214, 255, 0.72);
+
+  --bg: #03020a;
+  --bg-art:
+    radial-gradient(ellipse 70% 60% at 50% 40%, rgb(30, 18, 72) 0%, rgb(12, 8, 34) 52%, rgba(3, 2, 10, 0) 100%),
+    radial-gradient(ellipse 60% 40% at 12% 100%, rgba(255, 64, 236, 0.12), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(64, 214, 255, 0.10), transparent 70%),
+    #03020a;
+
+  --screen-radius: 18px;
+  --screen-bg: #0a071e;
+  --screen-border: 1.5px solid rgba(154, 84, 255, 0.5);
+  --screen-shadow: 0 0 70px rgba(154, 84, 255, 0.22), 0 0 0 1px rgba(64, 214, 255, 0.06);
+
+  --term-bg: rgb(9, 7, 24);
+  --term-bar-bg: linear-gradient(180deg, rgba(34, 22, 78, 0.95), rgba(18, 12, 46, 0.95));
+  --term-bar-border: 1px solid rgba(154, 84, 255, 0.35);
+  --dot-1: var(--magenta);
+  --dot-2: var(--amber);
+  --dot-3: var(--cyan);
+  /* xterm.js colours, read by composition.js */
+  --term-fg: #ece6ff;
+  --term-cursor: var(--amber);
+  --term-ansi: #1a1530 #ff5c8a #78ffd6 #ffb246 #6aa8ff #ff40ec #40d6ff #e6e0ff #6b6390 #ff85a8 #a3ffe4 #ffd08a #94c1ff #ff7cf2 #7ee4ff #ffffff;
+
+  --ring-radius: 14px;
+  --ring-border: 3px solid var(--amber);
+  --ring-shadow: 0 0 24px rgba(255, 178, 70, 0.55), inset 0 0 18px rgba(255, 178, 70, 0.18);
+
+  --hl-ink: transparent;
+  --hl-bg: linear-gradient(90deg, #ff58ee 0%, #b07bff 45%, #52dcff 100%);
+  --hl-clip: text;
+}
+
+.kicker {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: var(--fs-kicker);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: 0 0 18px rgba(64, 214, 255, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+}
+.kicker:empty { display: none; }
+.kicker::before, .kicker::after { content: ''; width: 2.2em; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--magenta)); }
+.kicker::after { background: linear-gradient(90deg, var(--magenta), transparent); }
+
+.card-title, #header-title { font-weight: 780; letter-spacing: -0.03em; text-shadow: 0 2px 24px rgba(3, 2, 10, 0.9); }
+.card-sub { font-weight: 560; color: var(--muted); }
+.card-lines li { font-weight: 600; color: var(--ink); }
+.card-lines li::before { content: '•'; color: var(--magenta); margin-right: 0.55em; }
+
+.chapter {
+  font-family: var(--font-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  padding: 0.5em 1em 0.52em;
+  border-radius: 999px;
+  border: 1.5px solid rgba(64, 214, 255, 0.45);
+  background: rgba(14, 9, 38, 0.82);
+  box-shadow: 0 0 22px rgba(64, 214, 255, 0.18);
+}
+.chapter:empty { display: none; }
+.caption { font-weight: 640; letter-spacing: -0.01em; text-shadow: 0 2px 18px rgba(3, 2, 10, 0.95); }
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-weight: 500;
+  color: var(--amber);
+  background: rgba(255, 178, 70, 0.1);
+  border: 1px solid rgba(255, 178, 70, 0.35);
+  border-radius: 8px;
+  padding: 0.02em 0.32em 0.06em;
+}
+
+.badge {
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1b1030;
+  background: var(--amber);
+  padding: 0.38em 0.85em 0.42em;
+  border-radius: 10px;
+  box-shadow: 0 0 22px rgba(255, 178, 70, 0.55);
+}
+#skip { background: var(--cyan); box-shadow: 0 0 22px rgba(64, 214, 255, 0.5); }
+
+.callout {
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(16, 10, 44, 0.95);
+  border: 2px solid var(--amber);
+  border-radius: 16px;
+  padding: 0.9em 1.2em;
+  box-shadow: 0 10px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(255, 178, 70, 0.3);
+}
+.callout b { display: block; font-family: var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.72em; color: var(--amber); margin-bottom: 0.3em; }
+
+.watermark {
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #1b1030;
+  background: var(--magenta);
+  padding: 0.3em 0.8em;
+  border-radius: 8px;
+}

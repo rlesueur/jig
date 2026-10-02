@@ -1,0 +1,125 @@
+/*
+ * Theme: warm (DRAFT). A placeholder for the redesigned UI: cream and cocoa with terracotta, honey and
+ * sage, and no glow. Not chosen yet; once the new UI theme is picked, match its palette and fonts here and
+ * render with --theme=warm. Same variables and classes as neon.css.
+ */
+@font-face { font-family: 'Jig Sans'; src: url('/fonts/SegUIVar.ttf') format('truetype'); font-weight: 100 900; }
+@font-face { font-family: 'Jig Label'; src: url('/fonts/bahnschrift.ttf') format('truetype'); font-weight: 300 700; font-stretch: 75% 100%; }
+@font-face { font-family: 'Jig Mono'; src: url('/fonts/CascadiaMono.ttf') format('truetype'); font-weight: 200 700; }
+
+:root {
+  --font-sans: 'Jig Sans';
+  --font-label: 'Jig Label';
+  --font-mono: 'Jig Mono';
+
+  --terracotta: rgb(214, 104, 72);
+  --honey: rgb(236, 172, 72);
+  --sage: rgb(122, 158, 120);
+  --rose: rgb(226, 132, 140);
+  --ink: #3b2a22;
+  --muted: rgba(59, 42, 34, 0.7);
+
+  --bg: #f6ede1;
+  --bg-art:
+    radial-gradient(ellipse 70% 60% at 50% 40%, #fbf5ec 0%, #f4e8d8 60%, #efdfca 100%),
+    radial-gradient(ellipse 50% 40% at 10% 100%, rgba(214, 104, 72, 0.12), transparent 70%),
+    #f6ede1;
+
+  --screen-radius: 22px;
+  --screen-bg: #fffaf3;
+  --screen-border: 1.5px solid rgba(59, 42, 34, 0.14);
+  --screen-shadow: 0 18px 60px rgba(90, 60, 40, 0.18);
+
+  --term-bg: #2e2420;
+  --term-bar-bg: linear-gradient(180deg, #4a3a32, #3a2d27);
+  --term-bar-border: 1px solid rgba(255, 240, 220, 0.12);
+  --dot-1: var(--terracotta);
+  --dot-2: var(--honey);
+  --dot-3: var(--sage);
+  --term-fg: #f6eadb;
+  --term-cursor: var(--honey);
+  --term-ansi: #2e2420 #e2846c #a8c49a #ecc074 #8fb0c8 #d79bb0 #8cc4bc #f1e4d2 #7a6658 #f0a18a #c0d8b2 #f4d394 #a9c6da #e6b3c5 #a6d8d0 #fffaf3;
+
+  --ring-radius: 16px;
+  --ring-border: 3px solid var(--terracotta);
+  --ring-shadow: 0 6px 24px rgba(214, 104, 72, 0.28);
+
+  --hl-ink: var(--terracotta);
+  --hl-bg: none;
+  --hl-clip: border-box;
+}
+
+.kicker {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: var(--fs-kicker);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--terracotta);
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+}
+.kicker:empty { display: none; }
+.kicker::before, .kicker::after { content: ''; width: 2em; height: 2px; border-radius: 2px; background: var(--honey); }
+
+.card-title, #header-title { font-weight: 760; letter-spacing: -0.03em; color: var(--ink); }
+.card-sub { font-weight: 520; color: var(--muted); }
+.card-lines li { font-weight: 600; color: var(--ink); }
+.card-lines li::before { content: '•'; color: var(--terracotta); margin-right: 0.55em; }
+
+.chapter {
+  font-family: var(--font-label);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fffaf3;
+  padding: 0.5em 1em 0.52em;
+  border-radius: 999px;
+  background: var(--terracotta);
+}
+.chapter:empty { display: none; }
+.caption { font-weight: 620; letter-spacing: -0.01em; color: var(--ink); }
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-weight: 500;
+  color: #8a3e26;
+  background: rgba(236, 172, 72, 0.22);
+  border-radius: 8px;
+  padding: 0.02em 0.32em 0.06em;
+}
+
+.badge {
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #3b2a22;
+  background: var(--honey);
+  padding: 0.38em 0.85em 0.42em;
+  border-radius: 10px;
+}
+#skip { background: #cfe0c8; }
+
+.callout {
+  font-weight: 600;
+  color: var(--ink);
+  background: #fffaf3;
+  border: 2px solid var(--terracotta);
+  border-radius: 18px;
+  padding: 0.9em 1.2em;
+  box-shadow: 0 14px 50px rgba(90, 60, 40, 0.25);
+}
+.callout b { display: block; font-family: var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.72em; color: var(--terracotta); margin-bottom: 0.3em; }
+
+.watermark {
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fffaf3;
+  background: var(--rose);
+  padding: 0.3em 0.8em;
+  border-radius: 8px;
+}

@@ -1,0 +1,6 @@
+# Isolated Jig snapshot, its venv and tool installs
+.work/
+node_modules/
+# Raw captures (screen frames, terminal byte logs, event logs) and rendered videos
+captures/
+out/

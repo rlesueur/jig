@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Jig demo composition</title>
+<link rel="stylesheet" href="/xterm/css/xterm.css">
+<link rel="stylesheet" href="/lib/composition.css">
+<link rel="stylesheet" id="theme" href="">
+<script>
+  /*
+   * Deterministic clock, as in the promo: requestAnimationFrame only advances when the renderer steps it,
+   * so the avatar on title cards and xterm.js's renderer produce identical frames on every render.
+   */
+  (() => {
+    const queue = [];
+    let now = 0;
+    window.requestAnimationFrame = (cb) => { queue.push(cb); return queue.length; };
+    window.cancelAnimationFrame = () => {};
+    let seed = 20261001 >>> 0;
+    Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    window.__clock = {
+      get now() { return now; },
+      step(ms) { now += ms; const due = queue.splice(0); for (const cb of due) cb(now); },
+    };
+  })();
+  document.getElementById('theme').href = `/themes/${new URLSearchParams(location.search).get('theme') || 'neon'}.css`;
+</script>
+<script src="/xterm/lib/xterm.js"></script>
+</head>
+<body>
+  <div id="stage">
+    <div id="bg"></div>
+
+    <div id="screen-box" class="box">
+      <div id="screen-layer"><img id="frame-a" alt=""><img id="frame-b" alt=""></div>
+      <div id="rings"></div>
+    </div>
+
+    <div id="term-box" class="box">
+      <div class="term-window">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span id="term-title"></span></div>
+        <div id="term-host"></div>
+      </div>
+    </div>
+
+    <div id="card">
+      <div id="card-avatar"><jig-avatar id="card-jig" shape="none" framing="full"></jig-avatar></div>
+      <div id="card-text">
+        <div id="card-kicker" class="kicker"></div>
+        <div id="card-title" class="card-title"></div>
+        <div id="card-sub" class="card-sub"></div>
+        <ul id="card-lines" class="card-lines"></ul>
+      </div>
+    </div>
+
+    <div id="header"><div id="header-kicker" class="kicker"></div><div id="header-title"></div></div>
+    <div id="band">
+      <div id="chapter" class="chapter"></div>
+      <div id="caption" class="caption"></div>
+    </div>
+    <div id="badges"><div id="speed" class="badge"></div><div id="skip" class="badge"></div></div>
+    <div id="callout" class="callout"></div>
+    <div id="watermark" class="watermark"></div>
+  </div>
+  <script type="module" src="/lib/composition.js"></script>
+</body>
+</html>

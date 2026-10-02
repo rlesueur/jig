@@ -1,0 +1,38 @@
+# Demo 5 (optional vision segment): the container backend, so the headless browser tools exist.
+# Needs Docker Desktop running and the sandbox image built (jig sandbox build).
+
+[model]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+connect_timeout_s = 5.0
+read_timeout_s = 600.0
+max_tokens = 8192
+
+[model.sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.05
+
+[sentinel]
+
+[vision]
+enabled = true
+
+[sandbox]
+backend = "container"
+image = "jig-sandbox:0.1.0"
+
+[paths]
+data_dir = "../.work/unused-data"
+sandbox_dir = "../.work/unused-sandbox"
+
+[runtime]
+agent_id = "demo"
+timezone = "Europe/London"
+max_steps = 12
+max_concurrent_tasks = 2
+
+[server]
+host = "127.0.0.1"
+port = 8770
