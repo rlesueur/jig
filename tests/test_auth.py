@@ -120,7 +120,7 @@ def test_bearer_token_works_and_approvals_need_it(app, anon):
     assert anon.get("/approvals", headers=h).json() == []
     r = anon.post("/approvals/ap_missing", json={"approve": True}, headers=h)
     assert r.status_code == 404  # authenticated, so it reaches the handler
-    assert anon.get("/auth/session", headers=h).json() == {"authenticated": True, "via": "bearer"}
+    assert anon.get("/auth/session", headers=h).json() == {"authenticated": True, "via": "bearer", "source": "local"}
 
 
 def test_browser_session_with_one_time_login_code(app, anon):
@@ -132,7 +132,7 @@ def test_browser_session_with_one_time_login_code(app, anon):
     assert f"{SESSION_COOKIE}=" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie
     assert app.state.auth.tokens.get() not in cookie, "the cookie must not carry the token itself"
     # The cookie now authenticates reads...
-    assert anon.get("/auth/session").json() == {"authenticated": True, "via": "cookie"}
+    assert anon.get("/auth/session").json() == {"authenticated": True, "via": "cookie", "source": "local"}
     assert anon.get("/memory").status_code == 200
     # ...and same-origin writes, but never cross-origin ones.
     assert anon.post("/memory", json={"content": "cookie write"}, headers={"Origin": ORIGIN}).status_code == 201
