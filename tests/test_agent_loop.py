@@ -44,6 +44,37 @@ async def test_tool_calling_loop_end_to_end(jig, events):
     assert states[-1][0] == AvatarState.SUCCESS.value
 
 
+def test_a_stopped_turn_keeps_only_tool_calls_that_got_a_result():
+    from jig.runtime import answered_only
+    call = lambda i: {"id": i, "type": "function", "function": {"name": "current_time", "arguments": "{}"}}  # noqa: E731
+    messages = [{"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "", "tool_calls": [call("a"), call("b")]},
+                {"role": "tool", "tool_call_id": "a", "content": "{}"},
+                {"role": "assistant", "content": "", "tool_calls": [call("c")]},
+                {"role": "assistant", "content": "Looking", "tool_calls": [call("d")]}]
+    kept = answered_only(messages)
+    assert [m["role"] for m in kept] == ["user", "assistant", "tool", "assistant"]
+    assert [c["id"] for c in kept[1]["tool_calls"]] == ["a"] and "tool_calls" not in kept[3]
+    assert kept[3]["content"] == "Looking" and len(messages[1]["tool_calls"]) == 2, "the input is not changed"
+
+
+async def test_a_chat_turn_that_fails_is_kept_and_can_be_continued(jig):
+    (jig.sandbox.root / "hello.txt").write_text("Hello there", encoding="utf-8")
+    ask = ("Call the current_time tool for Europe/London and the list_files tool for the workspace root, then tell "
+           "me the time and the names of the files.")
+    jig.agent.max_steps = 1
+    items = [item async for item in jig.chat(ask)]
+    assert items[-1]["type"] == "error" and "StepLimitExceeded" in items[-1]["error"], items[-1]
+    sid = items[-1]["session_id"]
+    kept = jig.store.get_session(sid)
+    assert kept[0] == {"role": "user", "content": ask}
+    assert any(m["role"] == "tool" for m in kept), "what Jig did before it stopped is kept"
+    jig.agent.max_steps = 8
+    more = [item async for item in jig.chat("Please carry on and finish.", session_id=sid)]
+    assert more[-1]["type"] == "done" and "hello.txt" in more[-1]["final"], more[-1]
+    assert jig.store.get_session(sid)[0]["content"] == ask
+
+
 async def test_streaming_chat_yields_deltas_and_done(jig):
     items = [item async for item in jig.chat("Reply with one short sentence greeting me.")]
     kinds = [i["type"] for i in items]

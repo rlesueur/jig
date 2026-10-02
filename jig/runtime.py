@@ -46,6 +46,23 @@ _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_END, EventType.SENTINE
                      EventType.APPROVAL_REQUESTED, EventType.APPROVAL_RESOLVED}
 
 
+def answered_only(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A conversation without tool calls that never got a result (a turn stopped mid-way), which model servers
+    refuse in a history. An assistant message left with neither calls nor text is dropped."""
+    answered = {m.get("tool_call_id") for m in messages if m["role"] == "tool"}
+    out = []
+    for m in messages:
+        calls = m.get("tool_calls") if m["role"] == "assistant" else None
+        if calls:
+            kept = [c for c in calls if c.get("id") in answered]
+            if len(kept) != len(calls):
+                if not kept and not (m.get("content") or "").strip():
+                    continue
+                m = {**m, "tool_calls": kept} if kept else {k: v for k, v in m.items() if k != "tool_calls"}
+        out.append(m)
+    return out
+
+
 async def probe_capabilities(config: Config, model: ModelClient, sentinel_model: ModelClient,
                              vision: VisionService, progress: Any = None) -> dict[str, Any]:
     """Real probes: the agent model must make well-formed tool calls and produce JSON-schema output
@@ -554,6 +571,8 @@ class Jig:
             except Exception as exc:
                 if not isinstance(exc, (JigError, OSError)):
                     log.exception("chat run %s crashed", run_id)
+                # What was said and done so far stays in the conversation, so it can be read and continued.
+                self.store.save_session(session_id, answered_only([m for m in messages if m["role"] != "system"]))
                 await queue.put({"type": "error", "error": f"{type(exc).__name__}: {exc}", "run_id": run_id,
                                  "session_id": session_id})
                 return
