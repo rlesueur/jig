@@ -79,7 +79,7 @@ async def test_connecting_with_a_bad_token_stores_nothing(store):  # noqa: F811
         with pytest.raises(ConnectorError, match="must start with 'xoxb-'"):
             await connect(slack.NAME, access="read", store=store, http=http,
                           values={"token": "xoxp-0000-user-token"}, via="test")
-        with pytest.raises(ConnectorError, match="token must be given"):
+        with pytest.raises(ConnectorError, match=r"Slack bot token \(xoxb-\.\.\.\) must be given; nothing was connected"):
             await connect(slack.NAME, access="read", store=store, http=http, values={}, via="test")
     assert store.get(slack.NAME) is None
     assert all(s["name"] != grant_secret(slack.NAME) for s in store.vault.list())

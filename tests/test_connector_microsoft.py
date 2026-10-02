@@ -67,12 +67,63 @@ def test_one_sign_in_offers_both_and_only_with_matching_access(jig):
 
 def test_the_provider_is_a_public_client_with_no_revoke():
     spec = PROVIDERS[ms.NAME]
-    assert spec.kind == "oauth" and spec.needs_client and spec.revoke is None
+    assert spec.kind == "oauth" and not spec.needs_client and spec.client_status is ms.client_status
     assert spec.api_hosts == frozenset({"graph.microsoft.com"}) and spec.manage_url == ms.MANAGE_URL
-    assert ms.client_from_id(FAKE_ID.upper()) == {"client_id": FAKE_ID, "tenant": "consumers"}
+    assert ms.client_from_id(FAKE_ID.upper()) == {"client_id": FAKE_ID, "tenant": "common"}
+    assert ms.client_from_id(FAKE_ID, "Contoso.onmicrosoft.com") == {"client_id": FAKE_ID,
+                                                                     "tenant": "contoso.onmicrosoft.com"}
     for bad in ("", "abc", FAKE_ID + "0", "123.apps.googleusercontent.com"):
         with pytest.raises(ConnectorError, match=r"Application \(client\) ID"):
             ms.client_from_id(bad)
+    for bad in ("../x", "contoso", "a b.com", "https://contoso.com"):
+        with pytest.raises(ConnectorError, match="isn't a Microsoft tenant"):
+            ms.client_from_id(FAKE_ID, bad)
+
+
+async def test_disconnecting_says_where_to_remove_access(store):  # noqa: F811
+    _save(store, "read")
+    async with http_client() as http:
+        result = await Connectors(store, http, {}).disconnect(ms.NAME, via="test")
+    assert ms.MANAGE_URL in result["at_provider"] and ms.WORK_MANAGE_URL in result["at_provider"]
+    assert store.get(ms.NAME) is None
+
+
+def test_the_built_in_app_says_clearly_when_it_isnt_set_up(store, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(ms.apps, "MICROSOFT_CLIENT_ID", "")
+    with pytest.raises(ConnectorError, match="built-in Microsoft app isn't set up") as info:
+        ms.resolve_client(store)
+    assert "--client-id" in str(info.value) and "[connectors.microsoft]" in str(info.value)
+    row = {r["provider"]: r for r in store.status()}[ms.NAME]
+    assert row["client_configured"] is False and "built-in Microsoft app" in row["client_problem"]
+
+
+def test_which_app_signs_in(store, monkeypatch):  # noqa: F811
+    built_in = "11111111-2222-3333-4444-555555555555"
+    monkeypatch.setattr(ms.apps, "MICROSOFT_CLIENT_ID", built_in)
+    assert ms.resolve_client(store) == {"client_id": built_in, "tenant": "common", "source": "built-in"}
+    store.settings = {"microsoft": ConnectorLimits(client_id=FAKE_ID, tenant="contoso.onmicrosoft.com")}
+    assert ms.resolve_client(store) == {"client_id": FAKE_ID, "tenant": "contoso.onmicrosoft.com", "source": "config"}
+    other = "99999999-8888-7777-6666-555555555555"
+    store.set_client(ms.FAMILY, ms.client_from_id(other), via="test")
+    assert ms.resolve_client(store)["client_id"] == other and ms.resolve_client(store)["source"] == "vault"
+    store.delete_client(ms.FAMILY, via="test")
+    store.settings = {"microsoft": ConnectorLimits(tenant="contoso.onmicrosoft.com")}
+    with pytest.raises(ConnectorError, match="sets a tenant but no client_id"):
+        ms.resolve_client(store)
+    store.settings = {"microsoft": ConnectorLimits(client_id="nope")}
+    with pytest.raises(ConnectorError, match=r"\[connectors.microsoft\].*Application \(client\) ID"):
+        ms.resolve_client(store)
+
+
+async def test_connecting_without_an_app_never_opens_a_sign_in_page(store, monkeypatch):  # noqa: F811
+    from jig.connectors import connect
+
+    monkeypatch.setattr(ms.apps, "MICROSOFT_CLIENT_ID", "")
+    opened: list[str] = []
+    async with http_client() as http:
+        with pytest.raises(ConnectorError, match="built-in Microsoft app isn't set up"):
+            await connect(ms.NAME, access="read", store=store, http=http, open_browser=opened.append, via="test")
+    assert opened == [] and store.get(ms.NAME) is None
 
 
 def test_scopes_are_normalised():
@@ -81,20 +132,22 @@ def test_scopes_are_normalised():
     assert ms.normalise_scopes("User.Read", None) == ["User.Read"]
 
 
-async def test_sign_in_sends_a_localhost_redirect_and_the_graph_scopes():
+async def test_sign_in_uses_the_common_authority_with_a_localhost_redirect_and_the_graph_scopes():
     seen: list[str] = []
     task = asyncio.create_task(oauth.authorise(
-        authorize_url=ms.AUTHORIZE_URL, client_id=FAKE_ID,
+        authorize_url=ms.authorize_url(ms.DEFAULT_TENANT), client_id=FAKE_ID,
         scopes=list(PROVIDERS[ms.NAME].access_levels["write"].scopes), extra=ms.authorise_params(),
         open_browser=seen.append, label="Microsoft", redirect_host="localhost", timeout=5))
     await wait_for(lambda: seen, timeout=5, what="the sign-in link")
-    params = dict(httpx.URL(seen[0]).params)
+    url = httpx.URL(seen[0])
+    params = dict(url.params)
+    assert url.host == "login.microsoftonline.com" and url.path == "/common/oauth2/v2.0/authorize"
     assert params["scope"].split() == ["User.Read", "offline_access", "Calendars.ReadWrite", "Files.ReadWrite"]
     assert params["redirect_uri"].startswith("http://localhost:") and params["code_challenge_method"] == "S256"
     assert "client_secret" not in params
     async with http_client() as http:
         r = await http.get(seen[0], follow_redirects=False)
-    assert r.status_code == 302 and httpx.URL(r.headers["location"]).host == "login.live.com"
+    assert r.status_code == 200 and "login.microsoftonline.com" in str(r.url)
     with pytest.raises(ConnectorError, match="no answer"):
         await task
 
@@ -102,16 +155,34 @@ async def test_sign_in_sends_a_localhost_redirect_and_the_graph_scopes():
 async def test_the_real_token_endpoint_refuses_a_made_up_code():
     async with http_client() as http:
         with pytest.raises(ConnectorError, match=r"HTTP 400, invalid_grant.*nothing was connected"):
-            await ms.exchange_code(http, {"client_id": FAKE_ID}, code="not-a-code", redirect_uri="http://localhost:1/",
-                                   verifier="a" * 50, scopes=["User.Read", "offline_access"])
+            await ms.exchange_code(http, {"client_id": FAKE_ID, "tenant": "common"}, code="not-a-code",
+                                   redirect_uri="http://localhost:1/", verifier="a" * 50,
+                                   scopes=["User.Read", "offline_access"])
+
+
+@pytest.mark.skipif(not ms.apps.MICROSOFT_CLIENT_ID, reason="Jig's Microsoft app isn't registered yet: set "
+                    "MICROSOFT_CLIENT_ID in jig/connectors/apps.py (docs/connectors-setup.md)")
+async def test_the_built_in_app_is_registered_for_personal_and_work_accounts():
+    # A made-up code: Microsoft says the code is bad (invalid_grant) only once it has accepted the app itself,
+    # as a public client for both kinds of account, at the common authority.
+    async with http_client() as http:
+        r = await http.post(ms.token_url(ms.DEFAULT_TENANT), data={
+            "client_id": ms.apps.MICROSOFT_CLIENT_ID, "grant_type": "authorization_code", "code": "not-a-code",
+            "redirect_uri": "http://localhost:1/", "code_verifier": "a" * 50, "scope": "User.Read"}, timeout=30)
+    body = r.json()
+    codes = set(body.get("error_codes") or [])
+    assert not codes & {700016, 9002331, 9002332, 7000218}, body.get("error_description")
+    assert body.get("error") == "invalid_grant", body.get("error_description")
 
 
 async def test_a_refused_refresh_needs_a_reconnect(store):  # noqa: F811
-    store.set_client(ms.FAMILY, ms.client_from_id(FAKE_ID), via="test")
     async with http_client() as http:
         with pytest.raises(ConnectorAuthError, match="no longer accepts"):
             await ms.refresh(http, store.vault, Grant(access_token="EwB-x", refresh_token="M.C-not-real",
-                                                      scopes=["User.Read", "offline_access"]))
+                                                      scopes=["User.Read", "offline_access"],
+                                                      extra={"client_id": FAKE_ID, "tenant": "common"}))
+        with pytest.raises(ConnectorAuthError, match="doesn't record which app"):
+            await ms.refresh(http, store.vault, Grant(access_token="EwB-x", refresh_token="M.C-not-real"))
 
 
 async def test_real_graph_rejects_a_bad_token(store):  # noqa: F811

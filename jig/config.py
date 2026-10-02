@@ -189,7 +189,8 @@ class RemoteConfig:
 @dataclass(frozen=True)
 class ConnectorLimits:
     """``[connectors.<provider>]``: fixed limits on what Jig may send through a connected account, checked by
-    the gate before the safety checker or an approval. Used for testing with your own address only."""
+    the gate before the safety checker or an approval, and (Microsoft and GitHub only) your own app to sign
+    in with instead of the one built into Jig."""
 
     # Exact addresses (case-insensitive) Jig may send mail or invitations to. Empty: anyone, and every
     # send still needs approval.
@@ -200,7 +201,16 @@ class ConnectorLimits:
     # When set, everything Jig writes (a subject after any "Re: ", an event or file name, a message or
     # comment) must start with this, for example "[Jig test]".
     required_prefix: str = ""
+    # Microsoft and GitHub: your organisation's own app instead of Jig's built-in one. Microsoft: the
+    # Application (client) ID of your app registration, and optionally your tenant (its ID or domain;
+    # default "common"). GitHub: your GitHub App's client ID, and its URL name (app_slug) for the
+    # "choose repositories" link.
+    client_id: str = ""
+    tenant: str = ""
+    app_slug: str = ""
 
+# Connectors whose [connectors.<id>] may name the user's own app, and the keys each takes.
+CONNECTOR_APP_KEYS = {"microsoft": ("client_id", "tenant"), "github": ("client_id", "app_slug")}
 
 # Connectors that read [connectors.<id>]; see jig.connectors.
 CONNECTOR_IDS = ("gmail", "google-calendar", "google-drive", "microsoft", "github", "slack", "discord", "matrix",
@@ -361,7 +371,14 @@ def _connectors_config(values: dict[str, Any]) -> dict[str, ConnectorLimits]:
         targets = [str(t).strip() for t in cfg.allowed_targets]
         if any(not t or "*" in t for t in targets):
             raise ConfigError(f"[connectors.{name}] allowed_targets must list exact names or ids, without wildcards")
-        out[name] = replace(cfg, allowed_recipients=recipients, allowed_targets=targets)
+        allowed = CONNECTOR_APP_KEYS.get(name, ())
+        for key in ("client_id", "tenant", "app_slug"):
+            if str(getattr(cfg, key)).strip() and key not in allowed:
+                where = ", ".join(f"[connectors.{n}]" for n, keys in CONNECTOR_APP_KEYS.items() if key in keys)
+                raise ConfigError(f"[connectors.{name}] has no {key} setting; it belongs in {where}")
+        out[name] = replace(cfg, allowed_recipients=recipients, allowed_targets=targets,
+                            client_id=str(cfg.client_id).strip(), tenant=str(cfg.tenant).strip(),
+                            app_slug=str(cfg.app_slug).strip())
     return out
 
 

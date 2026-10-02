@@ -395,9 +395,18 @@ def test_connector_limits_config(tmp_path):
                     encoding="utf-8")
     cfg = load_config(good, data_dir=tmp_path / "d")
     assert cfg.connectors["gmail"].allowed_recipients == ["me@example.com"]
+    own = tmp_path / "own.toml"
+    own.write_text(base + '\n[connectors.microsoft]\nclient_id = " 00000000-0000-0000-0000-00000000abcd "\n'
+                   'tenant = "contoso.onmicrosoft.com"\n[connectors.github]\nclient_id = "Iv23liX"\n'
+                   'app_slug = "my-jig"\n', encoding="utf-8")
+    cfg = load_config(own, data_dir=tmp_path / "d")
+    assert cfg.connectors["microsoft"].client_id == "00000000-0000-0000-0000-00000000abcd"
+    assert cfg.connectors["github"].app_slug == "my-jig"
     for bad in ('[connectors.gmail]\nallowed_recipients = ["*@example.com"]\n',
                 '[connectors.nope]\nrequired_prefix = "x"\n',
-                '[connectors.gmail]\nallow = []\n'):
+                '[connectors.gmail]\nallow = []\n',
+                '[connectors.gmail]\nclient_id = "x"\n',
+                '[connectors.github]\ntenant = "x"\n'):
         path = tmp_path / "bad.toml"
         path.write_text(base + "\n" + bad, encoding="utf-8")
         with pytest.raises(ConfigError):

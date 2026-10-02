@@ -99,6 +99,11 @@ class Input:
     name: str
     prompt: str
     secret: bool = False  # asked without echo (or read from stdin with --stdin); never printed or logged
+    optional: bool = False  # may be left blank
+
+
+# show_code({"user_code", "verification_uri", "expires_in"}): a device sign-in's code is ready to show.
+ShowCodeFn = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -114,11 +119,19 @@ class ProviderSpec:
     refresh: RefreshFn | None = None
     revoke: RevokeFn | None = None
     # "oauth": connect(http, store, level, open_browser, ready) -> (Grant, account), a browser sign-in.
-    # "token": connect(http, store, level, values) -> (Grant, account), with ``inputs`` typed in the terminal.
+    # "device": connect(http, store, level, show_code) -> (Grant, account), a code the user types in at
+    #           the provider's site.
+    # "token": connect(http, store, level, values) -> (Grant, account), with ``inputs`` typed in.
     kind: str = "oauth"
     connect: Callable[..., Awaitable[tuple[Grant, str]]] | None = None
     inputs: tuple[Input, ...] = ()
+    # A second way in for a provider whose main sign-in isn't a token: connect(http, store, level, values)
+    # with ``inputs`` (GitHub's fine-grained personal access token, for advanced users).
+    token_connect: Callable[..., Awaitable[tuple[Grant, str]]] | None = None
     needs_client: bool = True  # an app client (connector.<family>.client) must be stored first
+    # For a provider with an app Jig ships (or one the user brings): client_status(store) ->
+    # {"configured": bool, "source": "built-in" | "config" | "vault" | None, "problem": str | None}.
+    client_status: Callable[[Any], dict[str, Any]] | None = None
     # Extra hosts that depend on the connection (a Matrix homeserver), from the stored grant.
     grant_hosts: Callable[[Grant], frozenset[str]] | None = None
     # Where the user removes the app's access on the provider's side.
@@ -127,6 +140,11 @@ class ProviderSpec:
 
     def hosts(self, grant: Grant) -> frozenset[str]:
         return self.api_hosts | (self.grant_hosts(grant) if self.grant_hosts else frozenset())
+
+    @property
+    def methods(self) -> tuple[str, ...]:
+        """The ways to connect, main one first."""
+        return (self.kind, "token") if self.token_connect else (self.kind,)
 
 
 PROVIDERS: dict[str, ProviderSpec] = {}
@@ -151,10 +169,26 @@ def provider(name: str) -> ProviderSpec:
 class ConnectionStore:
     """Connection metadata in SQLite and tokens in the vault. Safe to use from the CLI while Jig runs."""
 
-    def __init__(self, db: Database, vault: Vault, audit: AuditLog):
+    def __init__(self, db: Database, vault: Vault, audit: AuditLog, settings: dict[str, Any] | None = None):
         self.db = db
         self.vault = vault
         self.audit = audit
+        # [connectors.<id>] from jig.toml (jig.config.ConnectorLimits), for the app a connector signs in with.
+        self.settings = settings or {}
+
+    def setting(self, name: str, key: str) -> str:
+        cfg = self.settings.get(name)
+        return str(getattr(cfg, key, "") or "").strip() if cfg is not None else ""
+
+    def client_state(self, spec: ProviderSpec) -> dict[str, Any]:
+        if spec.client_status is not None:
+            return spec.client_status(self)
+        if not spec.needs_client:
+            return {"configured": True, "source": None, "problem": None}
+        if self.has_client(spec.family):
+            return {"configured": True, "source": "vault", "problem": None}
+        return {"configured": False, "source": None,
+                "problem": f"no {spec.family} app client stored yet"}
 
     def get(self, name: str) -> dict[str, Any] | None:
         row = self.db.one("SELECT * FROM connections WHERE provider = ?", (name,))
@@ -167,6 +201,7 @@ class ConnectionStore:
         out = []
         for spec in sorted(PROVIDERS.values(), key=lambda s: s.label):
             row = self.get(spec.id)
+            client = self.client_state(spec)
             out.append({
                 "provider": spec.id, "label": spec.label, "family": spec.family,
                 "connected": bool(row and row["status"] == STATUS_CONNECTED),
@@ -177,7 +212,13 @@ class ConnectionStore:
                 "last_error": row["last_error"] if row else None,
                 "connected_at": row["connected_at"] if row else None,
                 "kind": spec.kind,
-                "client_configured": self.has_client(spec.family) if spec.needs_client else True,
+                "methods": list(spec.methods),
+                "inputs": [{"name": i.name, "prompt": i.prompt, "secret": i.secret, "optional": i.optional}
+                           for i in spec.inputs],
+                "client_configured": client["configured"],
+                "client_source": client["source"],
+                "client_problem": client["problem"],
+                "install_url": client.get("install_url"),
                 "access_levels": {k: {"scopes": list(v.scopes), "description": v.description}
                                   for k, v in spec.access_levels.items()},
                 "default_access": spec.default_access,

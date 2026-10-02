@@ -1,4 +1,4 @@
-"""Microsoft (Outlook calendar and OneDrive), live, against the user's own personal Microsoft account. Opt-in:
+"""Microsoft (Outlook calendar and OneDrive), live, against the user's own Microsoft account (personal, work or school). Opt-in:
 skipped unless this is set:
 
   JIG_LIVE_MICROSOFT_CONFIG   a Jig config whose data directory has Microsoft connected with 'write' access

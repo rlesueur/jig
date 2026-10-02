@@ -23,20 +23,30 @@ AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 MANAGE_URL = "https://myaccount.google.com/connections"
-RECONNECT_HINT = ("While the Google app is in Testing, Google's refresh tokens expire after 7 days; "
-                  "reconnect with 'jig connect {name}'.")
+RECONNECT_HINT = ("If your Google app's publishing status is still 'Testing', Google ends Jig's access after 7 days: "
+                  "set it to 'In production' (docs/connectors-setup.md), then reconnect with 'jig connect {name}'.")
 
 
 def client_from_json(path: Path) -> dict[str, str]:
     """Read the client ID and secret from the JSON file the Google Cloud console downloads."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
         raise ConnectorError(f"could not read the Google client file {path}: {exc}") from None
-    section = data.get("installed")
+    return client_from_text(text, source=str(path))
+
+
+def client_from_text(text: str, *, source: str = "that file") -> dict[str, str]:
+    """The client ID and secret from the text of the downloaded client file."""
+    try:
+        data = json.loads(text.lstrip("\ufeff"))
+    except ValueError:
+        raise ConnectorError(f"{source} isn't the client file Google downloads (it isn't JSON). Download it again "
+                             "from the Clients page (docs/connectors-setup.md).") from None
+    section = data.get("installed") if isinstance(data, dict) else None
     if not isinstance(section, dict):
         kind = next(iter(data), "nothing") if isinstance(data, dict) else "not an object"
-        raise ConnectorError(f"{path} is not a Desktop app client (it has {kind!r}, not 'installed'). Create a "
+        raise ConnectorError(f"{source} is not a Desktop app client (it has {kind!r}, not 'installed'). Create a "
                              "client of type 'Desktop app' (docs/connectors-setup.md).")
     client = {"client_id": str(section.get("client_id", "")), "client_secret": str(section.get("client_secret", ""))}
     check_client(client)

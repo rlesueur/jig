@@ -10,7 +10,7 @@ import httpx
 
 from ..errors import ConnectorError
 from . import discord, github, gmail, google_calendar, google_drive, matrix, microsoft, signal, slack  # noqa: F401  (each registers its provider)
-from .base import PROVIDERS, ConnectionStore, Connectors, SECRET_PREFIX, provider
+from .base import PROVIDERS, ConnectionStore, Connectors, SECRET_PREFIX, ShowCodeFn, provider
 
 __all__ = ["PROVIDERS", "ConnectionStore", "Connectors", "SECRET_PREFIX", "connect", "provider", "register_tools"]
 
@@ -29,10 +29,11 @@ def register_tools(registry: Any, connectors: Connectors) -> None:
 
 async def connect(name: str, *, access: str | None, store: ConnectionStore, http: httpx.AsyncClient,
                   open_browser: Callable[[str], object] | None = None, ready: Callable[[str], object] | None = None,
-                  values: dict[str, str] | None = None, via: str) -> dict[str, Any]:
+                  values: dict[str, str] | None = None, show_code: ShowCodeFn | None = None,
+                  method: str | None = None, via: str) -> dict[str, Any]:
     """Run the provider's sign-in (or check the token typed in for it), check what was granted and store it.
     Returns the connection and any requested scopes the user did not grant (the tools that need them then
-    say so)."""
+    say so). ``method`` picks one of ``spec.methods`` (the main one by default)."""
     spec = provider(name)
     level_name = access or spec.default_access
     if level_name not in spec.access_levels:
@@ -40,11 +41,29 @@ async def connect(name: str, *, access: str | None, store: ConnectionStore, http
     level = spec.access_levels[level_name]
     if spec.connect is None:
         raise ConnectorError(f"{spec.label} has no sign-in flow")
-    if spec.kind == "token":
-        missing_inputs = [i.name for i in spec.inputs if not (values or {}).get(i.name)]
+    method = method or spec.kind
+    if method not in spec.methods:
+        raise ConnectorError(f"{spec.label} connects by {' or '.join(spec.methods)}, not {method!r}")
+    if method == "token":
+        values = {k: str(v).strip() for k, v in (values or {}).items() if isinstance(v, str)}
+        missing_inputs = [i.prompt for i in spec.inputs if not i.optional and not values.get(i.name)]
         if missing_inputs:
             raise ConnectorError(f"{spec.label}: {', '.join(missing_inputs)} must be given; nothing was connected")
-        grant, account = await spec.connect(http, store, level, dict(values or {}))
+        secrets = [values[i.name] for i in spec.inputs if i.secret and values.get(i.name)]
+        token_fn = spec.connect if spec.kind == "token" else spec.token_connect
+        try:
+            grant, account = await token_fn(http, store, level, values)
+        except Exception as exc:
+            text = str(exc)
+            if not any(s in text for s in secrets):
+                raise
+            for s in secrets:
+                text = text.replace(s, "[the value you typed]")
+            raise ConnectorError(text) from None
+    elif method == "device":
+        if show_code is None:
+            raise ConnectorError(f"{spec.label} signs in with a code shown to you; nothing was connected")
+        grant, account = await spec.connect(http, store, level, show_code)
     else:
         if open_browser is None:
             raise ConnectorError(f"{spec.label} signs in through the browser; nothing was connected")

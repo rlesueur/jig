@@ -17,10 +17,10 @@ from pathlib import Path
 from ..config import load_config
 from ..errors import ConnectorError
 from ..tools.builtin import http_client
-from . import connect, google
+from . import connect, google, microsoft
 from .base import PROVIDERS, ConnectionStore, Connectors, provider
 
-CLIENT_ALIASES = {"google-client": google.FAMILY}
+CLIENT_ALIASES = {"google-client": google.FAMILY, "microsoft-client": microsoft.FAMILY}
 
 
 def add_parsers(sub: argparse._SubParsersAction) -> None:
@@ -29,7 +29,13 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--access", help="access level, for example read, send or manage for Gmail (default: the "
                                     "connector's default)")
     c.add_argument("--client-json", help="Google: the Desktop app client JSON downloaded from the Google Cloud console")
-    c.add_argument("--client-id", help="Microsoft: the Application (client) ID of your Entra app registration")
+    c.add_argument("--client-id", help="Microsoft: use your organisation's own app registration (its Application "
+                                       "(client) ID) instead of Jig's built-in app")
+    c.add_argument("--tenant", help="Microsoft, with --client-id: your tenant (Directory ID or domain) for a "
+                                    "single-organisation app; default common")
+    c.add_argument("--token", action="store_true",
+                   help="GitHub: connect with a fine-grained personal access token instead of signing in with the "
+                        "Jig GitHub App (advanced)")
     c.add_argument("--option", action="append", default=[], metavar="NAME=VALUE",
                    help="a non-secret setting the connector asks for (for example homeserver=https://matrix.org)")
     c.add_argument("--stdin", action="store_true",
@@ -54,7 +60,7 @@ def _open(config):
     db = Database(config.db_path)
     try:
         audit = AuditLog(db)
-        return db, ConnectionStore(db, Vault(db, config.vault), audit)
+        return db, ConnectionStore(db, Vault(db, config.vault), audit, config.connectors)
     except BaseException:
         db.close()
         raise
@@ -72,22 +78,13 @@ def _confirm(args: argparse.Namespace, question: str) -> bool:
         return False
 
 
-def _ensure_microsoft_client(args: argparse.Namespace, store: ConnectionStore) -> None:
-    from . import microsoft
-
+def _store_microsoft_client(args: argparse.Namespace, store: ConnectionStore) -> None:
+    if args.tenant and not args.client_id:
+        raise ConnectorError("--tenant only applies with --client-id (your own app registration)")
     if args.client_id:
-        store.set_client(microsoft.FAMILY, microsoft.client_from_id(args.client_id), via="cli")
-        print("Stored the Microsoft app registration's client ID in the vault (connector.microsoft.client).")
-        return
-    if store.has_client(microsoft.FAMILY):
-        return
-    if not sys.stdin or not sys.stdin.isatty():
-        raise ConnectorError("no Microsoft client ID is stored, and there is no terminal to ask for it; pass "
-                             "--client-id <Application (client) ID> (docs/connectors-setup.md)")
-    print("No Microsoft app registration is stored yet (see docs/connectors-setup.md, 'Microsoft').")
-    store.set_client(microsoft.FAMILY, microsoft.client_from_id(input("Application (client) ID: ").strip()),
-                     via="cli")
-    print("Stored it in the vault (connector.microsoft.client).")
+        store.set_client(microsoft.FAMILY, microsoft.client_from_id(args.client_id, args.tenant or ""), via="cli")
+        print("Stored your app registration's client ID in the vault (connector.microsoft.client). "
+              "'jig disconnect microsoft-client' goes back to Jig's built-in app.")
 
 
 def _token_values(args: argparse.Namespace, spec) -> dict[str, str]:
@@ -123,9 +120,6 @@ def _token_values(args: argparse.Namespace, spec) -> dict[str, str]:
 
 
 def _ensure_client(args: argparse.Namespace, store: ConnectionStore, family: str) -> None:
-    if family == "microsoft":
-        _ensure_microsoft_client(args, store)
-        return
     if family != google.FAMILY:
         return
     if args.client_json:
@@ -149,17 +143,41 @@ def _ensure_client(args: argparse.Namespace, store: ConnectionStore, family: str
 
 async def _connect(args: argparse.Namespace, store: ConnectionStore) -> int:
     spec = provider(args.provider)
+    if (args.client_id or args.tenant) and spec.family != microsoft.FAMILY:
+        print("jig: --client-id and --tenant are for Microsoft only", file=sys.stderr)
+        return 2
+    if args.token and "token" not in spec.methods:
+        print(f"jig: {spec.label} has no personal access token option", file=sys.stderr)
+        return 2
+    if spec.family == microsoft.FAMILY:
+        _store_microsoft_client(args, store)
     if spec.needs_client:
         _ensure_client(args, store, spec.family)
+    client = store.client_state(spec)
+    if not client["configured"] and not args.token:
+        raise ConnectorError(client["problem"])
     level = args.access or spec.default_access
     if level not in spec.access_levels:
         print(f"jig: {spec.label} access must be one of {list(spec.access_levels)}", file=sys.stderr)
         return 2
     print(f"Connecting {spec.label} with '{level}' access: {spec.access_levels[level].description}.")
-    if spec.kind == "token":
+    if spec.kind == "token" or args.token:
         values = _token_values(args, spec)
         async with http_client() as http:
-            result = await connect(args.provider, access=level, store=store, http=http, values=values, via="cli")
+            result = await connect(args.provider, access=level, store=store, http=http, values=values,
+                                   method="token", via="cli")
+        return _connected(args, spec, result)
+    if spec.kind == "device":
+        def show_code(info: dict) -> None:
+            print(f"\nOpen {info['verification_uri']} in a browser (on any device), sign in to GitHub and type "
+                  f"this code:\n\n    {info['user_code']}\n\nWaiting for you to finish (the code works for "
+                  f"{int(info['expires_in']) // 60} minutes)...")
+            if not args.no_browser:
+                webbrowser.open(info["verification_uri"])
+
+        async with http_client() as http:
+            result = await connect(args.provider, access=level, store=store, http=http, show_code=show_code,
+                                   method="device", via="cli")
         return _connected(args, spec, result)
     print("Scopes requested: " + ", ".join(spec.access_levels[level].scopes))
 
@@ -201,7 +219,7 @@ def _list(args: argparse.Namespace, store: ConnectionStore) -> int:
         elif r["status"] == "needs_reconnect":
             state = f"NEEDS RECONNECTING: {r['last_error']}"
         else:
-            state = "not connected" + ("" if r["client_configured"] else f" (no {r['family']} app client stored yet)")
+            state = "not connected" + ("" if r["client_configured"] else f" ({r['client_problem']})")
         print(f"{r['label']} ({r['provider']}): {state}")
         if r["scopes"]:
             print("  scopes: " + ", ".join(r["scopes"]))

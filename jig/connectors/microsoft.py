@@ -1,11 +1,15 @@
 """Microsoft: the user's Outlook calendar and OneDrive through Microsoft Graph (https://learn.microsoft.com/graph),
-with one sign-in to a personal Microsoft account.
+with one sign-in to a personal, work or school Microsoft account.
 
-The user registers their own app in Microsoft Entra (personal accounts only, a public client with the
-``http://localhost`` redirect, no secret) and gives Jig its client ID. Sign-in is the authorisation code flow
-with PKCE (https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow); Microsoft ignores the
-port of a localhost redirect, so Jig's random loopback port works. Microsoft has no revoke endpoint: the user
-removes the app at https://account.live.com/consent/Manage.
+Jig signs in with its own app registration (``apps.MICROSOFT_CLIENT_ID``: personal and work or school
+accounts, a public client with the ``http://localhost`` redirect, no secret) through the ``common`` authority,
+so the user only signs in. An organisation that requires its own registration gives its client ID (and
+optionally its tenant) in ``[connectors.microsoft]`` or with ``jig connect microsoft --client-id``. Sign-in is
+the authorisation code flow with PKCE (https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow);
+Microsoft ignores the port of a localhost redirect, so Jig's random loopback port works. The grant records
+which app and tenant it came from, and renewing access always uses those. Microsoft has no revoke endpoint:
+the user removes the app at https://account.live.com/consent/Manage (personal) or
+https://myapplications.microsoft.com (work or school).
 
 Reading calendars, events and files are ``read`` tools. Creating, changing and cancelling events are outbound
 side effects that are human-only (Outlook emails the guests); uploading a file is an outbound side effect that
@@ -18,7 +22,6 @@ file name must start with.
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from datetime import date, datetime, timezone
@@ -28,20 +31,26 @@ from urllib.parse import quote
 import httpx
 
 from ..constants import Decision, Effect, TaskVariant, ToolCategory
-from ..errors import ConnectorAuthError, ConnectorError, SecretNotFound, ToolArgumentError
+from ..errors import ConnectorAuthError, ConnectorError, ToolArgumentError
 from ..tools.registry import ToolContext, ToolRegistry
 from ..vault import Vault
-from . import oauth
-from .base import AccessLevel, ConnectionStore, Connectors, Grant, ProviderSpec, client_secret_name, register_provider
+from . import apps, oauth
+from .base import AccessLevel, ConnectionStore, Connectors, Grant, ProviderSpec, register_provider
 from .limits import first_problem, prefix_problem, recipient_problem, target_problem
 
 NAME = "microsoft"
 FAMILY = "microsoft"
-LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0"
-AUTHORIZE_URL = f"{LOGIN}/authorize"
-TOKEN_URL = f"{LOGIN}/token"
+LOGIN_HOST = "https://login.microsoftonline.com"
+DEFAULT_TENANT = "common"  # personal and work or school accounts
 API = "https://graph.microsoft.com/v1.0"
 MANAGE_URL = "https://account.live.com/consent/Manage"
+WORK_MANAGE_URL = "https://myapplications.microsoft.com"
+NOT_CONFIGURED = (
+    "Jig's built-in Microsoft app isn't set up in this copy of Jig yet, so signing in with Microsoft can't work "
+    "and nothing was connected. If your organisation has its own app registration, give Jig its Application "
+    "(client) ID: under 'Advanced: your organisation's own app' in Settings > Connections, with 'jig connect "
+    "microsoft --client-id <id>' (add --tenant <your tenant> for a single-organisation app), or as client_id "
+    "under [connectors.microsoft] in jig.toml. See docs/connectors-setup.md.")
 GRAPH_PREFIX = "https://graph.microsoft.com/"
 CAL_READ, CAL_WRITE = "Calendars.Read", "Calendars.ReadWrite"
 FILES_READ, FILES_WRITE = "Files.Read", "Files.ReadWrite"
@@ -65,18 +74,67 @@ EVENT_FIELDS = ("id,subject,start,end,location,organizer,attendees,bodyPreview,b
                 "webLink,type,seriesMasterId,isOrganizer")
 ITEM_FIELDS = "id,name,size,file,folder,parentReference,webUrl,lastModifiedDateTime"
 _CLIENT_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+# A tenant: one of Microsoft's audiences, a directory (tenant) ID or a domain such as contoso.onmicrosoft.com.
+_TENANT = re.compile(r"^(common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                     r"[0-9a-fA-F]{12}|[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})+)$")
 _GRAPH_ID = re.compile(r"^[A-Za-z0-9=_+/!.-]{10,600}$")
 _ADDRESS = re.compile(r"^[^@\s<>,;:\"()\[\]\\]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 _BAD_PATH_CHARS = set('"*:<>?\\|#%') | {chr(c) for c in range(32)}
 
 
 # Sign-in ---------------------------------------------------------------------------------------------------
-def client_from_id(client_id: str) -> dict[str, str]:
+def authority(tenant: str) -> str:
+    return f"{LOGIN_HOST}/{tenant}/oauth2/v2.0"
+
+
+def authorize_url(tenant: str) -> str:
+    return f"{authority(tenant)}/authorize"
+
+
+def token_url(tenant: str) -> str:
+    return f"{authority(tenant)}/token"
+
+
+def client_from_id(client_id: str, tenant: str = "") -> dict[str, str]:
+    """An app registration's client ID (and tenant: default ``common``, personal and work or school accounts)."""
     client_id = (client_id or "").strip()
     if not _CLIENT_ID.fullmatch(client_id):
         raise ConnectorError("that doesn't look like a Microsoft Application (client) ID (a GUID such as "
                              "00000000-0000-0000-0000-000000000000, from the app's Overview page in Entra)")
-    return {"client_id": client_id.lower(), "tenant": "consumers"}
+    tenant = (tenant or "").strip() or DEFAULT_TENANT
+    if not _TENANT.fullmatch(tenant):
+        raise ConnectorError(f"{tenant!r} isn't a Microsoft tenant: give 'common', 'organizations', 'consumers', "
+                             "a Directory (tenant) ID or your organisation's domain")
+    return {"client_id": client_id.lower(), "tenant": tenant.lower()}
+
+
+def resolve_client(store: ConnectionStore) -> dict[str, str]:
+    """The app Jig signs in with: one stored with --client-id, then [connectors.microsoft] client_id, then
+    Jig's built-in app. With none of them, it says so; it never signs in with anything else."""
+    if store.has_client(FAMILY):
+        stored = store.client(FAMILY)
+        return {**client_from_id(stored.get("client_id", ""), stored.get("tenant", "")), "source": "vault"}
+    configured = store.setting(NAME, "client_id")
+    if configured:
+        try:
+            client = client_from_id(configured, store.setting(NAME, "tenant"))
+        except ConnectorError as exc:
+            raise ConnectorError(f"[connectors.microsoft] in jig.toml: {exc}") from None
+        return {**client, "source": "config"}
+    if store.setting(NAME, "tenant"):
+        raise ConnectorError("[connectors.microsoft] in jig.toml sets a tenant but no client_id; a tenant only "
+                             "applies to your own app registration")
+    if apps.MICROSOFT_CLIENT_ID:
+        return {**client_from_id(apps.MICROSOFT_CLIENT_ID), "source": "built-in"}
+    raise ConnectorError(NOT_CONFIGURED)
+
+
+def client_status(store: ConnectionStore) -> dict[str, Any]:
+    try:
+        client = resolve_client(store)
+    except ConnectorError as exc:
+        return {"configured": False, "source": None, "problem": str(exc)}
+    return {"configured": True, "source": client["source"], "problem": None}
 
 
 def normalise_scopes(scope: str | None, refresh_token: str | None) -> list[str]:
@@ -91,7 +149,7 @@ def _grant_from(body: dict[str, Any], previous: Grant | None = None) -> Grant:
     scopes = normalise_scopes(body.get("scope"), refresh) if body.get("scope") else (previous.scopes if previous else [])
     return Grant(access_token=body["access_token"], refresh_token=refresh,
                  expires_at=time.time() + float(body.get("expires_in", 3600)), scopes=scopes,
-                 token_type=body.get("token_type") or "Bearer")
+                 token_type=body.get("token_type") or "Bearer", extra=dict(previous.extra) if previous else {})
 
 
 def _token_error(r: httpx.Response) -> str:
@@ -105,7 +163,7 @@ def _token_error(r: httpx.Response) -> str:
 async def exchange_code(http: httpx.AsyncClient, client: dict[str, str], *, code: str, redirect_uri: str,
                         verifier: str, scopes: list[str]) -> Grant:
     try:
-        r = await http.post(TOKEN_URL, data={
+        r = await http.post(token_url(client["tenant"]), data={
             "client_id": client["client_id"], "grant_type": "authorization_code", "code": code,
             "redirect_uri": redirect_uri, "code_verifier": verifier, "scope": " ".join(scopes),
         }, timeout=30)
@@ -118,22 +176,18 @@ async def exchange_code(http: httpx.AsyncClient, client: dict[str, str], *, code
     if not grant.refresh_token:
         raise ConnectorError("Microsoft returned no refresh token, so Jig would lose access within the hour; "
                              "nothing was connected. Check the app has the offline_access permission.")
+    grant.extra = {"client_id": client["client_id"], "tenant": client["tenant"]}
     return grant
 
 
-def _client(vault: Vault) -> dict[str, str]:
-    try:
-        return json.loads(vault.reveal(client_secret_name(FAMILY)))
-    except SecretNotFound:
-        raise ConnectorAuthError("the Microsoft client ID is no longer in the vault, so Jig can't renew access; "
-                                 "connect again with 'jig connect microsoft --client-id <id>'") from None
-
-
 async def refresh(http: httpx.AsyncClient, vault: Vault, grant: Grant) -> Grant:
-    client = _client(vault)
+    client_id, tenant = grant.extra.get("client_id"), grant.extra.get("tenant")
+    if not client_id or not tenant:
+        raise ConnectorAuthError("this Microsoft connection doesn't record which app it signed in with, so Jig "
+                                 "can't renew it; connect again with 'jig connect microsoft'.")
     try:
-        r = await http.post(TOKEN_URL, data={
-            "client_id": client["client_id"], "grant_type": "refresh_token", "refresh_token": grant.refresh_token,
+        r = await http.post(token_url(tenant), data={
+            "client_id": client_id, "grant_type": "refresh_token", "refresh_token": grant.refresh_token,
             "scope": " ".join(grant.scopes),
         }, timeout=30)
     except httpx.HTTPError as exc:
@@ -146,27 +200,31 @@ async def refresh(http: httpx.AsyncClient, vault: Vault, grant: Grant) -> Grant:
     return _grant_from(r.json(), grant)
 
 
+async def revoke(http: httpx.AsyncClient, vault: Vault, grant: Grant) -> str:
+    return (f"Microsoft has no way for Jig to revoke it; remove Jig's access at {MANAGE_URL} (personal account) "
+            f"or {WORK_MANAGE_URL} (work or school account)")
+
+
 def authorise_params() -> dict[str, str]:
     return {"response_mode": "query", "prompt": "select_account"}
 
 
 async def _connect(http: httpx.AsyncClient, store: ConnectionStore, level: AccessLevel, open_browser,
                    ready=None) -> tuple[Grant, str]:
-    client = store.client(FAMILY)
-    result = await oauth.authorise(authorize_url=AUTHORIZE_URL, client_id=client["client_id"],
+    client = resolve_client(store)
+    result = await oauth.authorise(authorize_url=authorize_url(client["tenant"]), client_id=client["client_id"],
                                    scopes=list(level.scopes), extra=authorise_params(), open_browser=open_browser,
                                    label="Microsoft", redirect_host="localhost", ready=ready)
     grant = await exchange_code(http, client, code=result.code, redirect_uri=result.redirect_uri,
                                 verifier=result.verifier, scopes=list(level.scopes))
+    undo = f"Nothing was connected; remove Jig's access at {MANAGE_URL} or {WORK_MANAGE_URL} if you like."
     try:
         r = await http.get(f"{API}/me", params={"$select": "userPrincipalName,mail"},
                            headers={"Authorization": f"Bearer {grant.access_token}"}, timeout=30)
     except httpx.HTTPError as exc:
-        raise ConnectorError(f"signed in, but could not reach Microsoft Graph ({type(exc).__name__}). Nothing was "
-                             f"connected; remove the app's access at {MANAGE_URL} if you like.") from None
+        raise ConnectorError(f"signed in, but could not reach Microsoft Graph ({type(exc).__name__}). {undo}") from None
     if r.status_code != 200:
-        raise ConnectorError(f"signed in, but Microsoft Graph refused (HTTP {r.status_code}): {r.text[:300]}. "
-                             f"Nothing was connected; remove the app's access at {MANAGE_URL} if you like.")
+        raise ConnectorError(f"signed in, but Microsoft Graph refused (HTTP {r.status_code}): {r.text[:300]}. {undo}")
     me = r.json()
     return grant, me.get("userPrincipalName") or me.get("mail") or "(unknown account)"
 
@@ -182,9 +240,11 @@ PROVIDER = register_provider(ProviderSpec(
     default_access="read",
     api_hosts=frozenset({"graph.microsoft.com"}),
     refresh=refresh,
-    revoke=None,
+    revoke=revoke,
     manage_url=MANAGE_URL,
     connect=_connect,
+    needs_client=False,
+    client_status=client_status,
 ))
 
 

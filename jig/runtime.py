@@ -83,7 +83,7 @@ class Jig:
                            if key}
         self.http = http_client()
         self.registry = build_registry()
-        self.connections = ConnectionStore(self.db, self.vault, self.audit)
+        self.connections = ConnectionStore(self.db, self.vault, self.audit, config.connectors)
         self.connectors = Connectors(self.connections, self.http, self.redactions)
         register_connector_tools(self.registry, self.connectors)
         self.vision = VisionService(self.model, config.vision)
