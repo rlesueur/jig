@@ -28,6 +28,7 @@ from functools import lru_cache
 from typing import Any
 
 from jig.constants import Mode
+from jig.errors import ModelError
 from jig.model import ModelClient
 
 from ..jigenv import JigEnv
@@ -159,6 +160,36 @@ ANSWER_SYSTEM = ("You are a personal assistant answering a question about your p
                  "Answer concisely in British English. If the information is not available, say so.")
 
 
+class OutputCutOff(ModelError):
+    """The model reached its output limit. Carries a diagnostic from one streamed replay of the same request
+    (not counted in any metric) so the cause - long hidden reasoning or a repetition loop - is on record."""
+
+
+async def chat_with_cutoff_diagnostic(model: ModelClient, messages: list[dict[str, Any]]) -> Any:
+    try:
+        return await model.chat(messages)
+    except ModelError as exc:
+        if "cut off" not in str(exc):
+            raise
+        seen = {"reasoning": [], "content": []}
+
+        async def collect(kind: str, text: str) -> None:
+            seen[kind].append(text)
+
+        try:
+            await model.chat(messages, on_delta=collect)
+            outcome = "replay finished within the limit"
+        except ModelError as replay_exc:
+            outcome = f"replay: {replay_exc}"
+        reasoning, content = "".join(seen["reasoning"]), "".join(seen["content"])
+        lines = [ln for ln in (reasoning + "\n" + content).splitlines() if ln.strip()]
+        distinct = len(set(lines)) / len(lines) if lines else 1.0
+        raise OutputCutOff(
+            f"{exc}. Diagnostic replay (not scored): {outcome}; reasoning {len(reasoning)} chars, content "
+            f"{len(content)} chars, distinct non-empty lines {distinct:.2f}; reasoning tail {reasoning[-400:]!r}; "
+            f"content tail {content[-400:]!r}") from exc
+
+
 async def _answer_from_context(model: ModelClient, context: str, q: dict[str, Any]) -> Any:
     msgs = [{"role": "system", "content": ANSWER_SYSTEM},
             {"role": "user", "content": f"{context}\n\nThe current date is {q['question_date']}.\n"
@@ -199,7 +230,7 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
             for s in sessions:
                 parts = split_text(session_text(s), CHUNK_CHARS)
                 for k, part in enumerate(parts, start=1):
-                    r = await model.chat([
+                    r = await chat_with_cutoff_diagnostic(model, [
                         {"role": "system", "content": "You maintain a concise long-term memory summary about the user."},
                         {"role": "user", "content": f"Current summary:\n{summary}\n\nNew conversation on {s['date']} "
                                                     f"(part {k} of {len(parts)}):\n{part}\n\nRewrite the summary to "
