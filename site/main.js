@@ -12,6 +12,18 @@ const LABELS = {
 
 const avatar = document.getElementById('hero-avatar');
 const label = document.getElementById('state-label');
+const themeToggle = document.getElementById('theme-toggle');
+
+function syncTheme() {
+  const theme = window.jigSiteTheme.theme;
+  avatar.theme = theme;
+  themeToggle.setAttribute('aria-pressed', String(theme === 'dark'));
+}
+document.addEventListener('jig-themechange', syncTheme);
+syncTheme();
+themeToggle.addEventListener('click', () => {
+  window.jigSiteTheme.set(window.jigSiteTheme.theme === 'dark' ? 'light' : 'dark');
+});
 const backgroundToggle = document.getElementById('background-toggle');
 const buttons = [...document.querySelectorAll('.switcher button')];
 let current = buttons.find((b) => b.getAttribute('aria-pressed') === 'true');

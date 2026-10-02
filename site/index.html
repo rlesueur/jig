@@ -6,10 +6,14 @@
   <title>Jig: an always-on personal AI agent on your own local model</title>
   <meta name="description" content="Jig is an open-source, always-on personal AI agent that runs on the local model of your choice. Memory, rules, audit trail and secrets stay on your machine. Apache-2.0, under active development.">
   <link rel="canonical" href="https://rlesueur.github.io/jig/">
-  <meta name="theme-color" content="#06040f">
-  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#f6eedf" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b1220" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="media/favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" type="image/png" sizes="64x64" href="media/favicon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="media/icon-192.png">
   <link rel="apple-touch-icon" href="media/apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Jig">
@@ -22,14 +26,16 @@
   <meta property="og:image:type" content="image/jpeg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Jig, a neon mascot with glowing amber eyes, under the headline: Always-on AI agents. Now on your own machine.">
+  <meta property="og:image:alt" content="Jig, a small glowing character with big amber eyes and trailing ribbons, beside the headline: An always-on AI agent. On your own machine.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Jig: an always-on AI agent on your own machine">
   <meta name="twitter:description" content="Open-source, always-on personal agent for local models. Bring your own model; your data stays with you.">
   <meta name="twitter:image" content="https://rlesueur.github.io/jig/media/og-image.jpg">
-  <meta name="twitter:image:alt" content="Jig, a neon mascot with glowing amber eyes, under the headline: Always-on AI agents. Now on your own machine.">
+  <meta name="twitter:image:alt" content="Jig, a small glowing character with big amber eyes and trailing ribbons, beside the headline: An always-on AI agent. On your own machine.">
 
+  <link rel="preload" href="fonts/Nunito-Variable.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="styles.css">
+  <script src="theme.js"></script>
   <script type="module" src="main.js"></script>
 </head>
 <body>
@@ -38,7 +44,7 @@
   <header class="top">
     <nav class="wrap nav" aria-label="Main">
       <a class="brand" href="#top" aria-label="Jig, back to top">
-        <jig-avatar class="brand-mark" state="idle" shape="circle" framing="icon" aria-hidden="true"></jig-avatar>
+        <img class="brand-mark" src="media/favicon.png" width="32" height="32" alt="">
         <span>Jig</span>
       </a>
       <ul>
@@ -48,6 +54,7 @@
         <li><a href="#quick-start">Quick start</a></li>
         <li><a class="nav-gh" href="https://github.com/rlesueur/jig">GitHub</a></li>
       </ul>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark theme</button>
     </nav>
   </header>
 
@@ -65,7 +72,7 @@
 
       <figure class="stage">
         <div class="stage-avatar">
-          <jig-avatar id="hero-avatar" state="idle"></jig-avatar>
+          <jig-avatar id="hero-avatar" state="idle" framing="full" shape="none"></jig-avatar>
         </div>
         <figcaption>
           <p class="stage-status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="state-label">Idle</span></p>
@@ -89,7 +96,10 @@
       </figure>
     </section>
 
-    <section class="band" aria-labelledby="video-title">
+    <!-- Launch video slot. The launch-video work replaces the <video> element below (its sources, poster,
+         size and label) and the copy beside it. The layout styles only .video-wrap, .video-copy and .promo,
+         so any video size fits: keep those class names on the replacement. -->
+    <section class="band" id="video" aria-labelledby="video-title">
       <div class="wrap video-wrap">
         <div class="video-copy">
           <h2 id="video-title">Meet Jig in 28 seconds</h2>

@@ -1,5 +1,5 @@
 // Renders Jig's static icons (favicons, app icons, the sign-in and "Jig is off" faces, the landing-page
-// favicons) and the pictures in avatar/screenshots/ from the real <jig-avatar> rig in avatar/jig-avatar.js,
+// favicon set) and the pictures in avatar/screenshots/ from the real <jig-avatar> rig in avatar/jig-avatar.js,
 // in headless Chromium, on the manual clock with a fixed seed, so every run gives the same pixels.
 //
 //   node scripts/render_icons.mjs [--out-dir DIR]
@@ -60,8 +60,11 @@ const PNGS = [
   { file: 'jig/web/jig-face-light.png', px: 192, theme: 'light', bg: 'none', crop: FULL, srcCss: 128 },
   { file: 'site/media/favicon.png', px: 64, theme: 'dark', bg: 'circle', crop: HEAD, srcCss: 64 },
   { file: 'site/media/apple-touch-icon.png', px: 180, theme: 'dark', bg: 'square', crop: FULL, srcCss: 128 },
+  { file: 'site/media/icon-192.png', px: 192, theme: 'dark', bg: 'circle', crop: FULL, srcCss: 128 },
+  { file: 'site/media/icon-512.png', px: 512, theme: 'dark', bg: 'circle', crop: FULL, srcCss: 320 },
 ];
-const ICO = { file: 'jig/web/favicon.ico', from: ['jig/web/icons/icon-16.png', 'jig/web/icons/icon-32.png', 'jig/web/icons/icon-48.png'] };
+const ICON_SIZES = ['jig/web/icons/icon-16.png', 'jig/web/icons/icon-32.png', 'jig/web/icons/icon-48.png'];
+const ICOS = [{ file: 'jig/web/favicon.ico', from: ICON_SIZES }, { file: 'site/media/favicon.ico', from: ICON_SIZES }];
 /* The picture at the top of README.md: the whole figure, as the earlier screenshot was. */
 const README_PICTURE = { file: 'avatar/screenshots/jig-idle.png', px: 520, theme: 'dark' };
 /* The state pictures in avatar/screenshots/: whole figure, dark, 520px. Each starts idle, switches state after
@@ -315,7 +318,7 @@ try {
   }
   await page.evaluate(renderInPage, { seed: SEED, lookAt: LOOK_AT_FULL, theme: README_PICTURE.theme, css: README_PICTURE.px / 2, steps, full: true });
   await write(README_PICTURE.file, pngFromDataUrl(await page.evaluate(() => window.__last.toDataURL('image/png'))));
-  await write(ICO.file, ico(ICO.from.map((f) => made.get(f))));
+  for (const spec of ICOS) await write(spec.file, ico(spec.from.map((f) => made.get(f))));
   const { px, png } = made.get(SVG.from);
   await write(SVG.file, Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px} ${px}" width="${px}" height="${px}">`
     + `<image width="${px}" height="${px}" href="data:image/png;base64,${png.toString('base64')}"/></svg>\n`));

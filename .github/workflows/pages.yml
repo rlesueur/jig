@@ -6,6 +6,7 @@ on:
     paths:
       - "site/**"
       - "avatar/jig-avatar.js"
+      - "jig/web/fonts/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -25,13 +26,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Assemble the site
-        # The avatar component lives in avatar/ and is copied in at build time, not duplicated in site/.
+        # The avatar component lives in avatar/ and the Nunito font in jig/web/fonts/ (with its OFL licence);
+        # both are copied in at build time, not duplicated in site/.
         run: |
           set -euo pipefail
-          mkdir -p _site
+          mkdir -p _site/fonts
           cp -R site/. _site/
           cp avatar/jig-avatar.js _site/jig-avatar.js
-          for f in index.html main.js styles.css jig-avatar.js media/jig-promo.mp4 media/jig-promo-cover.jpg media/og-image.jpg media/favicon.png; do
+          cp jig/web/fonts/Nunito-Variable.ttf jig/web/fonts/OFL.txt _site/fonts/
+          for f in index.html main.js theme.js styles.css site.webmanifest jig-avatar.js fonts/Nunito-Variable.ttf fonts/OFL.txt media/jig-promo.mp4 media/jig-promo-cover.jpg media/og-image.jpg media/favicon.ico media/favicon.png media/icon-192.png media/icon-512.png media/apple-touch-icon.png; do
             test -s "_site/$f" || { echo "::error::missing _site/$f"; exit 1; }
           done
 
