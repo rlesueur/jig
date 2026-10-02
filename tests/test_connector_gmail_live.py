@@ -124,6 +124,7 @@ async def test_gmail_end_to_end_on_test_messages_only(live):
         assert not trash.ok and trash.error_type == "ToolArgumentError"
     finally:
         await live.connectors.request("gmail", "DELETE", f"{gmail.API}/drafts/{draft.result['draft_id']}")
+        await live.connectors.request("gmail", "POST", f"{gmail.API}/threads/{thread_id}/trash")
 
     outsider = await _call(live, "gmail_send", {"to": ["someone-else@example.com"], "subject": subject, "body": "x"},
                            intent=intent)
