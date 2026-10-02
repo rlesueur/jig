@@ -1,0 +1,182 @@
+{
+ "sessions": [
+  {
+   "captured_at": "2026-10-02T00:25:10+00:00",
+   "jigbench_version": "0.1.0",
+   "git": {
+    "commit": "0c7a97f05b3eb168f18cd5847232afb9c87c20da",
+    "jig_core_dirty": true,
+    "research_dirty": true,
+    "jig_core_diff_sha256": "174bc80794444e44d344cbbcd54fb914c27c95e1d6ddf5f8d53de0b16ef40aa8",
+    "jig_core_dirty_files": [
+     "M jig/api/app.py",
+     " M jig/auth.py",
+     " M jig/autostart/cli.py",
+     " M jig/cli.py",
+     " M jig/config.py",
+     " M jig/constants.py",
+     " M jig/instance.py",
+     " M jig/lifecycle.py",
+     " M jig/model_server.py",
+     " M jig/runtime.py",
+     " M jig/web/app.js",
+     " M jig/web/index.html",
+     " M jig/web/style.css",
+     " M jig/web/theme.js",
+     "?? jig/devices.py",
+     "?? jig/power.py",
+     "?? jig/procinfo.py",
+     "?? jig/remote.py"
+    ]
+   },
+   "hardware": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "cpu": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "cpu_cores_logical": 32,
+    "ram_gib": 61.6,
+    "gpus": [
+     {
+      "name": "NVIDIA GeForce RTX 5090",
+      "memory_mib": 32607,
+      "driver": "610.62"
+     }
+    ],
+    "python": "3.13.5"
+   },
+   "endpoints": {
+    "bonsai": {
+     "base_url": "http://127.0.0.1:8080/v1",
+     "model_id": "bonsai-2-27b",
+     "meta": {
+      "vocab_type": true,
+      "n_vocab": 248320,
+      "n_ctx": 65536,
+      "n_ctx_train": 262144,
+      "n_embd": 5120,
+      "n_params": 26895998464,
+      "size": 5935527936,
+      "ftype": "PTQ1_0 - 1.75 bpw ternary (group 128)"
+     },
+     "model_path": "C:\Users\you\\models\\llama-cpp-gguf\\Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+     "model_ftype": "PTQ1_0 - 1.75 bpw ternary (group 128)",
+     "build_info": "b10709-9a9394a89",
+     "n_ctx": 65536,
+     "total_slots": 4
+    },
+    "granite8b": {
+     "base_url": "http://127.0.0.1:8095/v1",
+     "model_id": "granite42-8b",
+     "meta": {
+      "vocab_type": true,
+      "n_vocab": 100352,
+      "n_ctx": 16384,
+      "n_ctx_train": 131072,
+      "n_embd": 4096,
+      "n_params": 8791592960,
+      "size": 5344346112,
+      "ftype": "Q4_K - Medium"
+     },
+     "model_path": "C:\Users\you\\models\\jig-research\\granite-4.2-8b-Q4_K_M.gguf",
+     "model_ftype": "Q4_K - Medium",
+     "build_info": "b10709-9a9394a89",
+     "n_ctx": 16384,
+     "total_slots": 1,
+     "server": {
+      "spec": {
+       "model": "granite42-8b",
+       "port": 8095,
+       "ctx": 16384,
+       "gpu_layers": 99,
+       "n_cpu_moe": 0,
+       "parallel": 1,
+       "build": null,
+       "extra": [],
+       "vram_needed_mib": null
+      },
+      "exe": "C:\Users\you\\tools\\llama-prism-b10709\\llama-server.exe",
+      "build": "prism",
+      "model_path": "C:\Users\you\\models\\jig-research\\granite-4.2-8b-Q4_K_M.gguf",
+      "base_url": "http://127.0.0.1:8095/v1",
+      "log": "C:\Users\you\\Jig\\research\\logs\\servers\\granite42-8b-8095.log"
+     }
+    }
+   },
+   "config": {
+    "name": "c1-pilot-2026-10-01",
+    "experiment": "c1",
+    "questions_per_type": {
+     "knowledge-update": 1,
+     "temporal-reasoning": 1,
+     "multi-session": 1,
+     "single-session-user": 1
+    },
+    "question_seed": 0,
+    "max_sessions": 4,
+    "consolidate_every": 2,
+    "context_budget_tokens": 12000,
+    "strategies": [
+     "full_context",
+     "rolling_summary",
+     "retrieval",
+     "hybrid_keep",
+     "hybrid_forget"
+    ],
+    "seeds": [
+     0
+    ],
+    "approval_policy": "approve_all",
+    "max_steps": 12,
+    "task_timeout_s": 900,
+    "sampling": {
+     "temperature": 1.0,
+     "top_p": 0.95,
+     "top_k": 20,
+     "min_p": 0.05
+    },
+    "endpoints": {
+     "bonsai": {
+      "base_url": "http://127.0.0.1:8080/v1"
+     },
+     "granite8b": {
+      "server": {
+       "model": "granite42-8b",
+       "port": 8095,
+       "ctx": 16384,
+       "parallel": 1
+      }
+     }
+    },
+    "agent": {
+     "endpoint": "bonsai",
+     "name": "bonsai-2-27b"
+    },
+    "judge": {
+     "endpoint": "granite8b",
+     "name": "granite42-8b",
+     "max_tokens": 4096
+    },
+    "conditions": [
+     {
+      "id": "bonsai27b-ternary",
+      "reviewer": "model",
+      "sentinel": {
+       "endpoint": "bonsai",
+       "name": "bonsai-2-27b"
+      }
+     }
+    ]
+   },
+   "research_dir": "C:\Users\you\\Jig\\research",
+   "config_path": "harness\\configs\\pilot\\c1_pilot.yaml",
+   "services": {
+    "services": "none",
+    "routes": {}
+   },
+   "closed": true,
+   "closed_reason": "finished",
+   "closed_at": "2026-10-02T00:28:14+00:00"
+  }
+ ],
+ "name": "c1-pilot-2026-10-01",
+ "experiment": "c1"
+}

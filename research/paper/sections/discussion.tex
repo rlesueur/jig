@@ -1,9 +1,37 @@
 \section{Discussion}
 \label{sec:discussion}
 
-This version sets out the testbed, the verified literature and the design; the quantitative runs are
-queued. The discussion below is therefore framed as the questions the queued runs are built to answer and
-the design choices they test, not as findings.
+The safety results in this version are interim (one seed, four of five configurations) and the memory
+results are a pilot, so what follows separates what the data show from the questions the remaining runs
+are built to answer.
+
+\paragraph{A benchmark can only measure defences above its floor.} On the AgentDojo subsample, the
+undefended ternary agent acted on an injection in 3 of 120 trials, and only on a goal satisfied by text.
+Every configuration then sits at the floor, and no reviewer can show a benefit. This is a property of the
+agent--benchmark pairing, not evidence that the reviewers are unnecessary: static benchmark cases
+understate what an adaptive attacker achieves~\citep{narisetty2026adaptive}, and a more capable or more
+compliant agent would raise the floor. The next steps follow directly: run the whole of each AgentDojo
+suite rather than the first five tasks, add the standard-quantisation agent, and use more seeds, so that
+the undefended attack success rate is large enough to measure a reduction.
+
+\paragraph{Gates on tool calls cannot see text-only goals.} The only successful case asks the agent to
+recommend a particular hotel in its reply. Jig's defences, like most out-of-band defences, act on tool
+calls, so a goal reached through the agent's words passes every configuration, including read-only mode.
+For an always-on agent that reports to its owner unattended, persuasion through the report is a real
+channel; reviewing outbound \emph{messages} as well as tool calls is a design question the paper will
+return to.
+
+\paragraph{Incidental rules shape results.} Jig's core URL rule, which refuses addresses without a
+scheme, accounted for most refusals in every configuration because AgentDojo's Slack suite writes bare
+host names. Comparisons between reviewers are therefore only meaningful alongside a per-layer account of
+what was refused, which the harness now records for every blocked call.
+
+\paragraph{Cost is where the configurations differ.} With security at the floor, the measurable
+differences are in utility and approvals: Granite Guardian, prompted with a criterion written for this
+programme (Appendix~\ref{app:guardian}), refused enough legitimate calls to cost about 18 points of
+utility; Jig's Sentinel on the agent's own model cost none but asked the owner about one call in three
+tasks. Which of these an owner should prefer depends on how attentive they are to approvals, which is why
+approvals per task is reported beside every rate~\citep{yu2026habituation}.
 
 \paragraph{Why measure memory in model tokens, not just accuracy.} On a shared consumer GPU the scarce
 resource is context and compute, not disk. A strategy that answers well by carrying every past session is

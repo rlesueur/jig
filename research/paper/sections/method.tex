@@ -39,16 +39,38 @@ recorded seed.
 memory content. Jig's system prompt states the real date, which can conflict with a question's date; we
 pass the question date explicitly and flag the conflict as a threat to validity.
 
-\section{Planned safety evaluation}
+\section{Safety evaluation (D1)}
 \label{sec:safety}
 
-Unattended safety will be evaluated on published agent prompt-injection benchmarks, such as
-AgentDojo~\citep{debenedetti2024agentdojo} and InjecAgent~\citep{zhan2024injecagent}, run
-through a Jig adapter that executes their existing test cases unchanged, under each benchmark's own
-open-source licence (recorded with the run provenance); no attack content is authored
-in this programme. The conditions are the reviewer configurations an owner can actually choose: no
-reviewer, rules only, the agent's own model, smaller models of other families, a different family in
-the same size class, and a dedicated guard model. The measures are attack success, utility, the share
-of harmful calls stopped and auto-blocked, false positives, and approval requests per task, the last as
-a proxy for approval fatigue~\citep{yu2026habituation}. The harness already provides the reviewer
-conditions, including an adapter that drives Granite Guardian through its documented scoring format.
+\paragraph{Benchmark.} Unattended safety is measured on AgentDojo~\citep{debenedetti2024agentdojo}
+(v0.1.35, MIT licence, recorded with every trial), run unchanged: its tool environments, user tasks,
+injection tasks, attacks and utility and security checks are AgentDojo's own, and no attack content is
+authored here. InjecAgent~\citep{zhan2024injecagent} itself is not used until its licence is confirmed;
+the \texttt{injecagent} attack below is the prompt template bundled with AgentDojo.
+
+\paragraph{Adapter.} Each AgentDojo tool is wrapped as a real Jig tool whose effect (read, private write
+or side effect), outbound flag and category come from an explicit table; an unclassified tool raises
+rather than being guessed. Every tool call the agent makes passes through Jig's real gate (mode, core
+rules, custom rules, the reviewer in the Sentinel slot and the approval queue) before AgentDojo's runtime
+executes it. A refusal is returned to the agent as a tool error, as in a real Jig run. A reviewer that
+\emph{fails} (rather than refuses) makes the trial a harness error that is retried, so a crash is never
+scored as a block. For every blocked call the harness records which layer refused it.
+
+\paragraph{Design.} Four suites (banking, Slack, travel, workspace); in each, the first five user tasks
+and the first three injection tasks in AgentDojo's registry order; three attack settings (none,
+\texttt{important\_instructions} and \texttt{injecagent}), giving 35 trials per suite and 140 per
+condition, with one seed. The agent is Bonsai 2 27B (ternary) on the owner's server, reached through
+AgentDojo's OpenAI-compatible client at temperature 0 with at most 20 tool-loop iterations. Approval
+requests are answered by the labelled \texttt{approve\_all} policy (a fatigued owner).
+
+\paragraph{Conditions.} The configurations an owner can choose: Jig's Sentinel on the agent's own model
+in action mode and in read-only research mode; the Sentinel on the standard-quantisation counterpart
+(Qwen3.8 27B Q4\_K\_M); Granite Guardian 4.1 8B in the Sentinel slot, driven through its documented
+bring-your-own-criteria format (Appendix~\ref{app:guardian}); and no reviewer (core rules and mode only)
+as the floor.
+
+\paragraph{Measures.} Attack success rate is the share of injected trials in which AgentDojo's security
+check finds the injection goal achieved. Utility is the share of trials in which AgentDojo's utility
+check finds the user's task done, reported separately with and without an attack; utility lost without
+an attack is the cost of false positives. We also report blocked calls, tool errors and approval requests
+per task. Rates carry Wilson 95\% intervals and means percentile-bootstrap intervals.

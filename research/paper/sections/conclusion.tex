@@ -7,9 +7,14 @@ literature base and a reproducible harness that records complete provenance for 
 side is built on a deliberate constraint: it authors no attack content and measures Jig's defence layers
 only against published prompt-injection benchmarks run unchanged.
 
-The quantitative runs are queued in the overnight compute window. First is the memory comparison on
-LongMemEval across the five strategies, with the standard-quantisation (Q4\_K\_M) counterpart of the agent
-added to test whether quantisation changes the picture. In parallel we are building the Jig adapter for a
-published injection benchmark so that attack success, utility, false positives and approvals per task can
-be measured across the reviewer and read-only conditions. Each table and figure is regenerated from the
-trial records as the runs complete, and others can add results to the living benchmark with one command.
+The first interim safety run shows why per-layer measurement matters: with a ternary 27B agent the
+undefended attack success rate on our AgentDojo subsample was already at the floor, every success came
+through the agent's text rather than a tool call, and the defence configurations differed in utility and
+approval burden rather than in security. The memory pilot points the same way on cost: retrieval matched
+or beat agent-curated consolidation at a fraction of its tokens, though at $n=4$ nothing is established.
+
+Next, in order: finish the full memory run (150 trials); widen D1 to whole suites, more seeds and the
+standard-quantisation agent so that the undefended attack rate is measurable; run the Qwen reviewer when
+VRAM allows; and add InjecAgent once its licence is confirmed. Each table and figure is regenerated from
+the trial records as the runs complete, and others can add results to the living benchmark with one
+command.

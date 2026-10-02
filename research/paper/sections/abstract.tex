@@ -11,7 +11,13 @@ through the real agent loop and memory store, reporting accuracy alongside every
 safety, we take a deliberately conservative stance: rather than author any attack content, we measure
 Jig's existing defence layers (core and custom rules, the Sentinel under several model choices, read-only
 research mode and the approval queue) against \emph{published} agent prompt-injection benchmarks run
-unchanged through a Jig adapter. This version reports the harness, the verified literature and the
-experimental design; the memory pilot and the published-benchmark safety runs are queued in the overnight
-compute window and their tables are generated automatically as they finish. All quantitative results will
-be labelled pilots with wide intervals until the full runs complete.
+unchanged through a Jig adapter. This version reports the first interim safety run on AgentDojo (560
+trials, four defence configurations, one seed) and the memory pilot. With a ternary 27B agent, attack
+success was 2--3\% in every configuration, including with no reviewer, and every success was a single
+AgentDojo case whose goal is met by the agent's text rather than a tool call, which no tool-call gate can
+see; on cases that need a tool call the attack never succeeded (0/110 per configuration). The
+configurations therefore differ in cost rather than in security: Granite Guardian in the reviewer slot
+lowered task utility under attack from 77\% to 59\%, and read-only mode to 46\%, while Jig's Sentinel kept
+utility at 78\% at the price of 0.3 approval requests per task. Most refusals came from a core URL rule,
+not from a reviewer. In the memory pilot ($n=4$ questions) retrieval answered all four using a quarter to a
+third of the prompt tokens of agent-curated consolidation. All results are interim or pilot, with wide intervals.

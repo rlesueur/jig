@@ -64,5 +64,16 @@
   "verified": true,
   "licence": "Apache-2.0",
   "verified_at": "2026-10-01T23:51:10+00:00"
+ },
+ "gemma-4-26b-a4b": {
+  "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+  "file": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+  "path": "C:\Users\you\\models\\jig-research\\gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+  "size_bytes": 16947541728,
+  "sha256": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
+  "sha256_expected": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
+  "verified": true,
+  "licence": "Apache-2.0",
+  "verified_at": "2026-10-02T00:23:46+00:00"
  }
 }

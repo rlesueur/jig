@@ -1,9 +1,23 @@
+\section{Version history}
+\label{app:versions}
+
+\begin{description}
+\item[0.2 (2 October 2026, morning)] First real results: the interim D1 run on AgentDojo (560 of 700
+  trials, four configurations, one seed) and the C1 pilot (19 of 20 trials). The safety method section
+  now describes the run as executed. Harness fixes made during the night, each with a test and listed in
+  \texttt{research/DEVIATIONS.md}: AgentDojo's \texttt{security} result was being inverted when scoring
+  attack success (corrected before any number was reported, and recomputed from the raw field); a
+  reviewer failure is now a retried harness error rather than a block; blocked calls exclude ordinary
+  tool errors and record the refusing layer; incomplete runs are labelled INTERIM.
+\item[0.1 (2 October 2026)] Design, harness and verified literature; no results.
+\end{description}
+
 \section{Judge prompts}
 \label{app:judge}
 
 The judge prompts are LongMemEval's own, one per question type, ported verbatim from
-\texttt{src/evaluation/evaluate\_qa.py} of the LongMemEval repository (MIT) into
-\texttt{research/harness/jigbench/experiments/c1\_memory.py}. The judge must reply ``yes'' or ``no''; any
+\path{src/evaluation/evaluate_qa.py} of the LongMemEval repository (MIT) into
+\path{research/harness/jigbench/experiments/c1_memory.py}. The judge must reply ``yes'' or ``no''; any
 other reply is a recorded harness error.
 
 \section{Granite Guardian criterion (for the planned reviewer study)}

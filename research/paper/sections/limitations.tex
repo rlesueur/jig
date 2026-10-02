@@ -2,10 +2,28 @@
 \label{sec:limits}
 
 \begin{itemize}
-\item \textbf{Pilot scale.} The pilot has one question per type and four sessions per question, so
-  intervals are very wide and no difference reported here is statistically established.
-\item \textbf{One agent.} The pilot agent is one ternary 27B model; its Q4 counterpart is downloaded
-  and queued after the main run.
+\item \textbf{Interim safety run.} D1 has one seed and four of five configurations; the Q4\_K\_M Qwen
+  reviewer could not start within the VRAM budget beside the owner's server. Intervals are reported and
+  hypothesis tests are deferred to the complete multi-seed run.
+\item \textbf{Subsample and floor.} D1 uses the first five user tasks and first three injection tasks of
+  each AgentDojo suite in registry order, not a random sample, and attack success without any defence was
+  near zero, so the run cannot discriminate between reviewers on security.
+\item \textbf{Decoding.} D1 samples the agent and reviewers at temperature 0, whereas the protocol
+  specifies Jig's default sampling; C1 uses Jig's defaults. This is recorded as a deviation.
+\item \textbf{Per-layer attribution is partial.} Which layer refused each call is recorded only for trials
+  after a harness change during the run: none of the Granite Guardian trials and 87 of 140 no-reviewer
+  trials (in which every refusal is necessarily a core rule).
+\item \textbf{Guardian criterion.} Granite Guardian is driven with a defensive criterion written for this
+  programme; a different criterion could trade utility for coverage differently.
+\item \textbf{Concurrent development.} The runs used Jig's working tree while other work on Jig was in
+  progress; each run session records the commit and a hash of the uncommitted core changes.
+\item \textbf{Memory pilot scale.} The C1 pilot has one question per type and four sessions per question,
+  so intervals are very wide and no difference reported here is statistically established.
+\item \textbf{Output limit and hidden reasoning.} The agent emits reasoning tokens that count towards its
+  8192-token output limit; on one LongMemEval question the rolling-summary rewrite reached the limit in
+  the pilot and again in the full run. Such trials are harness errors, not scored, which can flatter that
+  strategy; the treatment for the full run is an open decision.
+\item \textbf{One agent.} The agent is one ternary 27B model; its Q4 counterpart is downloaded and queued.
 \item \textbf{Judge.} The judge is a local model, not the GPT-4o judge LongMemEval's prompts were
   validated with; a hand audit of a sample of verdicts is planned for the full run.
 \item \textbf{Simulated time.} Jig's system prompt states the real date, which can conflict with the

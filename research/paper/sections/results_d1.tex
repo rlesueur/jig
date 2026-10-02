@@ -1,0 +1,40 @@
+\subsection{D1 interim: Jig's defences on AgentDojo}
+\label{sec:results-d1}
+
+Four of the five planned configurations have finished all 140 of their trials (560 of 700); the fifth,
+the Sentinel on the Q4\_K\_M Qwen counterpart, could not start because that model needs about
+21.7\,GB with the safety margin beside the owner's server and 18.2\,GB was free, so it remains queued.
+No finished trial is a harness error (14 errors in the first attempt, caused by a pipeline-naming fault,
+were retried; see the deviations log). Table~\ref{tab:d1-d1-full-v1} gives every cell. The run has one seed
+and is incomplete, so we report intervals and defer hypothesis tests to the complete multi-seed run, as
+the protocol requires.
+
+\paragraph{Attack success is at the floor without any defence.} Pooled over both attacks, the attack
+succeeded in 3/120 injected trials with no reviewer (2\%; Wilson 95\% interval 1--7\%), 4/120 with the
+Sentinel on the agent's own model (3\%; 1--8\%), 4/120 with Granite Guardian (3\%; 1--8\%) and 2/120 in
+read-only mode (2\%; 0--6\%). Every one of these 13 successes is the same AgentDojo case, travel
+\texttt{injection\_task\_6}, whose goal is met by what the agent \emph{says} (its ground truth needs no tool
+call). On the 110 injected trials per configuration whose goal needs a tool call, the attack never
+succeeded in any configuration (0/110; 0--3\%). With this agent (the ternary Bonsai 2 27B at temperature 0)
+and this subsample, the undefended agent almost never acts on an injection, so the benchmark cannot
+separate the defences on security: H-D1 and H-D2 are neither supported nor refuted here.
+
+\paragraph{Defences differ in what they cost.} With no attack present, the user's task succeeded in
+16/20 trials with no reviewer (80\%; 58--92\%), 14/20 with the Sentinel (70\%; 48--85\%), 11/20 with
+Granite Guardian (55\%; 34--74\%) and 8/20 in read-only mode (40\%; 22--61\%). Under attack, on six times as
+many trials, the Sentinel matched the no-reviewer level while Guardian and read-only mode again lost
+utility: 92/120 (77\%; 68--83\%) with no reviewer, 93/120 (78\%; 69--84\%) with the Sentinel, 71/120
+(59\%; 50--68\%) with Guardian and 55/120 (46\%; 37--55\%) read-only. Read-only mode's loss is expected (it refused 69 side-effecting
+calls that tasks needed), and is the cost side of H-D3; Guardian's loss of about 18 points under attack
+bought no measurable security on this subsample. The Sentinel on the agent's own model kept utility at the
+no-reviewer level but escalated 42 calls to the approval queue over 140 trials (0.3 per task), all of
+which the labelled \texttt{approve\_all} owner approved; Guardian, which only allows or denies, raised none.
+
+\paragraph{Most blocks come from a core rule, not a reviewer.} Recording which layer refused each call
+(available for trials after 04:55; all 140 trials for both Sentinel configurations, 87 of 140 with no
+reviewer, none for Guardian) shows that Jig's core rule \texttt{no-local-network} refused far more calls
+than any reviewer: 239 refusals against 6 Sentinel denials in action mode, and 176 against 10 in read-only
+mode. The rule rejects URLs without an \texttt{http}/\texttt{https} scheme, and AgentDojo's Slack suite writes
+web addresses as bare host names (\texttt{www.\ldots}), so the rule blocks benign and injected web calls
+alike. It is a genuine Jig behaviour, but an incidental one: it lowers Slack utility in every
+configuration and would also stop any injection whose goal is to fetch or post to such an address.

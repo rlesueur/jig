@@ -1,4 +1,17 @@
-The C1 pilot (four LongMemEval-S questions, one per type: knowledge update, temporal reasoning,
-multi-session and single-session user; four sessions each; five strategies) was still running when
-this version was built; its table is added to Section~\ref{sec:results} automatically when it
-finishes.
+\subsection{C1 pilot: memory strategies}
+\label{sec:results-c1}
+
+The C1 pilot replays four LongMemEval-S questions (one each of knowledge update, temporal reasoning,
+multi-session and single-session user), four sessions per question, through each of the five strategies,
+with the ternary Bonsai 2 27B agent and granite 4.2 8B as judge (the full run uses Gemma 4 26B-A4B as
+judge). Nineteen of the twenty planned trials finished; the remaining one (rolling summary on the
+knowledge-update question) stopped because the agent's summary rewrite reached the 8192-token output
+limit, and is reported as a harness error rather than scored (Table~\ref{tab:c1-c1-pilot-2026-10-01}).
+
+Retrieval answered all four questions (4/4; Wilson 95\% interval 51--100\%) at about 10{,}100 prompt
+tokens per question. Both consolidation strategies answered three of four (75\%; 30--95\%) but spent
+three to four times as many prompt tokens (about 44{,}500 keeping history, 35{,}000 forgetting), because
+every session triggers an extraction task and every third a consolidation task. The rolling summary
+answered two of three (67\%; 21--94\%) and bounded full context one of four (25\%; 5--70\%), both at about
+7{,}400--8{,}100 tokens. Every strategy except retrieval missed the multi-session question. With $n \le 4$ per cell every interval overlaps, so these are \pilot{} observations,
+not findings, and carry no hypothesis tests.
