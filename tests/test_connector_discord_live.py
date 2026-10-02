@@ -48,6 +48,13 @@ async def test_discord_end_to_end_in_the_test_channel_only(capabilities):
         mine = [m for m in read.result["messages"] if m["message_id"] == message_id]
         assert mine and mine[0]["content"] == content and mine[0]["bot"]
 
+        page = await call(live, "discord_read_channel", {"channel_id": CHANNEL, "limit": 1}, intent=intent)
+        assert page.ok and page.result["next_before"] == page.result["messages"][0]["message_id"], page.result
+        older = await call(live, "discord_read_channel",
+                           {"channel_id": CHANNEL, "limit": 1, "before": page.result["next_before"]}, intent=intent)
+        assert older.ok and older.result["messages"], older.error
+        assert int(older.result["messages"][0]["message_id"]) < int(page.result["next_before"]), "it reads on, older"
+
         servers = await call(live, "discord_list_channels", {}, intent=intent)
         assert servers.ok, servers.error
         other = None

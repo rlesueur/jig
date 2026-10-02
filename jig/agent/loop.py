@@ -171,7 +171,7 @@ class Agent:
     async def _model_step(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, idx: int, *,
                           offer_tools: bool = True):
         ids = {"run_id": run_id, "task_id": spec.task_id}
-        tools = self.registry.schemas_for_mode(spec.mode) if offer_tools else []
+        tools = self.registry.schemas_for_mode(spec.mode, task=spec.kind == "task") if offer_tools else []
         step_id = self.store.start_step(run_id, idx, "model_call", self.model.model_name,
                                         {"messages": len(messages), "tools": [t["function"]["name"] for t in tools]})
         self.bus.publish(EventType.MODEL_START, step=idx, **ids)

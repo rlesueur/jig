@@ -35,6 +35,7 @@ import httpx
 
 from ..constants import Effect, TaskVariant, ToolCategory
 from ..errors import ConnectorAuthError, ConnectorError, ConnectorNotConnected, ToolArgumentError
+from ..tools.paging import FIND_ARG, OFFSET_ARG, text_page
 from ..tools.registry import ToolContext, ToolRegistry
 from ..vault import Vault
 from . import apps
@@ -600,14 +601,16 @@ def register_github_tools(registry: ToolRegistry, connectors: Connectors) -> Non
 
     @tool(
         description="Read a text file (or list a folder) in a GitHub repository, at a branch, tag or commit. "
-        "Files over 1 MB and binary files are refused.",
+        "Files over 1 MB and binary files are refused. A long file comes back one part at a time: read on with "
+        "offset, or use find.",
         **code,
         args={"repo": "Repository as owner/name.", "path": "Path inside the repository; empty for the top folder.",
               "ref": "Optional branch, tag or commit; the default branch if empty.",
-              "max_chars": "Maximum characters of the file to return."},
+              "max_chars": "Maximum characters of the file to return.",
+              "offset": OFFSET_ARG.format(what="file"), "find": FIND_ARG},
     )
     async def github_read_file(ctx: ToolContext, repo: str, path: str = "", ref: str = "",
-                               max_chars: int = 20_000) -> dict[str, Any]:
+                               max_chars: int = 20_000, offset: int = 0, find: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, READ, "read files")
         repo_path, file_path = _repo_path(repo), _file_path(path)
         params = {"ref": _ref(ref)} if ref else None
@@ -629,8 +632,8 @@ def register_github_tools(registry: ToolRegistry, connectors: Connectors) -> Non
         except (binascii.Error, UnicodeDecodeError):
             raise ConnectorError(f"{where} is not UTF-8 text (a binary file?); Jig only reads text files") from None
         limit = max(200, min(max_chars, 200_000))
-        return {**base, "type": "file", "sha": body.get("sha"), "bytes": size, "text": text[:limit],
-                "truncated": len(text) > limit, "link": body.get("html_url")}
+        return {**base, "type": "file", "sha": body.get("sha"), "bytes": size, "link": body.get("html_url"),
+                **text_page(text, tool="github_read_file", limit=limit, offset=offset, find=find, what="file")}
 
     @tool(
         description="Comment on a GitHub issue or pull request, as the user. Anyone who can see the repository can "

@@ -440,8 +440,11 @@ class Jig:
             dep = self.store.get_task(dep_id)
             result = dep["result"] or ""
             cut = (f"\n[Cut here: this is the first {DEPENDENCY_RESULT_CHARS} of {len(result)} characters of that "
-                   "result.]" if len(result) > DEPENDENCY_RESULT_CHARS else "")
-            parts.append(f"Result of earlier task '{dep['title']}':\n{result[:DEPENDENCY_RESULT_CHARS]}{cut}")
+                   f"result. Read the rest with task_result_read (task_id {dep_id!r}, offset "
+                   f"{DEPENDENCY_RESULT_CHARS}), or look for something in it with find; do not guess what it says.]"
+                   if len(result) > DEPENDENCY_RESULT_CHARS else "")
+            parts.append(f"Result of earlier task '{dep['title']}' (task id {dep_id}):\n"
+                         f"{result[:DEPENDENCY_RESULT_CHARS]}{cut}")
         parts.append("Complete only your task, then reply with a concise result.")
         intent = f"User goal: {goal['description']}\nCurrent task: {task['title']}: {task['description']}"
         return "\n\n".join(parts), intent

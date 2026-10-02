@@ -72,6 +72,8 @@ class ToolSpec:
     available: Callable[[], bool] | None = None
     resolve: ResolveFn | None = None
     precheck: PrecheckFn | None = None
+    # Offered only in background task runs (reading an earlier task's result), never in chat.
+    tasks_only: bool = False
 
     def is_available(self) -> bool:
         return self.available is None or bool(self.available())
@@ -176,6 +178,7 @@ class ToolRegistry:
         available: Callable[[], bool] | None = None,
         resolve: ResolveFn | None = None,
         precheck: PrecheckFn | None = None,
+        tasks_only: bool = False,
     ) -> Callable[[ToolFn], ToolFn]:
         def decorator(fn: ToolFn) -> ToolFn:
             if not inspect.iscoroutinefunction(fn):
@@ -217,6 +220,7 @@ class ToolRegistry:
                 available=available,
                 resolve=resolve,
                 precheck=precheck,
+                tasks_only=tasks_only,
             )
             return fn
 
@@ -234,8 +238,8 @@ class ToolRegistry:
     def available(self) -> list[ToolSpec]:
         return [t for t in self._tools.values() if t.is_available()]
 
-    def for_mode(self, mode: Mode) -> list[ToolSpec]:
-        return [t for t in self.available() if t.allowed_in(mode)]
+    def for_mode(self, mode: Mode, *, task: bool = True) -> list[ToolSpec]:
+        return [t for t in self.available() if t.allowed_in(mode) and (task or not t.tasks_only)]
 
-    def schemas_for_mode(self, mode: Mode) -> list[dict[str, Any]]:
-        return [t.schema() for t in self.for_mode(mode)]
+    def schemas_for_mode(self, mode: Mode, *, task: bool = True) -> list[dict[str, Any]]:
+        return [t.schema() for t in self.for_mode(mode, task=task)]

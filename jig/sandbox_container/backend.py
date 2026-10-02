@@ -32,7 +32,8 @@ SANDBOX_UID = "10001:10001"
 RELAY_PORT = 3128
 RELAY_ALIAS = "jig-egress"
 PROXY_URL = f"http://{RELAY_ALIAS}:{RELAY_PORT}"
-OUTPUT_LIMIT = 20_000
+# The most of each output stream kept (its end); jig.tools.sandbox_exec decides how much a result shows.
+CAPTURE_BYTES = 256 * 1024
 BROWSER_START_TIMEOUT_S = 60.0
 BROWSER_CALL_TIMEOUT_S = 90.0
 
@@ -138,14 +139,14 @@ class ContainerSandbox:
         limit = timeout_s or self.config.command_timeout_s
         cmd = ["exec", "-i", "-w", "/workspace", self.name, "timeout", "-s", "KILL", str(int(limit)), *argv]
         proc = await adocker(*cmd, timeout=limit + 30, check=False, stdin=stdin or b"")
-        out = proc.stdout.decode("utf-8", "replace")
-        err = proc.stderr.decode("utf-8", "replace")
+        out, err = proc.stdout[-CAPTURE_BYTES:], proc.stderr[-CAPTURE_BYTES:]
         return {
             "exit_code": proc.returncode,
             "timed_out": proc.returncode == 137,
-            "stdout": out[-OUTPUT_LIMIT:],
-            "stderr": err[-OUTPUT_LIMIT:],
-            "truncated": len(out) > OUTPUT_LIMIT or len(err) > OUTPUT_LIMIT,
+            "stdout": out.decode("utf-8", "replace"),
+            "stderr": err.decode("utf-8", "replace"),
+            "stdout_dropped": len(proc.stdout) - len(out),
+            "stderr_dropped": len(proc.stderr) - len(err),
         }
 
     async def browser(self) -> BrowserSession:

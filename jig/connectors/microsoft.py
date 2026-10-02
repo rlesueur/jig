@@ -33,6 +33,7 @@ import httpx
 
 from ..constants import Decision, Effect, TaskVariant, ToolCategory
 from ..errors import ConnectorAuthError, ConnectorError, ToolArgumentError
+from ..tools.paging import FIND_ARG, OFFSET_ARG, text_page
 from ..tools.registry import ToolContext, ToolRegistry
 from ..vault import Vault
 from . import apps, oauth
@@ -651,12 +652,14 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
 
     @tool(
         description="Read a text file from the user's OneDrive. Other kinds (Word, PDF, images) return their "
-        "details only.",
+        "details only. A long file comes back one part at a time: read on with offset, or use find.",
         effect=Effect.READ, variant=TaskVariant.BROWSING, available=lambda: has(NAME, CAN_READ_FILES), **files,
         args={"item_id": "Item id from onedrive_search or onedrive_list_folder.",
-              "max_chars": "Maximum characters to return."},
+              "max_chars": "Maximum characters to return.",
+              "offset": OFFSET_ARG.format(what="file"), "find": FIND_ARG},
     )
-    async def onedrive_read_file(ctx: ToolContext, item_id: str, max_chars: int = 20000) -> dict[str, Any]:
+    async def onedrive_read_file(ctx: ToolContext, item_id: str, max_chars: int = 20000, offset: int = 0,
+                                 find: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_READ_FILES, "read files")
         item = f"/me/drive/items/{_seg(_graph_id(item_id, 'item_id'))}"
         meta = await _get(ctx, item, **{"$select": ITEM_FIELDS})
@@ -685,7 +688,8 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
             raise ConnectorError(f"OneDrive's download returned HTTP {r.status_code}", status=r.status_code)
         text = r.content[:MAX_READ_BYTES].decode("utf-8-sig", errors="replace")
         limit = max(200, min(max_chars, 100_000))
-        return {**out, "text": text[:limit], "truncated": len(text) > limit}
+        return {**out, **text_page(text, tool="onedrive_read_file", limit=limit, offset=offset, find=find,
+                                   what="file")}
 
     @tool(
         description="Save a text file to a folder in the user's OneDrive. It won't replace an existing file unless "

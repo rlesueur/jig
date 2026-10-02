@@ -280,19 +280,31 @@ def register_slack_tools(registry: ToolRegistry, connectors: Connectors) -> None
                              for c in body.get("channels", [])],
                 "next_cursor": (body.get("response_metadata") or {}).get("next_cursor") or None}
 
-    @tool(description="Read the newest messages in a Slack channel the bot is in, newest first.", **reads,
+    @tool(description="Read the newest messages in a Slack channel the bot is in, newest first. When there are "
+          "older ones, the result gives next_before: call again with before set to it to read on.", **reads,
           args={"channel_id": "Channel id from slack_list_channels (like C0123456789).",
-                "limit": "How many messages (1 to 50)."})
-    async def slack_read_channel(ctx: ToolContext, channel_id: str, limit: int = 20) -> dict[str, Any]:
+                "limit": "How many messages (1 to 50).",
+                "before": "Optional: only messages older than this message ts (next_before of an earlier result)."})
+    async def slack_read_channel(ctx: ToolContext, channel_id: str, limit: int = 20,
+                                 before: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, READ, "read channels")
-        body = await _api(ctx, "conversations.history",
-                          params={"channel": _channel_id(channel_id), "limit": max(1, min(50, int(limit)))})
+        params: dict[str, Any] = {"channel": _channel_id(channel_id), "limit": max(1, min(50, int(limit)))}
+        if before:
+            if not _TS.fullmatch(before.strip()):
+                raise ToolArgumentError("before must be a Slack message ts, like 1712345678.123456")
+            params |= {"latest": before.strip(), "inclusive": "false"}
+        body = await _api(ctx, "conversations.history", params=params)
         raw = body.get("messages", [])
         names = await _user_names(ctx, list(dict.fromkeys(m["user"] for m in raw if m.get("user"))))
         messages, cut = _messages(raw, names)
-        return {"source": "slack", "untrusted": UNTRUSTED, "channel_id": channel_id, "messages": messages,
-                "users": "names" if names else "ids only (the bot was not given users:read)",
-                "more": bool(body.get("has_more")) or cut, "size_limited": cut}
+        out = {"source": "slack", "untrusted": UNTRUSTED, "channel_id": channel_id, "messages": messages,
+               "users": "names" if names else "ids only (the bot was not given users:read)",
+               "more": bool(body.get("has_more")) or cut, "size_limited": cut}
+        if out["more"] and messages:
+            out["next_before"] = messages[-1]["ts"]
+            out["note"] = (f"Older messages are not shown{' (this result is full)' if cut else ''}. Call "
+                           f"slack_read_channel again with before={messages[-1]['ts']!r} to read on.")
+        return out
 
     @tool(description="Post a plain-text message in a Slack channel as Jig's bot. It can't notify the whole "
           "channel (@here, @channel). Always needs the user's approval.", **write,

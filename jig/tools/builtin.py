@@ -12,8 +12,14 @@ import httpx
 from ..constants import Effect, Mode, TaskVariant, ToolCategory
 from ..errors import ToolArgumentError, ToolError
 from ..recurrence import Recurrence
+from .paging import FIND_ARG, OFFSET_ARG, text_page
 from .registry import ToolContext, ToolRegistry
 from .web import ensure_public, extract_readable
+
+# The most of a workspace file one read_file result holds; a longer file is read in parts.
+READ_FILE_CHARS = 20_000
+# The same for an earlier task's result, read by a task that depends on it.
+TASK_RESULT_CHARS = 12_000
 
 
 def build_registry() -> ToolRegistry:
@@ -33,9 +39,8 @@ def build_registry() -> ToolRegistry:
             "headers": "Optional request headers.",
             "max_chars": "Maximum characters of text to return; 0 for the most allowed. Never more than the "
                          "configured limit.",
-            "offset": "Character position in the page's text to start from (from next_offset of an earlier result).",
-            "find": "Return only the passages around each place this text appears (case-insensitive), with "
-                    "their offsets, instead of reading from offset.",
+            "offset": OFFSET_ARG.format(what="page"),
+            "find": FIND_ARG,
         },
     )
     async def web_fetch(ctx: ToolContext, url: str, headers: dict | None = None, max_chars: int = 0,
@@ -76,23 +81,9 @@ def build_registry() -> ToolRegistry:
             title, text, links = "", text_raw, []
         else:
             raise ToolError(f"unsupported content type {ctype!r} at {current}")
-        page = {"url": url, "final_url": current, "status": status, "title": title, "total_chars": len(text)}
-        if find.strip():
-            return {**page, **_find_passages(text, find.strip(), limit)}
-        if offset and offset >= len(text):
-            raise ToolArgumentError(f"web_fetch: offset {offset} is past the end of the page's text "
-                                    f"({len(text)} characters)")
-        end = min(offset + limit, len(text))
-        part = {"text": text[offset:end], "offset": offset, "truncated": end < len(text) or offset > 0}
-        if part["truncated"]:
-            part["note"] = (f"This is characters {offset} to {end} of {len(text)}; the rest of the page is not "
-                            "shown here. "
-                            + (f"Call web_fetch again with offset={end} to read on, " if end < len(text) else "")
-                            + "or use find to get the passages that mention what you need. Do not guess what the "
-                            "rest says.")
-            if end < len(text):
-                part["next_offset"] = end
-        return {**page, **part, "links": links[:25]}
+        page = {"url": url, "final_url": current, "status": status, "title": title}
+        part = text_page(text, tool="web_fetch", limit=limit, offset=offset, find=find)
+        return {**page, **part} if "find" in part else {**page, **part, "links": links[:25]}
 
     @tool(
         description="List files and folders in the agent's sandboxed workspace.",
@@ -118,18 +109,31 @@ def build_registry() -> ToolRegistry:
         return {"path": ctx.sandbox.relative(folder), "entries": items}
 
     @tool(
-        description="Read a UTF-8 text file from the agent's sandboxed workspace.",
+        description="Read a UTF-8 text file from the agent's sandboxed workspace. A long file comes back one part "
+        "at a time: the result then says how long the whole file is and where the next part starts, so read on "
+        "with offset, or use find to get just the passages that mention a word.",
         effect=Effect.READ,
         category=ToolCategory.FILES,
         variant=TaskVariant.BROWSING,
-        args={"path": "File path relative to the workspace root.", "max_chars": "Maximum characters to return."},
+        args={"path": "File path relative to the workspace root.",
+              "max_chars": f"Maximum characters to return (at most {READ_FILE_CHARS}).",
+              "offset": OFFSET_ARG.format(what="file"), "find": FIND_ARG},
     )
-    async def read_file(ctx: ToolContext, path: str, max_chars: int = 20000) -> dict[str, Any]:
+    async def read_file(ctx: ToolContext, path: str, max_chars: int = READ_FILE_CHARS, offset: int = 0,
+                        find: str = "") -> dict[str, Any]:
         target = ctx.sandbox.resolve(path)
         if not target.is_file():
             raise ToolError(f"{path!r} does not exist in the workspace")
         text = target.read_text(encoding="utf-8", errors="replace")
-        return {"path": ctx.sandbox.relative(target), "content": text[:max_chars], "truncated": len(text) > max_chars}
+        part = text_page(text, tool="read_file", limit=min(max_chars or READ_FILE_CHARS, READ_FILE_CHARS),
+                         offset=offset, find=find, what="file")
+        if "text" in part:
+            part["content"] = part.pop("text")
+        else:
+            passages = part.pop("passages")
+            part["content"] = "\n\n".join(f"[from offset {p['offset']}]\n{p['text']}" for p in passages)
+            part["truncated"] = True
+        return {"path": ctx.sandbox.relative(target), **part}
 
     @tool(
         description="Write a UTF-8 text file in the agent's sandboxed workspace. This is an action: "
@@ -168,6 +172,27 @@ def build_registry() -> ToolRegistry:
     )
     async def note_list(ctx: ToolContext, limit: int = 20) -> dict[str, Any]:
         return {"notes": ctx.store.list_notes(limit=limit)}
+
+    @tool(
+        description="Read the full result of an earlier task that your task depends on (its prompt gives the "
+        "start of it and the task id). A long result comes back one part at a time: read on with offset, or use "
+        "find.",
+        effect=Effect.READ,
+        category=ToolCategory.NOTES,
+        variant=TaskVariant.BROWSING,
+        tasks_only=True,
+        args={"task_id": "Id of the earlier task, as given in your prompt.",
+              "offset": OFFSET_ARG.format(what="result"), "find": FIND_ARG},
+    )
+    async def task_result_read(ctx: ToolContext, task_id: str, offset: int = 0, find: str = "") -> dict[str, Any]:
+        if not ctx.task_id:
+            raise ToolError("task_result_read only works in a task that depends on an earlier one")
+        if task_id not in ctx.store.get_task(ctx.task_id)["depends_on"]:
+            raise ToolError(f"{task_id!r} is not a task this task depends on; it can only read those results")
+        earlier = ctx.store.get_task(task_id)
+        part = text_page(earlier["result"] or "", tool="task_result_read", limit=TASK_RESULT_CHARS, offset=offset,
+                         find=find, what="result")
+        return {"task_id": task_id, "title": earlier["title"], "status": earlier["status"], **part}
 
     @tool(
         description="Search long-term memory for facts about the user and past work.",
@@ -300,44 +325,6 @@ def _schedule_recurrence(ctx: ToolContext, args: dict[str, Any]) -> tuple[Recurr
     except ValueError as exc:
         raise ToolArgumentError(f"schedule_create: {exc}") from None
     return rec, tz
-
-
-_FIND_CONTEXT = 300
-
-
-def _find_passages(text: str, needle: str, limit: int) -> dict[str, Any]:
-    """The passages around each match of ``needle`` (case-insensitive), merged where they overlap, up to ``limit``
-    characters in all. Each passage says where it starts, so the model can read on from there with offset."""
-    lower, target = text.lower(), needle.lower()
-    spans: list[list[int]] = []
-    matches = 0
-    start = lower.find(target)
-    while start >= 0:
-        matches += 1
-        lo, hi = max(0, start - _FIND_CONTEXT), min(len(text), start + len(target) + _FIND_CONTEXT)
-        if spans and lo <= spans[-1][1]:
-            spans[-1][1] = hi
-        else:
-            spans.append([lo, hi])
-        start = lower.find(target, start + len(target))
-    passages, used, resume_at = [], 0, None
-    for lo, hi in spans:
-        room = limit - used
-        if room <= 0:
-            resume_at = lo
-            break
-        passages.append({"offset": lo, "text": text[lo:min(hi, lo + room)]})
-        used += min(hi, lo + room) - lo
-        if hi > lo + room:
-            resume_at = lo + room
-            break
-    out: dict[str, Any] = {"find": needle, "matches": matches, "passages": passages}
-    if resume_at is not None:
-        out["note"] = (f"Not every passage fits in one result: this stops at character {resume_at} of {len(text)}. "
-                       f"Read on with offset={resume_at}, or search for something more specific.")
-    elif not matches:
-        out["note"] = f"{needle!r} does not appear in the page's text ({len(text)} characters)."
-    return out
 
 
 def _local_words(t: datetime, tz: str) -> str:

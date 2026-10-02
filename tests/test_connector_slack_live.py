@@ -53,6 +53,14 @@ async def test_slack_end_to_end_in_the_test_channel_only(capabilities):
         mine = [m for m in read.result["messages"] if m["ts"] == ts]
         assert mine and mine[0]["text"] == text and mine[0]["replies"] >= 1
 
+        page = await call(live, "slack_read_channel", {"channel_id": CHANNEL, "limit": 1}, intent=intent)
+        assert page.ok and page.result["next_before"] == page.result["messages"][0]["ts"], page.result
+        assert "before=" in page.result["note"]
+        older = await call(live, "slack_read_channel",
+                           {"channel_id": CHANNEL, "limit": 1, "before": page.result["next_before"]}, intent=intent)
+        assert older.ok and older.result["messages"], older.error
+        assert float(older.result["messages"][0]["ts"]) < float(page.result["next_before"]), "it reads on, older"
+
         listed = await call(live, "slack_list_channels", {}, intent=intent)
         assert listed.ok, listed.error
         other = next((c["channel_id"] for c in listed.result["channels"] if c["channel_id"] != CHANNEL), None)

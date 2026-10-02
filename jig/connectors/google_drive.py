@@ -19,6 +19,7 @@ import httpx
 
 from ..constants import Decision, Effect, TaskVariant, ToolCategory
 from ..errors import ConnectorError, ToolArgumentError
+from ..tools.paging import FIND_ARG, OFFSET_ARG, text_page
 from ..tools.registry import ToolContext, ToolRegistry
 from . import google
 from .base import AccessLevel, ConnectionStore, Connectors, Grant, ProviderSpec, register_provider
@@ -168,11 +169,14 @@ def register_drive_tools(registry: ToolRegistry, connectors: Connectors) -> None
 
     @tool(
         description="Read a file from the user's Google Drive as text: Google Docs and Slides as plain text, "
-        "Sheets as CSV, and text files as they are. Other kinds (PDFs, images) return their details only.",
+        "Sheets as CSV, and text files as they are. Other kinds (PDFs, images) return their details only. A long "
+        "file comes back one part at a time: read on with offset, or use find.",
         effect=Effect.READ, variant=TaskVariant.BROWSING, available=can_read, **common,
-        args={"file_id": "File id from gdrive_search.", "max_chars": "Maximum characters to return."},
+        args={"file_id": "File id from gdrive_search.", "max_chars": "Maximum characters to return.",
+              "offset": OFFSET_ARG.format(what="file"), "find": FIND_ARG},
     )
-    async def gdrive_read_file(ctx: ToolContext, file_id: str, max_chars: int = 20000) -> dict[str, Any]:
+    async def gdrive_read_file(ctx: ToolContext, file_id: str, max_chars: int = 20000, offset: int = 0,
+                               find: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, READ, "read files")
         meta = await _meta(ctx, file_id)
         mime = meta.get("mimeType", "")
@@ -189,7 +193,8 @@ def register_drive_tools(registry: ToolRegistry, connectors: Connectors) -> None
             return {**out, "text": None, "note": f"Jig can't read {mime} files as text; open the link instead"}
         text = r.content[:MAX_READ_BYTES].decode("utf-8", errors="replace")
         limit = max(200, min(max_chars, 100_000))
-        return {**out, "text": text[:limit], "truncated": len(text) > limit}
+        return {**out, **text_page(text, tool="gdrive_read_file", limit=limit, offset=offset, find=find,
+                                   what="file")}
 
     @tool(
         description="Create a text file (or a Google Doc) in the user's Google Drive. Needs the user's approval by "

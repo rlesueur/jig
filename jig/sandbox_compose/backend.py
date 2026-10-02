@@ -35,7 +35,6 @@ from ..errors import SandboxUnavailable, ToolError
 from ..sandbox_container.egress import EgressProxy, Lease
 from . import netinfo
 
-OUTPUT_LIMIT = 20_000
 LINE_LIMIT = 64 * 1024 * 1024
 SERVICE_WAIT_S = 120.0
 BROWSER_START_TIMEOUT_S = 60.0
@@ -208,15 +207,15 @@ class ComposeSandbox:
             raise ToolError(f"the sandbox-exec service failed: {type(exc).__name__}: {exc}") from exc
         if not reply.get("ok"):
             raise ToolError(f"the sandbox-exec service refused the command: {reply.get('error')}")
-        out = base64.b64decode(reply["stdout"]).decode("utf-8", "replace")
-        err = base64.b64decode(reply["stderr"]).decode("utf-8", "replace")
+        out, err = base64.b64decode(reply["stdout"]), base64.b64decode(reply["stderr"])
         return {
             "exit_code": reply["exit_code"],
             "timed_out": reply["exit_code"] == 137,
-            "stdout": out[-OUTPUT_LIMIT:],
-            "stderr": err[-OUTPUT_LIMIT:],
-            "truncated": len(out) > OUTPUT_LIMIT or len(err) > OUTPUT_LIMIT
-                         or reply["stdout_bytes"] > len(out.encode()) or reply["stderr_bytes"] > len(err.encode()),
+            "stdout": out.decode("utf-8", "replace"),
+            "stderr": err.decode("utf-8", "replace"),
+            # The service keeps the end of each stream (OUTPUT_CAP in its image); this is what it left out.
+            "stdout_dropped": max(0, reply["stdout_bytes"] - len(out)),
+            "stderr_dropped": max(0, reply["stderr_bytes"] - len(err)),
         }
 
     async def browser(self) -> SocketBrowserSession:

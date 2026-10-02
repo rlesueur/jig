@@ -26,6 +26,7 @@ import httpx
 
 from ..constants import Decision, Effect, TaskVariant, ToolCategory
 from ..errors import ConnectorError, ToolArgumentError
+from ..tools.paging import FIND_ARG, OFFSET_ARG, text_page
 from ..tools.registry import ToolContext, ToolRegistry
 from ..tools.web import extract_readable
 from . import google
@@ -334,23 +335,36 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
 
     @tool(
         description="Read a whole Gmail thread: every message's sender, recipients, date, subject and text, "
-        "and the names of any attachments.",
+        "and the names of any attachments. A long message is cut; read the rest of it with message_id and "
+        "offset (or find).",
         effect=Effect.READ, **reads,
-        args={"thread_id": "Thread id from gmail_search.", "max_chars": "Maximum characters of text per message."},
+        args={"thread_id": "Thread id from gmail_search.", "max_chars": "Maximum characters of text per message.",
+              "message_id": "Optional: read only this message of the thread (to read on in a long one).",
+              "offset": "With message_id: " + OFFSET_ARG.format(what="message"),
+              "find": "With message_id: " + FIND_ARG},
     )
-    async def gmail_read_thread(ctx: ToolContext, thread_id: str, max_chars: int = 8000) -> dict[str, Any]:
+    async def gmail_read_thread(ctx: ToolContext, thread_id: str, max_chars: int = 8000, message_id: str = "",
+                                offset: int = 0, find: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, READ, "read mail")
+        if (offset or find) and not message_id:
+            raise ToolArgumentError("offset and find need message_id: the message to read on in")
         thread = await _get(ctx, f"/threads/{_check_id(thread_id, 'thread_id')}", format="full")
         limit = max(200, min(max_chars, 30_000))
+        found = [m for m in thread.get("messages", []) if not message_id or m["id"] == message_id]
+        if message_id and not found:
+            raise ToolArgumentError(f"thread {thread_id} has no message {message_id!r}")
         messages = []
-        for m in thread.get("messages", []):
+        for m in found:
             h = _headers(m["payload"])
             text, attachments = _body(m["payload"])
+            part = text_page(text, tool="gmail_read_thread", limit=limit, offset=offset, find=find, what="message")
+            if "next_offset" in part:
+                part["note"] = part["note"].replace(
+                    "again with", f"again with message_id={m['id']!r} and")
             messages.append({"message_id": m["id"], "from": h.get("from", ""), "to": h.get("to", ""),
                              "cc": h.get("cc", ""), "date": _when(m, ctx.config.runtime.timezone),
-                             "subject": h.get("subject", ""),
-                             "labels": m.get("labelIds", []), "text": text[:limit],
-                             "truncated": len(text) > limit, "attachments": attachments})
+                             "subject": h.get("subject", ""), "labels": m.get("labelIds", []),
+                             **part, "attachments": attachments})
         return {"source": "gmail", "untrusted": UNTRUSTED, "thread_id": thread["id"], "messages": messages}
 
     @tool(

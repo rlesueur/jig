@@ -191,19 +191,33 @@ def register_discord_tools(registry: ToolRegistry, connectors: Connectors) -> No
                               "topic": str(c.get("topic") or "")[:200], "category_id": c.get("parent_id")}
                              for c in text]}
 
-    @tool(description="Read the newest messages in a Discord channel, newest first.", **reads,
+    @tool(description="Read the newest messages in a Discord channel, newest first. When there may be older "
+          "ones, the result gives next_before: call again with before set to it to read on.", **reads,
           args={"channel_id": "Channel id from discord_list_channels (17 to 20 digits).",
-                "limit": "How many messages (1 to 50)."})
-    async def discord_read_channel(ctx: ToolContext, channel_id: str, limit: int = 20) -> dict[str, Any]:
+                "limit": "How many messages (1 to 50).",
+                "before": "Optional: only messages older than this message id (next_before of an earlier result)."})
+    async def discord_read_channel(ctx: ToolContext, channel_id: str, limit: int = 20,
+                                   before: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, READ, "read channels")
-        raw = await _get(ctx, f"/channels/{snowflake(channel_id, 'channel_id')}/messages",
-                         limit=max(1, min(50, int(limit))))
+        count = max(1, min(50, int(limit)))
+        params: dict[str, Any] = {"limit": count}
+        if before:
+            params["before"] = snowflake(before, "before")
+        raw = await _get(ctx, f"/channels/{snowflake(channel_id, 'channel_id')}/messages", **params)
         messages, cut = _messages(raw)
         out: dict[str, Any] = {"source": "discord", "untrusted": UNTRUSTED, "channel_id": channel_id,
                                "messages": messages, "size_limited": cut}
+        notes = []
+        if messages and (cut or len(raw) == count):
+            last = messages[-1]["message_id"]
+            out["next_before"] = last
+            notes.append(f"There may be older messages{' (this result is full)' if cut else ''}. Call "
+                         f"discord_read_channel again with before={last!r} to read on.")
         if any(not m["content"] and not m["attachments"] and not m["embeds"] for m in messages):
-            out["note"] = ("Some messages have no content: Discord hides it unless the bot has the Message Content "
-                           "Intent (developer portal > Bot).")
+            notes.append("Some messages have no content: Discord hides it unless the bot has the Message Content "
+                         "Intent (developer portal > Bot).")
+        if notes:
+            out["note"] = " ".join(notes)
         return out
 
     @tool(description="Post a text message in a Discord channel as Jig's bot. It never pings anyone (mentions "
