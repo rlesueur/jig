@@ -1794,7 +1794,7 @@ async function turnOff(button, scope) {
     ownStop = false;
     return;
   }
-  showOff({ scope, startAgain: r.start_again, modelWasManaged: m.managed });
+  showOff({ scope, startAgain: r.start_again });
 }
 
 $('power-off').addEventListener('click', () => turnOff($('power-off'), 'jig'));
@@ -1837,10 +1837,27 @@ $('model-start').addEventListener('click', () => act($('model-start'), async () 
 
 const OFF_GENERIC = 'To start it again, run jig serve on the computer Jig runs on. If \u2018Start with Windows\u2019 is on, it also starts by itself when you next sign in.';
 
-function showOff({ scope, startAgain, fromElsewhere = false, modelWasManaged = false }) {
+/* The line under "Jig is off". `model` is what GET /power last said about the model server, or null if this
+ * page never asked (Jig was turned off elsewhere before Settings was opened here). */
+function offText({ scope, fromElsewhere, model }) {
+  const where = fromElsewhere ? 'Jig was turned off from another device or window. ' : '';
+  if (scope === 'jig_and_model') {
+    return fromElsewhere ? 'Jig and the model server it started were turned off from another device or window.'
+      : 'Jig and the model server it started are off.';
+  }
+  if (scope !== 'jig') return fromElsewhere ? where.trim() : 'Jig was turned off from this page.';
+  if (!model) return `${where}Turning Jig off on its own leaves the model server as it was.`;
+  if (model.managed && !model.stopped_by_user) {
+    return `${where}The model server Jig started is still running, so Jig will be ready straight away when it starts again.`;
+  }
+  if (model.managed) return `${where}The model server Jig started was already stopped before Jig turned off.`;
+  return `${where}Jig didn\u2019t start your model server, so it has left it as it was.`;
+}
+
+function showOff({ scope, startAgain, fromElsewhere = false }) {
   if (startAgain) $('off-again').textContent = startAgain;
   if (offState) return;
-  offState = { scope, modelWasManaged, since: Date.now(), phase: 'stopping' };
+  offState = { scope, fromElsewhere, model: powerCache ? powerCache.model_server : null, since: Date.now(), phase: 'stopping' };
   stopEvents();
   stopPairing();
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
@@ -1871,8 +1888,7 @@ async function watchOff() {
     if (!up) {
       offState.phase = 'off';
       $('off-title').textContent = 'Jig is off';
-      $('off-text').textContent = offState.scope === 'jig_and_model' ? 'Jig and the model server it started are off.'
-        : offState.modelWasManaged ? 'Jig is off. The model server it started is still running.' : 'Jig is off.';
+      $('off-text').textContent = offText(offState);
       $('off-watch').textContent = 'This page reconnects by itself when Jig is running again.';
       $('off-watch').classList.remove('error-text');
     } else if (Date.now() - offState.since > 120000) {

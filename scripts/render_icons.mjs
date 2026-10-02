@@ -1,6 +1,6 @@
 // Renders Jig's static icons (favicons, app icons, the sign-in and "Jig is off" faces, the landing-page
-// favicons) from the real <jig-avatar> rig in avatar/jig-avatar.js, in headless Chromium, on the manual
-// clock with a fixed seed, so every run gives the same pixels.
+// favicons) and the pictures in avatar/screenshots/ from the real <jig-avatar> rig in avatar/jig-avatar.js,
+// in headless Chromium, on the manual clock with a fixed seed, so every run gives the same pixels.
 //
 //   node scripts/render_icons.mjs [--out-dir DIR]
 //
@@ -64,6 +64,25 @@ const PNGS = [
 const ICO = { file: 'jig/web/favicon.ico', from: ['jig/web/icons/icon-16.png', 'jig/web/icons/icon-32.png', 'jig/web/icons/icon-48.png'] };
 /* The picture at the top of README.md: the whole figure, as the earlier screenshot was. */
 const README_PICTURE = { file: 'avatar/screenshots/jig-idle.png', px: 520, theme: 'dark' };
+/* The state pictures in avatar/screenshots/: whole figure, dark, 520px. Each starts idle, switches state after
+ * one second (as in real use) and is captured `at` seconds later, on the first frame after that with eyes
+ * not mid-blink. */
+const STATE_SHOTS = [
+  { file: 'avatar/screenshots/jig-monitoring.png', state: 'monitoring', at: 3 },
+  { file: 'avatar/screenshots/jig-working-browsing.png', state: 'working', task: 'browsing', at: 3 },
+  { file: 'avatar/screenshots/jig-working-writing.png', state: 'working', task: 'writing', at: 3.5 },
+  { file: 'avatar/screenshots/jig-needs-approval.png', state: 'approval', at: 2.5 },
+  { file: 'avatar/screenshots/jig-success-pirouette.png', state: 'success', at: 3.6 },
+  { file: 'avatar/screenshots/jig-error-blocked.png', state: 'error', at: 3 },
+];
+/* The 48px icon strip: the demo page's icon grid (avatar/index.html), 3 across, at 277 x 342. */
+const ICON_STRIP = {
+  file: 'avatar/screenshots/jig-icons-48px.png', width: 277, height: 342, at: 3,
+  icons: [['Live', 'idle'], ['Idle', 'idle'], ['Monitoring', 'monitoring'], ['Thinking', 'thinking'],
+    ['Research', 'working', 'browsing'], ['Email', 'working', 'writing'], ['Coding', 'working', 'coding'],
+    ['Paying', 'working', 'shopping'], ['Calendar', 'working', 'scheduling'], ['Approval', 'approval'],
+    ['Success', 'success'], ['Blocked', 'error']],
+};
 /* GET /favicon.ico serves this SVG (jig/api/app.py). The rig is drawn on a canvas, so the SVG wraps the
  * 48px render rather than tracing it. */
 const SVG = { file: 'jig/web/favicon.svg', from: 'jig/web/icons/icon-48.png' };
@@ -192,6 +211,56 @@ function finishInPage({ px, bg, crop, inset }) {
   return out.toDataURL('image/png');
 }
 
+/* In the page: one state picture, whole figure in its rounded square. */
+async function stateShotInPage({ theme, css, seed, state, task, at }) {
+  const el = document.createElement('jig-avatar');
+  for (const [k, v] of Object.entries({
+    state: 'idle', theme, shape: 'rounded', framing: 'full', clock: 'manual', seed: String(seed),
+    style: `width:${css}px;height:${css}px`,
+  })) el.setAttribute(k, v);
+  document.body.append(el);
+  const canvas = el.shadowRoot.querySelector('canvas');
+  for (let i = 0; i < 120 && canvas.width !== css * 2; i++) await new Promise(requestAnimationFrame);
+  if (canvas.width !== css * 2) throw new Error(`the avatar canvas is ${canvas.width}px, expected ${css * 2}px`);
+  el.advance(1);
+  el.setState(state, task ? { task } : {});
+  el.advance(at);
+  for (let i = 0; i < 60 && el._blink !== 0; i++) el.step(1 / 60);
+  if (el._blink !== 0) throw new Error(`${state}: the eyes were still mid-blink a second after ${at}s`);
+  const url = canvas.toDataURL('image/png');
+  el.remove();
+  return url;
+}
+
+/* In the page: the demo page's 48px icon grid, laid out as in avatar/index.html. Returns nothing; the
+ * caller screenshots #strip. */
+async function iconStripInPage({ seed, width, height, icons, at }) {
+  const strip = document.createElement('div');
+  strip.id = 'strip';
+  strip.style.cssText = `width:${width}px;height:${height}px;box-sizing:border-box;padding:4px 12px;background:#0e0a20;`
+    + 'display:flex;flex-wrap:wrap;gap:18px;align-content:flex-start;font:12px/1.5 "Segoe UI",system-ui,sans-serif;color:#9a90c4';
+  const els = icons.map(([label]) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;width:72px;text-align:center';
+    const el = document.createElement('jig-avatar');
+    for (const [k, v] of Object.entries({ shape: 'circle', clock: 'manual', seed: String(seed), style: 'display:block;width:48px;height:48px' })) {
+      el.setAttribute(k, v);
+    }
+    wrap.append(el, Object.assign(document.createElement('span'), { textContent: label }));
+    strip.append(wrap);
+    return el;
+  });
+  document.body.append(strip);
+  for (let i = 0; i < 120 && els.some((el) => el.shadowRoot.querySelector('canvas').width !== 48); i++) {
+    await new Promise(requestAnimationFrame);
+  }
+  for (const el of els) el.advance(1);
+  icons.forEach(([, state, task], i) => els[i].setState(state, task ? { task } : {}));
+  for (const el of els) el.advance(at);
+  for (let i = 0; i < 60 && els.some((el) => el._blink !== 0); i++) for (const el of els) el.step(1 / 60);
+  if (els.some((el) => el._blink !== 0)) throw new Error('the icon strip never had every pair of eyes open at once');
+}
+
 function pngFromDataUrl(url) {
   return Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
 }
@@ -250,6 +319,17 @@ try {
   const { px, png } = made.get(SVG.from);
   await write(SVG.file, Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px} ${px}" width="${px}" height="${px}">`
     + `<image width="${px}" height="${px}" href="data:image/png;base64,${png.toString('base64')}"/></svg>\n`));
+  for (const shot of STATE_SHOTS) {
+    const url = await page.evaluate(stateShotInPage, { theme: 'dark', css: README_PICTURE.px / 2, seed: SEED, ...shot });
+    await write(shot.file, pngFromDataUrl(url));
+  }
+
+  const stripPage = await browser.newPage({ deviceScaleFactor: 1, viewport: { width: 600, height: 600 } });
+  stripPage.on('pageerror', (err) => errors.push(err.message));
+  await stripPage.goto(`http://127.0.0.1:${server.address().port}/`);
+  await stripPage.evaluate(() => window.jigReady);
+  await stripPage.evaluate(iconStripInPage, { seed: SEED, ...ICON_STRIP });
+  await write(ICON_STRIP.file, await stripPage.locator('#strip').screenshot());
   if (errors.length) throw new Error(`the page reported errors: ${errors.join('; ')}`);
 } finally {
   await browser.close();
