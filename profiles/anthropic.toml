@@ -1,0 +1,51 @@
+# Cloud: Anthropic (Claude), through its OpenAI-compatible endpoint. Jig is built for local models; with this
+# profile the agent's requests go to Anthropic. Read "Using a cloud model" in README.md first.
+#
+# Set up (each step is explicit; Jig refuses to start until all three are done):
+#   1. jig --config profiles/anthropic.toml model key set anthropic   paste the key; stored in the vault
+#   2. jig --config profiles/anthropic.toml model cloud confirm       shows what is sent; recorded in the audit log
+#   3. jig --config profiles/anthropic.toml serve
+# Get a key at https://platform.claude.com/settings/keys
+#
+# Checked against Anthropic's documentation (October 2026):
+# - https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk: base URL
+#   https://api.anthropic.com/v1/. Anthropic calls this layer "primarily intended to test and compare model
+#   capabilities". Its documented differences, and what Jig does about each:
+#   * response_format is "Ignored", so Jig's structured output (the Sentinel's verdicts, the planner) is asked
+#     for as a tool call instead (structured_output = "tool_call", the provider default) and checked; anything
+#     else is an error, and a Sentinel error means the action does not go ahead.
+#   * Forced tool use is not used: Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 "reject forced tool use on every
+#     request with a 400 error" (https://platform.claude.com/docs/en/build-with-claude/thinking).
+#   * Tool "strict" is ignored, so tool arguments are not schema-guaranteed; Jig validates every tool call.
+#   * temperature above 1 is "capped at 1", and "most unsupported fields are silently ignored": Jig refuses
+#     any [model.sampling] key outside temperature, top_p, stop, parallel_tool_calls and thinking.
+#   * Claude's thinking is not returned through this layer, so Jig shows no reasoning text.
+# - https://platform.claude.com/docs/en/api/models/list: GET /v1/models pages 20 at a time; Jig asks for 1000.
+# - A key with access to several workspaces also needs [model.headers] anthropic-workspace-id = "wrkspc_...".
+
+[model]
+provider = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+name = "claude-sonnet-5-5"
+api_key_secret = "model-key.anthropic"
+# You accept that your conversation, memory snippets in prompts, tool results and images are sent to Anthropic.
+allow_cloud = true
+max_tokens = 8192
+
+# Recommended: the safety checker (Sentinel) stays on a LOCAL model, so its reviews never leave this machine.
+# Point base_url at your local server (llama.cpp's default is shown). To send safety checks to Anthropic as
+# well, delete base_url and name below and add allow_cloud = true instead.
+[sentinel]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+
+# Claude accepts images; set to true and Jig checks it with a real image at start-up.
+[vision]
+enabled = false
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[server]
+port = 8766

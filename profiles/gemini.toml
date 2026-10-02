@@ -1,0 +1,48 @@
+# Cloud: Google Gemini, through its OpenAI-compatible endpoint. Jig is built for local models; with this
+# profile the agent's requests go to Google. Read "Using a cloud model" in README.md first.
+#
+# Set up (each step is explicit; Jig refuses to start until all three are done):
+#   1. jig --config profiles/gemini.toml model key set gemini   paste the key; stored in the vault
+#   2. jig --config profiles/gemini.toml model cloud confirm    shows what is sent; recorded in the audit log
+#   3. jig --config profiles/gemini.toml serve
+# Get a key at https://aistudio.google.com/app/apikey
+#
+# Checked against Google's documentation (October 2026):
+# - https://ai.google.dev/gemini-api/docs/openai: base URL
+#   https://generativelanguage.googleapis.com/v1beta/openai/ (in beta). Function calling, streaming, images,
+#   structured output (response_format) and reasoning_effort are documented. Other parameters "will be
+#   silently ignored", so Jig refuses any [model.sampling] key outside temperature, top_p, stop,
+#   reasoning_effort and extra_body. Gemini-only options go in extra_body.
+# - Reasoning "cannot be turned off for Gemini 2.5 Pro or 3 models"; thinking counts towards max_tokens.
+# - https://ai.google.dev/gemini-api/docs/generate-content/thinking#signatures: Gemini 3 needs its thought
+#   signatures sent back with function calls. Jig keeps every extra field of a tool call and sends it back.
+
+[model]
+provider = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+name = "gemini-3.8-flash"
+api_key_secret = "model-key.gemini"
+# You accept that your conversation, memory snippets in prompts, tool results and images are sent to Google.
+allow_cloud = true
+max_tokens = 8192
+
+# [model.sampling]
+# reasoning_effort = "low"   # documented: maps to Gemini's thinking level
+
+# Recommended: the safety checker (Sentinel) stays on a LOCAL model, so its reviews never leave this machine.
+# Point base_url at your local server (llama.cpp's default is shown). To send safety checks to Google as
+# well, delete base_url and name below and add allow_cloud = true instead.
+[sentinel]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+
+# Gemini accepts images; set to true and Jig checks it with a real image at start-up.
+[vision]
+enabled = false
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[server]
+port = 8766

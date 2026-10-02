@@ -1,0 +1,45 @@
+# Cloud: OpenAI. Jig is built for local models; with this profile the agent's requests go to OpenAI.
+# Read "Using a cloud model" in README.md first: it says exactly what is sent.
+#
+# Set up (each step is explicit; Jig refuses to start until all three are done):
+#   1. jig --config profiles/openai.toml model key set openai      paste the key; it is stored in the vault
+#   2. jig --config profiles/openai.toml model cloud confirm       shows what is sent; recorded in the audit log
+#   3. jig --config profiles/openai.toml serve
+# Get a key at https://platform.openai.com/api-keys
+#
+# Checked against OpenAI's documentation (October 2026):
+# - https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+#   max_tokens "is now deprecated in favor of max_completion_tokens, and is not compatible with o-series
+#   models", so with provider = "openai" Jig sends max_completion_tokens. Reasoning tokens count towards it.
+# - https://developers.openai.com/api/docs/guides/reasoning: "Chat Completions does not support function
+#   calling with GPT-6 Astra or GPT-6.1 Sol". Pick a model that supports it there (the function-calling guide's
+#   Chat Completions examples use GPT-5.6); Jig's tool-calling check at start-up refuses one that doesn't.
+# - OpenAI rejects request fields it doesn't know (HTTP 400), so nothing is silently ignored.
+
+[model]
+provider = "openai"
+base_url = "https://api.openai.com/v1"
+name = "gpt-5.6-terra"
+api_key_secret = "model-key.openai"
+# You accept that your conversation, memory snippets in prompts, tool results and images are sent to OpenAI.
+allow_cloud = true
+max_tokens = 8192
+# OpenAI's reasoning models only accept their default sampling settings, so none are set.
+
+# Recommended: the safety checker (Sentinel) stays on a LOCAL model, so its reviews never leave this machine.
+# Point base_url at your local server (llama.cpp's default is shown). To send safety checks to OpenAI as
+# well, delete base_url and name below and add allow_cloud = true instead.
+[sentinel]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+
+# OpenAI's current models accept images; set to true and Jig checks it with a real image at start-up.
+[vision]
+enabled = false
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[server]
+port = 8766

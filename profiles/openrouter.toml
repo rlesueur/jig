@@ -1,0 +1,52 @@
+# Cloud: OpenRouter (one key, many models). Jig is built for local models; with this profile the agent's
+# requests go to OpenRouter and the upstream provider it routes to. Read "Using a cloud model" in README.md first.
+#
+# Set up (each step is explicit; Jig refuses to start until all three are done):
+#   1. jig --config profiles/openrouter.toml model key set openrouter   paste the key; stored in the vault
+#   2. jig --config profiles/openrouter.toml model cloud confirm        shows what is sent; recorded in the audit log
+#   3. jig --config profiles/openrouter.toml serve
+# Get a key at https://openrouter.ai/settings/keys
+#
+# Checked against OpenRouter's documentation (October 2026):
+# - https://openrouter.ai/docs/api_reference/overview: OpenAI-shaped requests at /api/v1; max_tokens; tools.
+# - https://openrouter.ai/docs/guides/features/tool-calling: pick a model listed at
+#   https://openrouter.ai/models?supported_parameters=tools
+# - https://openrouter.ai/docs/guides/routing/provider-selection: by default, providers that don't support a
+#   parameter "will ignore unknown parameters". require_parameters = true below stops that: a request is only
+#   routed to providers that support everything Jig sends (tools and structured output), or it fails clearly.
+# - https://openrouter.ai/docs/guides/best-practices/reasoning-tokens: reasoning arrives as "reasoning" and
+#   "reasoning_details"; Jig shows the first and passes the second back unmodified, as asked.
+
+[model]
+provider = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+name = "anthropic/claude-sonnet-5.5"
+api_key_secret = "model-key.openrouter"
+# You accept that your conversation, memory snippets in prompts, tool results and images are sent to
+# OpenRouter and the provider it routes to.
+allow_cloud = true
+max_tokens = 8192
+
+# Sent with every request (OpenRouter's provider routing preferences).
+[model.sampling.provider]
+require_parameters = true
+# Only providers that don't collect your data. Add zdr = true for zero-data-retention endpoints only.
+data_collection = "deny"
+
+# Recommended: the safety checker (Sentinel) stays on a LOCAL model, so its reviews never leave this machine.
+# Point base_url at your local server (llama.cpp's default is shown). To send safety checks to OpenRouter as
+# well, delete base_url and name below and add allow_cloud = true instead.
+[sentinel]
+base_url = "http://127.0.0.1:8080/v1"
+name = ""
+
+# Set to true with a vision-capable model; Jig checks it with a real image at start-up.
+[vision]
+enabled = false
+
+[paths]
+data_dir = "../data"
+sandbox_dir = "../sandbox"
+
+[server]
+port = 8766

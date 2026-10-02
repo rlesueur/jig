@@ -1,8 +1,8 @@
 """Configuration loaded from a TOML file with a small set of environment overrides.
 
 Jig is model-agnostic: the endpoint, model name and sampling parameters all
-come from config. Example profiles for common local servers live in
-``profiles/``.
+come from config. Example profiles for common local servers, and for the
+supported cloud providers, live in ``profiles/``.
 """
 
 from __future__ import annotations
@@ -12,10 +12,14 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from .endpoints import PROVIDERS, RESERVED_REQUEST_KEYS, Location, Provider, classify, origin
 from .errors import ConfigError
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "jig.toml"
+# Vault secrets holding model API keys. Tools can never use them (core rule secret-allowlist).
+MODEL_KEY_PREFIX = "model-key."
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,20 @@ class EndpointConfig:
     name: str = ""
     # Name of an environment variable holding the API key, if the server needs one.
     api_key_env: str = ""
+    # Or the name of a vault secret holding it ('jig model key set <name>' stores "model-key.<name>").
+    api_key_secret: str = ""
+    # A known cloud provider ("openai", "openrouter", "anthropic", "gemini"; see jig.endpoints), so Jig
+    # handles its documented differences. Empty for local servers and other OpenAI-compatible endpoints.
+    provider: str = ""
+    # Required (with a one-time confirmation, 'jig model cloud confirm') before Jig sends anything to a
+    # cloud endpoint. Never inherited: the Sentinel needs its own.
+    allow_cloud: bool = False
+    # "json_schema" (response_format) or "tool_call" (a forced tool call). Empty: the provider's default.
+    structured_output: str = ""
+    # A PEM file of certificate authorities to trust for this endpoint (a server with its own certificate).
+    ca_file: str = ""
+    # Extra HTTP headers sent with every request (for example anthropic-workspace-id). Not for the API key.
+    headers: dict[str, str] = field(default_factory=dict)
     connect_timeout_s: float = 5.0
     read_timeout_s: float = 600.0
     max_tokens: int = 8192
@@ -35,12 +53,27 @@ class EndpointConfig:
 
     @property
     def api_key(self) -> str | None:
+        """The key from ``api_key_env``. A vault key (``api_key_secret``) is resolved by ``jig.cloud``."""
         if not self.api_key_env:
             return None
         value = os.environ.get(self.api_key_env)
         if not value:
             raise ConfigError(f"environment variable {self.api_key_env} (api_key_env) is not set")
         return value
+
+    @property
+    def provider_info(self) -> Provider | None:
+        return PROVIDERS.get(self.provider) if self.provider else None
+
+    @property
+    def structured_output_mode(self) -> str:
+        if self.structured_output:
+            return self.structured_output
+        return self.provider_info.structured_output if self.provider_info else "json_schema"
+
+    @property
+    def location(self) -> Location:
+        return classify(self.base_url)
 
 
 @dataclass(frozen=True)
@@ -211,15 +244,27 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         model_raw["name"] = v
     if "base_url" not in model_raw:
         raise ConfigError("[model] base_url is required")
-    model = _build(EndpointConfig, model_raw, "model")
+    model = _check_endpoint(_build(EndpointConfig, model_raw, "model"), "model", base)
+    if model_launch.command and model.location.is_cloud:
+        raise ConfigError(f"[model.launch] starts a local model server, but [model] base_url ({model.base_url}) is a "
+                          "cloud endpoint; remove [model.launch] or point base_url at the local server")
 
     # The Sentinel inherits every unset key from [model], so by default it uses the same
-    # endpoint and model, but it can point at a different (for example smaller) model.
+    # endpoint and model, but it can point at a different (for example smaller, local) model.
     sentinel_raw = dict(_section(raw, "sentinel"))
     inherited = {k: getattr(model, k) for k in EndpointConfig.__dataclass_fields__}
-    if "base_url" in sentinel_raw and "name" not in sentinel_raw:
-        inherited["name"] = ""  # a different server: discover its model rather than assuming the same name
-    sentinel = _build(EndpointConfig, {**inherited, **sentinel_raw}, "sentinel")
+    inherited["allow_cloud"] = False  # consent to a cloud endpoint is per role, never inherited
+    if "base_url" in sentinel_raw:
+        if "name" not in sentinel_raw:
+            inherited["name"] = ""  # a different server: discover its model rather than assuming the same name
+        if _same_origin(sentinel_raw["base_url"], model.base_url) is False:
+            # A different server never gets the agent's API key, headers or provider-specific settings.
+            defaults = EndpointConfig(base_url="")
+            for key in ("api_key_env", "api_key_secret", "provider", "structured_output", "ca_file", "headers"):
+                inherited[key] = getattr(defaults, key)
+            if model.provider or model.location.is_cloud:
+                inherited["sampling"] = {}
+    sentinel = _check_endpoint(_build(EndpointConfig, {**inherited, **sentinel_raw}, "sentinel"), "sentinel", base)
 
     tools_raw = _section(raw, "tools")
     web_fetch = _build(WebFetchConfig, tools_raw.get("web_fetch", {}), "tools.web_fetch")
@@ -256,6 +301,64 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         remote=_remote_config(_section(raw, "remote"), deployment),
         deployment=deployment,
     )
+
+
+def _same_origin(a: str, b: str) -> bool | None:
+    try:
+        return origin(a) == origin(b)
+    except ValueError:
+        return None  # reported by _check_endpoint
+
+
+def _check_endpoint(ep: EndpointConfig, section: str, base: Path) -> EndpointConfig:
+    """Validate one endpoint. Cloud endpoints must use HTTPS; provider differences are checked, never guessed."""
+    parts = urlsplit(ep.base_url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ConfigError(f"[{section}] base_url must be an http:// or https:// URL, not {ep.base_url!r}")
+    loc = classify(ep.base_url)
+    if loc.is_cloud and parts.scheme != "https":
+        raise ConfigError(f"[{section}] base_url {ep.base_url} is a cloud endpoint ({loc.host}, a {loc.reason}), so "
+                          "it must use https://. Jig never sends your conversation over the internet unencrypted.")
+    provider = PROVIDERS.get(ep.provider) if ep.provider else None
+    if ep.provider and provider is None:
+        raise ConfigError(f"[{section}] provider must be one of {sorted(PROVIDERS)} (or left out), not {ep.provider!r}")
+    if provider and loc.host != provider.host:
+        raise ConfigError(f"[{section}] provider = {ep.provider!r} is {provider.label}'s API at {provider.host}, but "
+                          f"base_url points at {loc.host}; use base_url = \"{provider.base_url}\" or leave provider out")
+    if ep.api_key_env and ep.api_key_secret:
+        raise ConfigError(f"[{section}] set api_key_env or api_key_secret, not both")
+    if ep.api_key_secret and not ep.api_key_secret.startswith(MODEL_KEY_PREFIX):
+        raise ConfigError(f"[{section}] api_key_secret must name a model key, \"{MODEL_KEY_PREFIX}<name>\" (stored with "
+                          f"'jig model key set <name>'), not {ep.api_key_secret!r}")
+    if ep.structured_output not in ("", "json_schema", "tool_call"):
+        raise ConfigError(f"[{section}] structured_output must be 'json_schema' or 'tool_call', not "
+                          f"{ep.structured_output!r}")
+    if reserved := sorted(RESERVED_REQUEST_KEYS & set(ep.sampling)):
+        raise ConfigError(f"[{section}.sampling] must not set {reserved}: Jig sets these itself (the output limit is "
+                          f"[{section}] max_tokens)")
+    if provider and provider.sampling_keys is not None:
+        if unsupported := sorted(set(ep.sampling) - provider.sampling_keys):
+            raise ConfigError(
+                f"[{section}.sampling] {unsupported} are not supported by {provider.label}'s OpenAI-compatible API, "
+                "which ignores unsupported settings without saying so; Jig refuses rather than send settings that "
+                f"would do nothing. Supported: {sorted(provider.sampling_keys)}. See {provider.docs}")
+    if provider and provider.temperature_max is not None:
+        temperature = ep.sampling.get("temperature")
+        if isinstance(temperature, (int, float)) and temperature > provider.temperature_max:
+            raise ConfigError(f"[{section}.sampling] temperature = {temperature} is above {provider.label}'s maximum "
+                              f"of {provider.temperature_max}, which it would silently cap; set it to "
+                              f"{provider.temperature_max} or less")
+    if any(h.lower() in ("authorization", "x-api-key", "api-key") for h in ep.headers):
+        raise ConfigError(f"[{section}.headers] must not carry the API key; use api_key_secret (the vault) or "
+                          "api_key_env")
+    ca_file = ep.ca_file
+    if ca_file:
+        path = Path(ca_file)
+        path = (path if path.is_absolute() else base / path).resolve()
+        if not path.is_file():
+            raise ConfigError(f"[{section}] ca_file {path} does not exist")
+        ca_file = str(path)
+    return replace(ep, ca_file=ca_file)
 
 
 def _remote_config(values: dict[str, Any], deployment: str) -> RemoteConfig:
