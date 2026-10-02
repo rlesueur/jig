@@ -11,7 +11,8 @@ from typing import Any
 
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
-from .agent.prompts import CONTEXT_KEY, agent_system_prompt, chosen_memories, for_model, shown_memories, turn_context
+from .agent.prompts import (CONTEXT_KEY, agent_system_prompt, chosen_memories, for_model, kept_apart,
+                            shown_memories, turn_context)
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -183,7 +184,8 @@ class Jig:
                                      context_factory=self._tool_context, always_redact=self.redactions,
                                      config=config)
         self.agent = Agent(model=self.model, registry=self.registry, executor=self.executor, store=self.store,
-                           bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps)
+                           bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps,
+                           context_tokens=self.context_tokens)
         self.planner = Planner(model=self.model, registry=self.registry, store=self.store, bus=self.bus,
                                audit=self.audit)
         self.scheduler = Scheduler(self, max_concurrent=config.runtime.max_concurrent_tasks,
@@ -209,9 +211,10 @@ class Jig:
         return agent_system_prompt(mode, self.config.runtime.timezone, can_run_code=self.container is not None)
 
     def _turn_context(self, message: str, shown: dict[int, str] | None = None) -> str:
-        """The time and the memories for this message (less those already ``shown``), for the end of the
-        prompt."""
-        return turn_context(self.config.runtime.timezone, chosen_memories(self.memory, shown=shown))
+        """The time, the memories for this message (less those already ``shown``) and the step budget, for
+        the end of the prompt."""
+        return turn_context(self.config.runtime.timezone, chosen_memories(self.memory, shown=shown),
+                            max_steps=self.agent.max_steps)
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -622,10 +625,11 @@ class Jig:
         extra = {"history_trimmed": left_out} if left_out else {}
 
         def saved() -> list[dict[str, Any]]:
-            """The whole conversation, with this turn as the user wrote it; what Jig added for the model is kept
-            apart (``CONTEXT_KEY``) to be replayed with it."""
-            return [*history, {**messages[turn_start], "content": message, CONTEXT_KEY: context},
-                    *messages[turn_start + 1:]]
+            """The whole conversation, with this turn as the user wrote it and the tool results as the tools gave
+            them; what Jig added for the model is kept apart (``CONTEXT_KEY``) to be replayed with them."""
+            turn = [{**m, "content": message, CONTEXT_KEY: context} if i == 0 else kept_apart(m)
+                    for i, m in enumerate(messages[turn_start:])]
+            return [*history, *turn]
 
         run_id = self.store.create_run(kind="chat", mode=mode, session_id=session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()

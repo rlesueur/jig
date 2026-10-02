@@ -16,7 +16,7 @@ from ..pause import RunPaused, until_paused
 from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
-from .prompts import STEP_LIMIT_PROMPT
+from .prompts import STEP_LIMIT_PROMPT, budget_line
 
 DeltaSink = Callable[[str, str], Awaitable[None]]
 
@@ -73,7 +73,8 @@ def _pending_tool_calls(messages: list[dict[str, Any]]) -> list[ToolCall]:
 
 class Agent:
     def __init__(self, *, model: ModelClient, registry: ToolRegistry, executor: ToolExecutor, store: Store,
-                 bus: EventBus, audit: AuditLog, max_steps: int):
+                 bus: EventBus, audit: AuditLog, max_steps: int,
+                 context_tokens: Callable[[], int | None] | None = None):
         self.model = model
         self.registry = registry
         self.executor = executor
@@ -81,6 +82,8 @@ class Agent:
         self.bus = bus
         self.audit = audit
         self.max_steps = max_steps
+        # The model's context window, for the budget line (None when unknown).
+        self.context_tokens = context_tokens or (lambda: model.server_info.get("context_tokens"))
 
     async def run(self, messages: list[dict[str, Any]], spec: RunSpec, *, max_steps: int | None = None) -> RunResult:
         limit = max_steps or self.max_steps
@@ -98,6 +101,7 @@ class Agent:
         try:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
+                self._add_budget(messages, steps, limit, None)
                 self.store.checkpoint_run(run_id, messages, steps)
             while True:
                 if steps >= limit:
@@ -117,6 +121,7 @@ class Agent:
                     final = result.content
                     break
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
+                self._add_budget(messages, steps, limit, result)
                 self.store.checkpoint_run(run_id, messages, steps)
         except RunPaused as exc:
             # The run record stays 'running' with its checkpoint, so resuming the task picks it up.
@@ -150,6 +155,18 @@ class Agent:
             self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
         return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages,
                          limit_reached=limit_reached)
+
+    def _add_budget(self, messages: list[dict[str, Any]], step: int, limit: int, result: Any) -> None:
+        """End the step's last tool result with the budget line (kept, so the prompt stays a stable prefix)."""
+        if not messages or messages[-1]["role"] != "tool":
+            return
+        used = None
+        if result is not None:
+            usage, timings = result.usage or {}, result.timings or {}
+            prompt = usage.get("prompt_tokens") or (timings.get("prompt_n", 0) + timings.get("cache_n", 0))
+            used = (prompt + (usage.get("completion_tokens") or timings.get("predicted_n", 0))) or None
+        messages[-1]["content"] += budget_line(step=step, max_steps=limit, context_used=used,
+                                               context_size=self.context_tokens())
 
     async def _finish_at_limit(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, steps: int,
                                limit: int) -> str:

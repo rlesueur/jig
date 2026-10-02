@@ -80,6 +80,7 @@ async def test_a_turn_at_the_step_limit_says_what_it_did_and_can_be_continued(ji
     assert kept[0]["content"] == ask, "saved as the user wrote it, with Jig's context kept apart"
     assert "<jig-context>" in kept[0][CONTEXT_KEY]
     assert any(m["role"] == "tool" for m in kept), "what Jig did before it stopped is kept"
+    assert not any("[Jig budget]" in m["content"] for m in kept if m["role"] == "tool")
     assert not any("step limit" in m["content"] and m["role"] == "user" for m in kept), \
         "the step-limit instruction is not kept as if the user had said it"
     assert kept[-1] == {"role": "assistant", "content": done["final"]}
@@ -125,6 +126,21 @@ async def test_the_prompt_starts_the_same_every_turn_and_ends_with_what_changes(
     assert user["content"].rstrip().endswith("</jig-context>") and "It is now" in user["content"]
     assert "Biscuit" in user["content"]
     assert "Biscuit" in items[-1]["final"]
+
+
+async def test_each_step_ends_with_a_budget_line(jig):
+    (jig.sandbox.root / "hello.txt").write_text("Hello there", encoding="utf-8")
+    items = [item async for item in jig.chat("Use list_files on the workspace root, then tell me the file names.")]
+    run = jig.store.get_run(items[-1]["run_id"])
+    tools = [m for m in run["messages"] if m["role"] == "tool"]
+    assert tools and "[Jig budget]" in tools[-1]["content"]
+    assert f"of {jig.agent.max_steps} model calls left" in tools[-1]["content"]
+    if jig.model.server_info.get("context_tokens"):
+        assert "tokens used" in tools[-1]["content"]
+    saved = jig.store.get_session(items[-1]["session_id"])
+    assert all("[Jig budget]" not in m["content"] for m in saved if m["role"] == "tool")
+    assert "[Jig budget]" in [m for m in saved if m["role"] == "tool"][-1][CONTEXT_KEY]
+    assert "hello.txt" in items[-1]["final"]
 
 
 async def test_a_conversation_reaches_the_model_only_ever_growing_at_the_end(jig):
