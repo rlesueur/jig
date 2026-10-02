@@ -159,6 +159,180 @@
    "closed": true,
    "closed_reason": "paused: user active (last input 3s ago)",
    "closed_at": "2026-10-02T07:44:45+00:00"
+  },
+  {
+   "captured_at": "2026-10-02T08:30:14+00:00",
+   "jigbench_version": "0.1.0",
+   "git": {
+    "commit": "0dbd1899bfef6ddd72361fbdc6ebfdd7473ff820",
+    "jig_core_dirty": false,
+    "research_dirty": false,
+    "jig_core_diff_sha256": null,
+    "jig_core_dirty_files": []
+   },
+   "hardware": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "cpu": "AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD",
+    "cpu_cores_logical": 32,
+    "ram_gib": 61.6,
+    "gpus": [
+     {
+      "name": "NVIDIA GeForce RTX 5090",
+      "memory_mib": 32607,
+      "driver": "610.62"
+     }
+    ],
+    "python": "3.13.5"
+   },
+   "endpoints": {
+    "bonsai": {
+     "base_url": "http://127.0.0.1:8080/v1",
+     "model_id": "bonsai-2-27b",
+     "meta": {
+      "vocab_type": true,
+      "n_vocab": 248320,
+      "n_ctx": 65536,
+      "n_ctx_train": 262144,
+      "n_embd": 5120,
+      "n_params": 26895998464,
+      "size": 5935527936,
+      "ftype": "PTQ1_0 - 1.75 bpw ternary (group 128)"
+     },
+     "model_path": "C:\Users\you\\models\\llama-cpp-gguf\\Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+     "model_ftype": "PTQ1_0 - 1.75 bpw ternary (group 128)",
+     "build_info": "b10709-9a9394a89",
+     "n_ctx": 65536,
+     "total_slots": 4,
+     "default_sampling": {
+      "temperature": 1.0,
+      "top_p": 0.949999988079071,
+      "top_k": 20,
+      "min_p": 0.05000000074505806,
+      "seed": 4294967295
+     }
+    },
+    "gemma26b": {
+     "base_url": "http://127.0.0.1:8094/v1",
+     "model_id": "gemma-4-26b-a4b",
+     "meta": {
+      "vocab_type": true,
+      "n_vocab": 262144,
+      "n_ctx": 16384,
+      "n_ctx_train": 262144,
+      "n_embd": 2816,
+      "n_params": 25233142046,
+      "size": 16931716216,
+      "ftype": "Q4_K - Medium"
+     },
+     "model_path": "C:\Users\you\\models\\jig-research\\gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+     "model_ftype": "Q4_K - Medium",
+     "build_info": "b10709-9a9394a89",
+     "n_ctx": 16384,
+     "total_slots": 1,
+     "default_sampling": {
+      "temperature": 1.0,
+      "top_p": 0.949999988079071,
+      "top_k": 64,
+      "min_p": 0.05000000074505806,
+      "seed": 4294967295
+     },
+     "server": {
+      "spec": {
+       "model": "gemma-4-26b-a4b",
+       "port": 8094,
+       "ctx": 16384,
+       "gpu_layers": 99,
+       "n_cpu_moe": 99,
+       "parallel": 1,
+       "build": null,
+       "extra": [],
+       "vram_needed_mib": null
+      },
+      "exe": "C:\Users\you\\tools\\llama-prism-b10709\\llama-server.exe",
+      "build": "prism",
+      "model_path": "C:\Users\you\\models\\jig-research\\gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+      "base_url": "http://127.0.0.1:8094/v1",
+      "log": "C:\Users\you\\Jig\\research\\logs\\servers\\gemma-4-26b-a4b-8094.log"
+     }
+    }
+   },
+   "config": {
+    "name": "c1-full-v1",
+    "experiment": "c1",
+    "questions_per_type": {
+     "knowledge-update": 5,
+     "temporal-reasoning": 5,
+     "multi-session": 5,
+     "single-session-user": 5,
+     "single-session-assistant": 5,
+     "single-session-preference": 5
+    },
+    "question_seed": 0,
+    "max_sessions": 10,
+    "consolidate_every": 3,
+    "context_budget_tokens": 12000,
+    "strategies": [
+     "full_context",
+     "retrieval",
+     "hybrid_keep",
+     "hybrid_forget"
+    ],
+    "summary_word_limit": 400,
+    "seeds": [
+     0
+    ],
+    "approval_policy": "approve_all",
+    "max_steps": 12,
+    "task_timeout_s": 900,
+    "sampling": {
+     "temperature": 1.0,
+     "top_p": 0.95,
+     "top_k": 20,
+     "min_p": 0.05
+    },
+    "endpoints": {
+     "bonsai": {
+      "base_url": "http://127.0.0.1:8080/v1"
+     },
+     "gemma26b": {
+      "server": {
+       "model": "gemma-4-26b-a4b",
+       "port": 8094,
+       "ctx": 16384,
+       "parallel": 1,
+       "n_cpu_moe": 99
+      }
+     }
+    },
+    "agent": {
+     "endpoint": "bonsai",
+     "name": "bonsai-2-27b"
+    },
+    "judge": {
+     "endpoint": "gemma26b",
+     "name": "gemma-4-26b-a4b",
+     "max_tokens": 4096
+    },
+    "conditions": [
+     {
+      "id": "bonsai27b-ternary",
+      "reviewer": "model",
+      "sentinel": {
+       "endpoint": "bonsai",
+       "name": "bonsai-2-27b"
+      }
+     }
+    ]
+   },
+   "research_dir": "C:\Users\you\\Jig\\research",
+   "config_path": "C:\Users\you\\Jig\\research\\harness\\configs\\full\\c1_full.yaml",
+   "services": {
+    "services": "none",
+    "routes": {}
+   },
+   "closed": true,
+   "closed_reason": "paused: user active (last input 0s ago)",
+   "closed_at": "2026-10-02T08:37:27+00:00"
   }
  ],
  "name": "c1-full-v1",

@@ -2,9 +2,16 @@
 \label{sec:limits}
 
 \begin{itemize}
-\item \textbf{Interim safety run.} D1 has one seed and four of five configurations; the Q4\_K\_M Qwen
-  reviewer could not start within the VRAM budget beside the owner's server. Intervals are reported and
-  hypothesis tests are deferred to the complete multi-seed run.
+\item \textbf{Interim safety run.} The reported D1 results have one seed and four configurations.
+  Intervals are reported and hypothesis tests are deferred to the complete multi-seed run
+  (\texttt{d1-full-v2}), which is in progress, as is the low-memory run.
+\item \textbf{No dedicated reviewer model.} The planned Sentinel on a separate, larger model (Qwen3.8 27B
+  Q4\_K\_M) was dropped (protocol v0.5) as out of scope for the default local deployment. The effect of
+  giving the reviewer a stronger model than the agent is therefore not measured. Granite Guardian 4.1 8B
+  is the only reviewer that differs from the agent.
+\item \textbf{One seed and one GPU for the low-memory run.} \texttt{d1-full-v2-lowmem} starts with seed 0
+  only. Its peak VRAM is measured on an RTX 5090 under Windows, sampled every 2\,s, so short spikes can be
+  missed. Memory use on other GPUs, drivers or operating systems may differ.
 \item \textbf{Subsample and floor.} D1 uses the first five user tasks and first three injection tasks of
   each AgentDojo suite in registry order, not a random sample, and attack success without any defence was
   near zero, so the run cannot discriminate between reviewers on security.

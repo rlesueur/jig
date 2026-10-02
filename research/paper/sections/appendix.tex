@@ -2,6 +2,12 @@
 \label{app:versions}
 
 \begin{description}
+\item[0.4 (2 October 2026)] Protocol v0.5. The dedicated Qwen reviewer is dropped before any trial ran: a
+  separate reviewer model is out of scope for the default local deployment, in which Jig's Sentinel uses the
+  agent's own model. A low-memory configuration is added (\texttt{d1-full-v2-lowmem}): granite 4.2 8B
+  Q4\_K\_M as both agent and Sentinel, with read-only and no-reviewer counterparts, on seed 0. Peak VRAM is
+  recorded per trial and reported per configuration. Both D1 v2 runs are in progress and take turns in the
+  queue; this version's results do not depend on them.
 \item[0.3 (2 October 2026)] Protocol v0.4. D1 is widened to whole suites, three seeds and Jig's default
   sampling, which is now sent explicitly. The earlier run is relabelled: its configured temperature 0 was
   never sent for the agent. The Qwen reviewer's context is sized from measured review lengths. Jig fix

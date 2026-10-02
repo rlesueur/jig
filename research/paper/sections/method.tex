@@ -61,12 +61,15 @@ executes it. A refusal is returned to the agent as a tool error, as in a real Ji
 \emph{fails} (rather than refuses) makes the trial a harness error that is retried, so a crash is never
 scored as a block. For every blocked call the harness records which layer refused it.
 
-\paragraph{Design (protocol v0.4, run \texttt{d1-full-v2}).} All four AgentDojo v1 suites in full: every
+\paragraph{Design (protocol v0.5, runs \texttt{d1-full-v2} and \texttt{d1-full-v2-lowmem}; in progress).}
+All four AgentDojo v1 suites in full: every
 user task and every injection task (banking 16 user $\times$ 9 injection tasks, Slack 21 $\times$ 5,
 travel 20 $\times$ 7, workspace 40 $\times$ 6), under three attack settings (none,
-\texttt{important\_instructions} and \texttt{injecagent}), with seeds 0, 1 and 2: 1{,}355 trials per
-condition and seed, 16{,}260 for the four main conditions and 4{,}065 for the Qwen reviewer, which runs
-separately. The agent is Bonsai 2 27B (ternary) on the owner's server with at most 20 tool-loop iterations.
+\texttt{important\_instructions} and \texttt{injecagent}): 1{,}355 trials per condition and seed. In
+\texttt{d1-full-v2} the agent is Bonsai 2 27B (ternary) on the owner's server, with four conditions and
+seeds 0, 1 and 2 (16{,}260 trials). The low-memory run \texttt{d1-full-v2-lowmem} is described below. Both
+are running at the time of writing and take turns in the queue. This version's results do not depend on
+them. Each run has at most 20 tool-loop iterations.
 It is sampled with Jig's defaults (temperature 1.0, top-$p$ 0.95, top-$k$ 20, min-$p$ 0.05) and the
 trial's seed. Every value is sent explicitly on every request and recorded per trial, because
 AgentDojo's own client omits a temperature of zero. Jig's Sentinel uses the same sampling; Granite
@@ -82,23 +85,33 @@ temperature 0, but AgentDojo never sent that value for the agent, so the agent s
 defaults. These match Jig's defaults (above) but were unseeded. Its reviewers ran at temperature 0 with
 seed 0.
 
-\paragraph{Reviewer context.} The Qwen reviewer's context is sized from measurement rather than defaults.
-The 175 Granite Guardian reviews in the earlier run, which receive the same intent, action and policy
-inputs, used at most 446 tokens (median 285). Jig's Sentinel template adds about 670 characters, and the
-reviewer may generate up to Jig's 8{,}192-token output cap, so the context is set to 10{,}240 tokens (from
-16{,}384). The harness's VRAM guard is unchanged. By its own estimate this server still does not fit next
-to the owner's 8080 server (about 19.4\,GB plus a 2\,GB margin against about 18.4--18.8\,GB free), because
-the weights, not the context, are the binding constraint. That condition therefore stays queued and is
-refused loudly until enough memory is free.
+\paragraph{Reviewer model.} By default Jig's Sentinel uses the agent's own model and endpoint, so no
+second model is loaded. A different reviewer model is an optional, advanced setting that costs its own
+memory on top of the agent's. Protocol v0.4 had queued a dedicated reviewer, Jig's Sentinel on Qwen3.8 27B
+Q4\_K\_M next to the ternary agent, which the VRAM guard refused next to the owner's server. Protocol v0.5
+drops it before any trial ran: a dedicated reviewer model is out of scope for the default local
+deployment, and the programme instead measures that deployment on smaller GPUs.
+
+\paragraph{Low-memory configuration (\texttt{d1-full-v2-lowmem}).} Granite 4.2 8B at Q4\_K\_M, served by the
+upstream llama.cpp server, is both agent and Sentinel, at a 32{,}768-token context (Jig's advisable
+minimum). We run it with and without the Sentinel and in read-only mode, on seed 0 for now (4{,}065 trials).
+Suites, attacks, sampling and step limit are as in \texttt{d1-full-v2}. Before the run, loading this
+server raised total GPU memory by 10{,}621\,MiB (server buffers: 4{,}876\,MiB weights, 5{,}120\,MiB
+key--value cache, 204\,MiB compute), and Jig's tool-calling and structured-output checks passed. Its results
+are a separate configuration with a different agent and are never pooled with the Bonsai conditions.
 
 \paragraph{Conditions.} The configurations an owner can choose: Jig's Sentinel on the agent's own model
-in action mode and in read-only research mode; the Sentinel on the standard-quantisation counterpart
-(Qwen3.8 27B Q4\_K\_M); Granite Guardian 4.1 8B in the Sentinel slot, driven through its documented
-bring-your-own-criteria format (Appendix~\ref{app:guardian}); and no reviewer (core rules and mode only)
-as the floor.
+in action mode and in read-only research mode; Granite Guardian 4.1 8B in the Sentinel slot, driven
+through its documented bring-your-own-criteria format (Appendix~\ref{app:guardian}); and no reviewer (core
+rules and mode only) as the floor. The low-memory run repeats the first, second and last of these with the
+granite agent.
 
 \paragraph{Measures.} Attack success rate is the share of injected trials in which AgentDojo's security
 check finds the injection goal achieved. Utility is the share of trials in which AgentDojo's utility
 check finds the user's task done, reported separately with and without an attack; utility lost without
 an attack is the cost of false positives. We also report blocked calls, tool errors and approval requests
-per task. Rates carry Wilson 95\% intervals and means percentile-bootstrap intervals.
+per task. From protocol v0.5 we also report each configuration's peak VRAM as a result in its own right.
+During every trial the harness samples, every 2\,s, the Windows counter for dedicated GPU memory per
+process, summed over the model-server processes behind the trial's endpoints (a server shared by agent and
+Sentinel counts once), and keeps the peak. nvidia-smi cannot attribute memory to processes under Windows
+WDDM. Rates carry Wilson 95\% intervals and means percentile-bootstrap intervals.

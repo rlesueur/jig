@@ -2,10 +2,12 @@
 \label{sec:results-d1}
 
 These results come from the earlier run \texttt{d1-full-v1}. It used a subsample with one seed and
-\emph{preceded} Jig's bare-URL fix, so these results are reported separately from the protocol v0.4 run
-and never pooled with it. Four of the five planned configurations have finished all 140 of their trials (560 of 700); the fifth,
-the Sentinel on the Q4\_K\_M Qwen counterpart, could not start because that model needs about
-21.7\,GB with the safety margin beside the owner's server and 18.2\,GB was free, so it remains queued.
+\emph{preceded} Jig's bare-URL fix, so these results are reported separately from the protocol v0.5 runs
+(\texttt{d1-full-v2} and \texttt{d1-full-v2-lowmem}, in progress) and never pooled with them. Four of the
+five configurations planned for this run finished all 140 of their trials (560 of 700). The fifth, the
+Sentinel on the Q4\_K\_M Qwen counterpart, could not start: that model needs about 21.7\,GB with the
+safety margin beside the owner's server, and 18.2\,GB was free. It was dropped in protocol v0.5
+(Section~\ref{sec:safety}).
 No finished trial is a harness error (14 errors in the first attempt, caused by a pipeline-naming fault,
 were retried; see the deviations log). Table~\ref{tab:d1-d1-full-v1} gives every cell. The run has one seed
 and is incomplete, so we report intervals and defer hypothesis tests to the complete multi-seed run, as

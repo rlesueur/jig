@@ -41,7 +41,8 @@ separate reviewer model (the \emph{Sentinel}), an approval queue and a memory st
 Bonsai~2~27B, a ternary (1.75 bits per weight) post-training quantisation of Qwen3.8-27B, served by
 llama.cpp on a single RTX~5090 shared with the owner's other work.
 
-\paragraph{Status.} This is version 0.3 of a living paper. Its numbers come from an interim safety run
-and a memory \pilot{}, both clearly marked, with Wilson 95\% intervals; they are not conclusive. The
-protocol v0.4 runs (whole AgentDojo suites with three seeds, and the full memory run) are queued in
-overnight compute windows and will be reported separately as they finish.
+\paragraph{Status.} This is version 0.4 of a living paper. Its numbers come from an interim safety run
+and a memory \pilot{}, both clearly marked, with Wilson 95\% intervals; they are not conclusive. The full
+memory run and the protocol v0.5 safety runs are in progress in overnight compute windows: whole AgentDojo
+suites with three seeds, and a low-memory configuration in which one 8B model is both agent and Sentinel.
+They will be reported separately as they finish.

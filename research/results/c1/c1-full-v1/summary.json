@@ -2,7 +2,7 @@
  "experiment": "c1",
  "name": "c1-full-v1",
  "pilot": false,
- "planned": 150,
+ "planned": 120,
  "trials": 11,
  "errors": 3,
  "errors_retried": 0,
@@ -51,6 +51,10 @@
      12.32,
      26.540000000000003
     ]
+   },
+   "Peak VRAM MiB": {
+    "n": 0,
+    "max": null
    }
   },
   {
@@ -97,6 +101,10 @@
      553.4,
      714.08
     ]
+   },
+   "Peak VRAM MiB": {
+    "n": 0,
+    "max": null
    }
   },
   {
@@ -143,6 +151,10 @@
      607.38,
      712.5499999999998
     ]
+   },
+   "Peak VRAM MiB": {
+    "n": 0,
+    "max": null
    }
   },
   {
@@ -189,6 +201,10 @@
      12.660000000000002,
      26.16
     ]
+   },
+   "Peak VRAM MiB": {
+    "n": 0,
+    "max": null
    }
   }
  ]
