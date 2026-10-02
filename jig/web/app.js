@@ -724,6 +724,22 @@ const TOOL_DOING = {
   gmail_list_labels: 'looking at your email labels', gmail_create_draft: 'writing an email draft', gmail_send: 'sending an email',
   gmail_reply: 'replying to an email', gmail_modify_labels: 'labelling an email', gmail_archive: 'archiving an email',
   schedule_create: 'setting up a schedule', schedule_list: 'looking at its schedules',
+  gcal_list_calendars: 'looking at your calendars', gcal_list_events: 'checking your calendar', gcal_get_event: 'reading a calendar event',
+  gcal_create_event: 'adding a calendar event', gcal_update_event: 'changing a calendar event', gcal_cancel_event: 'cancelling a calendar event',
+  gdrive_search: 'searching your Google Drive', gdrive_read_file: 'reading a Drive file', gdrive_create_file: 'saving a file to Drive',
+  gdrive_update_file: 'changing a Drive file', outlook_list_calendars: 'looking at your Outlook calendars',
+  outlook_list_events: 'checking your Outlook calendar', outlook_get_event: 'reading an Outlook event',
+  outlook_create_event: 'adding an Outlook event', outlook_update_event: 'changing an Outlook event',
+  outlook_cancel_event: 'cancelling an Outlook event', onedrive_search: 'searching your OneDrive',
+  onedrive_list_folder: 'looking through your OneDrive', onedrive_read_file: 'reading a OneDrive file',
+  onedrive_upload_file: 'saving a file to OneDrive', github_list_repos: 'looking at your repositories',
+  github_list_issues: 'looking through issues', github_read_issue: 'reading an issue', github_read_file: 'reading a file on GitHub',
+  github_comment: 'commenting on GitHub', github_create_issue: 'opening a GitHub issue',
+  slack_list_channels: 'listing Slack channels', slack_read_channel: 'reading Slack', slack_post_message: 'posting in Slack',
+  slack_reply_in_thread: 'replying in Slack', discord_list_channels: 'listing Discord channels',
+  discord_read_channel: 'reading Discord', discord_post_message: 'posting in Discord', matrix_list_rooms: 'listing your Matrix rooms',
+  matrix_read_room: 'reading a Matrix room', matrix_send_message: 'posting to a Matrix room',
+  signal_send_message: 'sending a Signal message', signal_receive: 'checking for new Signal messages',
 };
 
 function setAgentPaused(paused) {
@@ -1060,10 +1076,10 @@ const QUESTION = {
   memory_forget: (x) => `Can I forget memory #${x.memory_id}?`,
   web_fetch: (x) => `Can I open a page on ${host(x.url)}?`,
   browser_open: (x) => `Can I open ${host(x.url)} in my browser?`,
-  browser_click: () => 'Can I click something on this web page?',
+  browser_click: (x, r) => checkoutQuestion(r) || 'Can I click something on this web page?',
   browser_type: () => 'Can I type into this web page?',
   browser_fill: () => 'Can I fill in a box on this web page?',
-  browser_submit: () => 'Can I submit this form?',
+  browser_submit: (x, r) => checkoutQuestion(r) || 'Can I submit this form?',
   browser_login: (x) => `Can I sign in as ${q(x.username)}?`,
   run_command: () => 'Can I run this command?',
   run_python: () => 'Can I run this Python code?',
@@ -1073,6 +1089,29 @@ const QUESTION = {
   gmail_modify_labels: () => 'Can I change the labels on this email?',
   gmail_archive: () => 'Can I archive this email?',
   schedule_create: (x) => `Can I set up a schedule called ${q(x.name)}?`,
+  gcal_create_event: (x) => `Can I add ${q(x.summary)} to your Google calendar?`,
+  gcal_update_event: (x, r) => `Can I change ${q(r.event_summary || 'this event')} in your Google calendar?`,
+  gcal_cancel_event: (x, r) => `Can I cancel ${q(r.event_summary || 'this event')} in your Google calendar?`,
+  gdrive_create_file: (x) => `Can I save ${q(x.name)} to your Google Drive?`,
+  gdrive_update_file: (x, r) => `Can I change ${q(r.file || 'this file')} in your Google Drive?`,
+  outlook_create_event: (x) => `Can I add ${q(x.subject)} to your Outlook calendar?`,
+  outlook_update_event: (x, r) => `Can I change ${q(r.event_summary || 'this event')} in your Outlook calendar?`,
+  outlook_cancel_event: (x, r) => `Can I cancel ${q(r.event_summary || 'this event')} in your Outlook calendar?`,
+  onedrive_upload_file: (x) => `Can I save ${q(x.name)} to your OneDrive?`,
+  github_comment: (x) => `Can I comment on #${x.number} in ${x.repo}?`,
+  github_create_issue: (x) => `Can I open an issue in ${x.repo}?`,
+  slack_post_message: (x, r) => `Can I post in Slack${r.channel ? ` in #${r.channel}` : ''}?`,
+  slack_reply_in_thread: (x, r) => `Can I reply in a Slack thread${r.channel ? ` in #${r.channel}` : ''}?`,
+  discord_post_message: (x, r) => `Can I post in Discord${r.channel ? ` in #${r.channel}` : ''}?`,
+  matrix_send_message: (x, r) => `Can I post in the Matrix room ${q(r.room || x.room_id)}?`,
+  signal_send_message: (x, r) => (r.note_to_self ? 'Can I send you a Signal message (Note to Self)?' : `Can I send a Signal message to ${x.recipient}?`),
+  signal_receive: () => 'Can I collect your new Signal messages?',
+};
+/* A checkout, payment or booking found on the page before the click or submit (never automatic). */
+const checkoutQuestion = (r) => {
+  if (!r || !r.checkout) return '';
+  const what = r.checkout === 'booking' ? 'make this booking' : 'pay';
+  return `Can I ${what} at ${r.merchant || r.site || 'this site'}${r.amount ? ` (${r.amount})` : ''}?`;
 };
 const joinList = (v) => (Array.isArray(v) ? v.join(', ') : String(v ?? ''));
 const ccText = (x) => (x.cc && x.cc.length ? `, copying ${joinList(x.cc)}` : '');
@@ -1084,10 +1123,10 @@ const WILL = {
   note_write: (x) => `Jig will save a private note titled ${q(x.title)}.`,
   web_fetch: (x) => `Jig will fetch ${x.url}${x.headers && Object.keys(x.headers).length ? ' with extra request headers (see Why am I asking?)' : ''}.`,
   browser_open: (x) => `Jig will open ${x.url} in its sandboxed browser.`,
-  browser_click: (x) => `Jig will click the element ${q(x.selector)} on the current page.`,
+  browser_click: (x, r) => checkoutWill(r) || `Jig will click the element ${q(x.selector)} on the current page.`,
   browser_type: (x) => `Jig will type ${q(x.text)} into ${q(x.selector)}${x.press_enter ? ' and then press Enter' : ''}.`,
   browser_fill: (x) => `Jig will fill ${q(x.selector)} with ${q(x.value)}.`,
-  browser_submit: (x) => `Jig will submit the form ${q(x.selector)} on the current page.`,
+  browser_submit: (x, r) => checkoutWill(r) || `Jig will submit the form ${q(x.selector)} on the current page.`,
   browser_login: (x) => `Jig will sign in on the current page as ${q(x.username)}.`,
   run_command: () => 'Jig will run this command in its sandbox:',
   run_python: () => 'Jig will run this Python code in its sandbox:',
@@ -1098,13 +1137,45 @@ const WILL = {
   gmail_archive: () => 'Jig will take the thread described below out of your inbox. Nothing is deleted.',
   schedule_create: (x) => `Jig will save the schedule ${q(x.name)}. At the times below it will do this by itself, `
     + `${x.mode === 'action' ? 'able to act (asking you when needed)' : 'just looking, without changing anything'}. You can pause or delete it at any time in Settings, Schedules.`,
+  gcal_create_event: (x) => `Jig will add ${q(x.summary)} from ${x.start} to ${x.end} to the calendar described below${guestsText(x)}.`,
+  gcal_update_event: () => 'Jig will change only the details under Why am I asking? on the event described below. Any guests are told.',
+  gcal_cancel_event: () => 'Jig will cancel the event described below. Any guests are told it is cancelled.',
+  gdrive_create_file: (x) => `Jig will save a new file ${q(x.name)} (${String(x.content ?? '').length.toLocaleString('en-GB')} characters) in the folder described below. Nobody else gets access.`,
+  gdrive_update_file: (x) => `Jig will replace the contents of the file described below with ${String(x.content ?? '').length.toLocaleString('en-GB')} characters.`,
+  outlook_create_event: (x) => `Jig will add ${q(x.subject)} from ${x.start} to ${x.end} to the Outlook calendar described below${guestsText(x)}.`,
+  outlook_update_event: () => 'Jig will change only the details under Why am I asking? on the event described below. Any guests are told.',
+  outlook_cancel_event: () => 'Jig will cancel the event described below. If you organised it, the guests are sent a cancellation.',
+  onedrive_upload_file: (x, r) => `Jig will save ${q(x.name)} (${String(x.content ?? '').length.toLocaleString('en-GB')} characters) in the OneDrive folder ${q(r.folder || x.folder || '/')}${r.replaces ? ', replacing the file that is there.' : '. Nothing is replaced.'}`,
+  github_comment: (x) => `Jig will post this comment on #${x.number} in ${x.repo}, as you:`,
+  github_create_issue: (x) => `Jig will open an issue titled ${q(x.title)} in ${x.repo}, as you:`,
+  slack_post_message: () => 'Jig will post this message as its Slack bot in the channel described below:',
+  slack_reply_in_thread: () => 'Jig will post this reply as its Slack bot in the thread described below:',
+  discord_post_message: () => 'Jig will post this message as its Discord bot in the channel described below. Nobody is pinged:',
+  matrix_send_message: () => 'Jig will post this message as you in the Matrix room described below:',
+  signal_send_message: (x, r) => `Jig will send this Signal message from your number to ${r.note_to_self ? 'you (Note to Self)' : x.recipient}:`,
+  signal_receive: () => 'Jig will collect the Signal messages waiting for its linked device. Your phone sees them as delivered, not read.',
+};
+const guestsText = (x) => (x.attendees && x.attendees.length ? `, and invite ${joinList(x.attendees)} (they get an email)` : ', with no guests');
+const checkoutWill = (r) => {
+  if (!r || !r.checkout) return '';
+  const what = r.checkout === 'booking' ? 'make a booking' : 'complete a payment';
+  return `This may ${what} at ${r.merchant || r.site || 'this site'}${r.amount ? ` for ${r.amount}` : ''}. Jig never types card or bank details, and you always decide this yourself.`;
 };
 /* The exact thing that will be written, sent or run, shown on the card itself. */
 const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'command', run_python: 'code',
-  gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body', schedule_create: 'prompt' };
+  gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body', schedule_create: 'prompt',
+  gcal_create_event: 'description', outlook_create_event: 'notes', gdrive_create_file: 'content', gdrive_update_file: 'content',
+  onedrive_upload_file: 'content', github_comment: 'body', github_create_issue: 'body', slack_post_message: 'text',
+  slack_reply_in_thread: 'text', discord_post_message: 'content', matrix_send_message: 'text', signal_send_message: 'text' };
 /* What a call refers to, looked up by Jig from your account (written by other people, so shown as text). */
 const RESOLVED_WORDS = { thread_subject: 'Subject', last_from: 'Last message from', last_date: 'Date',
-  messages_in_thread: 'Messages in the thread', labels: 'Labels', repeats: 'Repeats', next_runs: 'Next runs' };
+  messages_in_thread: 'Messages in the thread', labels: 'Labels', repeats: 'Repeats', next_runs: 'Next runs',
+  merchant: 'Shop or site', amount: 'Total', items: 'Items', button: 'Button',
+  calendar: 'Calendar', event_summary: 'Event', event_start: 'Starts', event_guests: 'Guests',
+  folder: 'Folder', file: 'File', replaces: 'Replaces a file',
+  repo: 'Repository', visibility: 'Visibility', issue_title: 'Issue', issue_state: 'State', issue_author: 'Opened by',
+  mentions_notified: 'People @mentioned', channel: 'Channel', server: 'Server', private: 'Private channel', members: 'Members',
+  thread_start: 'Thread starts', room: 'Room', encrypted: 'Encrypted', recipient: 'To', note_to_self: 'Note to Self' };
 const VERDICT_LABEL = { allow: 'Looks fine', ask_user: 'Ask you first', deny: 'Do not do this' };
 const RISK_MARK = { low: '\u25CF', medium: '\u25B2', high: '\u25A0' };
 
@@ -1123,8 +1194,9 @@ function approvalCard(a, where) {
   const pendingNow = a.status === 'pending';
   const risk = s ? s.risk : 'none';
   const idp = `ap-${a.id}-${where}`;
-  const question = (QUESTION[a.tool] || (() => `Can I use ${a.tool}?`))(a.args);
-  const willText = WILL[a.tool] ? WILL[a.tool](a.args) : `Jig will run ${a.tool} with exactly the details under Why am I asking?`;
+  const found = a.resolved || {};
+  const question = (QUESTION[a.tool] || (() => `Can I use ${a.tool}?`))(a.args, found);
+  const willText = WILL[a.tool] ? WILL[a.tool](a.args, found) : `Jig will run ${a.tool} with exactly the details under Why am I asking?`;
   const argList = el('dl', { class: 'args-list' }, Object.entries(a.args).flatMap(([k, v]) => [el('dt', { text: k }), el('dd', {}, argValue(v))]));
   const previewKey = PREVIEW[a.tool];
   const preview = previewKey && a.args[previewKey] !== undefined ? String(a.args[previewKey]) : null;
@@ -1608,6 +1680,23 @@ const CAN = {
   gmail_create_draft: 'Write Gmail drafts', gmail_send: 'Send emails', gmail_reply: 'Reply to emails',
   gmail_modify_labels: 'Change labels on emails', gmail_archive: 'Archive emails',
   schedule_create: 'Set up schedules', schedule_list: 'Look at its schedules',
+  gcal_list_calendars: 'See your Google calendars', gcal_list_events: 'Read your Google calendar', gcal_get_event: 'Read calendar events',
+  gcal_create_event: 'Add Google calendar events', gcal_update_event: 'Change Google calendar events',
+  gcal_cancel_event: 'Cancel Google calendar events', gdrive_search: 'Search your Google Drive',
+  gdrive_read_file: 'Read your Google Drive files', gdrive_create_file: 'Save files to your Google Drive',
+  gdrive_update_file: 'Change files it saved to Google Drive', outlook_list_calendars: 'See your Outlook calendars',
+  outlook_list_events: 'Read your Outlook calendar', outlook_get_event: 'Read Outlook events',
+  outlook_create_event: 'Add Outlook events', outlook_update_event: 'Change Outlook events', outlook_cancel_event: 'Cancel Outlook events',
+  onedrive_search: 'Search your OneDrive', onedrive_list_folder: 'Look through your OneDrive folders',
+  onedrive_read_file: 'Read your OneDrive files', onedrive_upload_file: 'Save files to your OneDrive',
+  github_list_repos: 'See your GitHub repositories', github_list_issues: 'List or search issues and pull requests',
+  github_read_issue: 'Read issues and pull requests', github_read_file: 'Read files on GitHub',
+  github_comment: 'Comment on GitHub', github_create_issue: 'Open GitHub issues',
+  slack_list_channels: 'List Slack channels', slack_read_channel: 'Read Slack channels', slack_post_message: 'Post in Slack',
+  slack_reply_in_thread: 'Reply in Slack threads', discord_list_channels: 'List Discord channels',
+  discord_read_channel: 'Read Discord channels', discord_post_message: 'Post in Discord',
+  matrix_list_rooms: 'List Matrix rooms', matrix_read_room: 'Read Matrix rooms', matrix_send_message: 'Post to Matrix rooms',
+  signal_send_message: 'Send Signal messages', signal_receive: 'Receive Signal messages',
 };
 const CHOICE_TEXT = { allow: 'On its own', ask: 'Ask me first', block: 'Never' };
 const CORE_WORDS = { block: 'Never allowed', ask: 'Always asks you' };
@@ -2157,6 +2246,17 @@ const SCOPE_WORDS = {
   'https://www.googleapis.com/auth/gmail.readonly': 'read your mail',
   'https://www.googleapis.com/auth/gmail.compose': 'draft and send mail (each send needs your OK)',
   'https://www.googleapis.com/auth/gmail.modify': 'read, send and label mail (never delete)',
+  'https://www.googleapis.com/auth/calendar.calendarlist.readonly': 'see your list of calendars',
+  'https://www.googleapis.com/auth/calendar.events.readonly': 'read calendar events',
+  'https://www.googleapis.com/auth/calendar.events': 'read, add, change and cancel events (each needs your OK)',
+  'https://www.googleapis.com/auth/drive.readonly': 'search and read your files',
+  'https://www.googleapis.com/auth/drive.file': 'save files, and change only files Jig saved',
+  'User.Read': 'know which Microsoft account this is',
+  offline_access: 'stay connected without signing in again',
+  'Calendars.Read': 'read your Outlook calendars',
+  'Calendars.ReadWrite': 'read, add, change and cancel Outlook events (each needs your OK)',
+  'Files.Read': 'read your OneDrive files',
+  'Files.ReadWrite': 'read and save OneDrive files (each save needs your OK)',
 };
 let connectionPoll = null;
 
@@ -2185,10 +2285,11 @@ function connectionItem(c) {
   if (c.status === 'needs_reconnect' && c.last_error) lines.push(c.last_error);
   if (c.attempt && c.attempt.status === 'waiting') lines.push('Waiting for you to finish signing in, in the tab that opened\u2026');
   if (c.attempt && c.attempt.status === 'failed') lines.push(`Connecting didn\u2019t work: ${c.attempt.error}`);
-  if (!c.client_configured) lines.push(`First, set up the ${FAMILY_NAMES[c.family] || c.family} app once (docs/connectors-setup.md), then run \u2018jig connect ${c.provider} --client-json <file>\u2019.`);
+  if (!c.client_configured) lines.push(`First, set up the ${FAMILY_NAMES[c.family] || c.family} app once (docs/connectors-setup.md), then run \u2018jig connect ${c.provider}\u2019 in a terminal.`);
+  if (c.kind === 'token' && !c.connected) lines.push(`Connect it in a terminal with \u2018jig connect ${c.provider}\u2019: it asks for the token there, so it never goes through a web page (docs/connectors-setup.md).`);
   const scopes = c.scopes.length ? el('ul', { class: 'confirm-list' }, c.scopes.map((s) => el('li', { text: SCOPE_WORDS[s] || s }))) : null;
   const actions = [];
-  if (c.client_configured && onHost()) {
+  if (c.kind === 'oauth' && c.client_configured && onHost()) {
     const select = el('select', { 'aria-label': `${c.label} access level`, 'data-testid': `connection-access-${c.provider}` },
       Object.entries(c.access_levels).map(([k, v]) => el('option', { value: k, selected: k === (c.access || c.default_access), text: `${k}: ${v.description}` })));
     actions.push(select, el('button', {
