@@ -7,7 +7,8 @@ session in date order (simulated clock), then the question is asked "on" its que
 
 Strategies (all on top of Jig's real model client, memory store and agent loop):
 * full_context    - the most recent sessions that fit `context_budget_tokens`, placed in the prompt.
-* rolling_summary - after each session the model rewrites a bounded summary; the answer sees only it.
+* rolling_summary - after each session the model rewrites a summary; the answer sees only it. An optional
+                    `summary_word_limit` adds "Keep it under N words." (protocol v0.4: none; see DEVIATIONS.md).
 * retrieval       - every turn is stored as a Jig memory; the Jig agent answers with `memory_search`.
 * hybrid_keep     - per session, a Jig research task extracts dated facts with `memory_add`; every
                     `consolidate_every` sessions an action task reviews the memory list and adds
@@ -190,6 +191,16 @@ async def chat_with_cutoff_diagnostic(model: ModelClient, messages: list[dict[st
             f"content tail {content[-400:]!r}") from exc
 
 
+def summary_messages(summary: str, date: str, k: int, n: int, part: str, word_limit: int | None) -> list[dict]:
+    length = f"Keep it under {int(word_limit)} words. " if word_limit else ""
+    return [
+        {"role": "system", "content": "You maintain a concise long-term memory summary about the user."},
+        {"role": "user", "content": f"Current summary:\n{summary}\n\nNew conversation on {date} (part {k} of {n}):\n"
+                                    f"{part}\n\nRewrite the summary to include every durable fact about the user, "
+                                    f"each with its date. Replace facts that have changed. {length}Reply with the "
+                                    "summary only."}]
+
+
 async def _answer_from_context(model: ModelClient, context: str, q: dict[str, Any]) -> Any:
     msgs = [{"role": "system", "content": ANSWER_SYSTEM},
             {"role": "user", "content": f"{context}\n\nThe current date is {q['question_date']}.\n"
@@ -230,13 +241,8 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
             for s in sessions:
                 parts = split_text(session_text(s), CHUNK_CHARS)
                 for k, part in enumerate(parts, start=1):
-                    r = await chat_with_cutoff_diagnostic(model, [
-                        {"role": "system", "content": "You maintain a concise long-term memory summary about the user."},
-                        {"role": "user", "content": f"Current summary:\n{summary}\n\nNew conversation on {s['date']} "
-                                                    f"(part {k} of {len(parts)}):\n{part}\n\nRewrite the summary to "
-                                                    "include every durable fact about the user, each with its date. "
-                                                    "Replace facts that have changed. Keep it under 400 words. Reply "
-                                                    "with the summary only."}])
+                    r = await chat_with_cutoff_diagnostic(model, summary_messages(
+                        summary, s["date"], k, len(parts), part, cfg.get("summary_word_limit")))
                     ingest_results.append(r)
                     summary = r.content.strip() or summary
             res = await _answer_from_context(model, f"Memory summary:\n{summary}", q)

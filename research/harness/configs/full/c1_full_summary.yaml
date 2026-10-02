@@ -1,9 +1,8 @@
-# C1 full v1: 5 questions per type (30 questions), 10 sessions each, 1 seed.
-# rolling_summary was removed from this run on 2026-10-02: with "Keep it under 400 words." every trial was
-# cut off while the model counted words (5 errored records, 3 questions, stay in trials.jsonl as that
-# finding). It runs
-# without the limit in c1_full_summary.yaml (run c1-full-v1-summary-nolimit); see DEVIATIONS.md.
-name: c1-full-v1
+# C1 full v1, rolling_summary only, WITHOUT a word limit in the summary prompt (protocol v0.4).
+# Identical to c1_full.yaml in every other respect (same 30 questions, sessions, model, sampling, judge).
+# The earlier rolling_summary trials with "Keep it under 400 words." are in run c1-full-v1 and are reported
+# separately as a finding; see DEVIATIONS.md.
+name: c1-full-v1-summary-nolimit
 experiment: c1
 questions_per_type: {knowledge-update: 5, temporal-reasoning: 5, multi-session: 5, single-session-user: 5,
                      single-session-assistant: 5, single-session-preference: 5}
@@ -11,8 +10,8 @@ question_seed: 0
 max_sessions: 10
 consolidate_every: 3
 context_budget_tokens: 12000
-strategies: [full_context, retrieval, hybrid_keep, hybrid_forget]
-summary_word_limit: 400   # what the 5 cut-off rolling_summary trials ran with
+strategies: [rolling_summary]
+summary_word_limit: null
 seeds: [0]
 approval_policy: approve_all
 max_steps: 12

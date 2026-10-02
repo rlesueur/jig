@@ -8,6 +8,7 @@ max_sessions: 4
 consolidate_every: 2
 context_budget_tokens: 12000
 strategies: [full_context, rolling_summary, retrieval, hybrid_keep, hybrid_forget]
+summary_word_limit: 400   # the prompt this pilot ran with
 seeds: [0]
 approval_policy: approve_all
 max_steps: 12
