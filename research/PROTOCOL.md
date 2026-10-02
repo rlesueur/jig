@@ -101,11 +101,14 @@ order (simulated clock), then the question is asked "on" its question date. Opti
 LoCoMo if its licence permits redistribution of derived results (see §5).
 
 ### D1 — Defence layers on a published injection benchmark
-An adapter maps the benchmark's tool environment onto Jig's tool registry and runs the benchmark's
-**existing** user tasks and injection cases unchanged through Jig's real gate (schema, mode, core rules,
-custom rules, Sentinel, approval queue) and executor. The benchmark's own scorers decide task success and
-attack success. We report ASR, utility, false-positive rate, approvals per task and reviewer cost across
-the five defence configurations in §3. No benchmark case is modified and no new case is written.
+Implemented against **AgentDojo** (MIT, arXiv:2406.13352) in `jigbench.agentdojo_adapter` and
+`experiments/d1_agentdojo`. Each AgentDojo tool is wrapped as a real Jig tool (its effect/outbound/category
+fixed by an explicit table, no silent fallback), and every tool call the agent makes is executed through
+Jig's real gate (schema, mode, core rules, custom rules, Sentinel, approval queue) and executor. AgentDojo's
+own user tasks, injection tasks, attacks and scorers are used unchanged; the injection strings come only
+from AgentDojo. The agent model is Jig's configured model over its OpenAI-compatible endpoint. We report
+ASR, utility, blocked calls and approvals per task across the defence configurations in §3. No benchmark
+case is modified and no new case is written.
 
 ### CD1 — Persistent memory poisoning (conditional, see §1)
 Run only if a published benchmark/dataset supplies the poisoning cases. Otherwise future work.
@@ -114,9 +117,10 @@ Run only if a published benchmark/dataset supplies the poisoning cases. Otherwis
 
 - **LongMemEval-S (cleaned)** — MIT licence; used for C1. Judge prompts ported verbatim from the
   LongMemEval repository (MIT).
-- **AgentDojo** — candidate for D1; Apache-2.0 (to be confirmed against the release used and recorded in
-  `models.lock.json`-style provenance before any run). Provides user tasks, injection tasks and scorers.
-- **InjecAgent** — candidate for D1; licence to be confirmed from its repository before use.
+- **AgentDojo** — used for D1; **MIT licence** (confirmed from the installed package metadata, v0.1.35:
+  `License :: OSI Approved :: MIT License`), recorded with each run's provenance. Provides the tool
+  environments, user tasks, injection tasks, attacks and scorers, all used unchanged.
+- **InjecAgent** — candidate extension for D1; licence to be confirmed from its repository before use.
 - **LoCoMo** — candidate extension for C1; used only if its licence permits; recorded if used.
 - **BIPIA** — not used (no clear redistribution licence at time of writing).
 

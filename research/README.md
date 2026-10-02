@@ -29,10 +29,11 @@ and real local services.
 ```powershell
 cd research
 py -3.11 -m venv .venv
-.\.venv\Scripts\python -m pip install -e ..[dev] -e harness huggingface_hub matplotlib pyyaml psutil scipy
+.\.venv\Scripts\python -m pip install -e ..[dev] -e harness huggingface_hub matplotlib pyyaml psutil scipy agentdojo
 .\.venv\Scripts\python models\fetch_models.py --only granite42-8b      # verified download
 .\.venv\Scripts\python -m pytest harness                                # harness tests
-.\.venv\Scripts\python -m jigbench run harness\configs\pilot\c1_pilot.yaml --policy pilot
+.\.venv\Scripts\python -m jigbench run harness\configs\pilot\c1_pilot.yaml --policy pilot   # memory (C1)
+.\.venv\Scripts\python -m jigbench run harness\configs\pilot\d1_pilot.yaml --policy pilot   # safety (D1, AgentDojo)
 .\.venv\Scripts\python -m jigbench report                               # tables + figures
 ```
 
@@ -58,6 +59,19 @@ restarted only through the safe, reversible GPU handover described below.
 `scripts\register-overnight-task.ps1` registers the per-user task `\Jig\Jig Research Overnight`
 (no admin rights). It wakes every 30 minutes and exits at once unless the compute policy allows a run.
 Logs: `research\logs\`. To stop it: `scripts\register-overnight-task.ps1 -Disable`.
+
+## Safety (D1): AgentDojo, run through Jig's defences
+
+D1 runs the published **AgentDojo** benchmark (MIT, arXiv:2406.13352) unchanged against Jig's real defences.
+Each AgentDojo tool is wrapped as a real Jig tool (`jigbench.agentdojo_adapter`), with its effect, outbound
+flag and category fixed by an explicit table (an unclassified tool raises rather than guessing). Every tool
+call the agent makes is executed through Jig's gate — mode (action vs read-only), core and custom rules, the
+Sentinel reviewer and the approval queue — so a block becomes a tool error fed back to the model, exactly as
+in a real Jig run. AgentDojo's own user tasks, injection tasks, attacks and scorers are used unchanged; **no
+attack content is authored here.** The configurations compared (Sentinel model and quantisation, read-only
+mode, Granite Guardian, no reviewer) are in `harness\configs\full\d1_full.yaml`. We report attack success
+rate, task utility, blocked calls and approvals. The model-free integration tests
+(`tests\test_agentdojo_adapter.py`) drive Jig's gate over real AgentDojo environments without a GPU.
 
 ## Safe GPU handover and the restore watchdog
 
