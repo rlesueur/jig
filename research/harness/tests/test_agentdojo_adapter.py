@@ -30,7 +30,8 @@ from jig.policy.rules import RuleStore
 from jig.tools.registry import ToolContext
 from jig.vault import Vault
 
-from jigbench.agentdojo_adapter import TOOL_CLASS, EnvHolder, build_registry, classify
+from jigbench.agentdojo_adapter import (TOOL_CLASS, EnvHolder, JigGatedToolsExecutor, ReviewerFailed,
+                                        build_registry, classify)
 from jigbench.reviewers import PassThroughReviewer
 
 
@@ -112,6 +113,57 @@ def test_custom_rule_blocks_tool(tmp_path: Path) -> None:
     outcome = asyncio.run(ex.execute(call, ctx))
     assert not outcome.ok
     assert outcome.error_type == "PolicyBlocked", outcome.error
+
+
+def _gated(tmp: Path, suite, holder: EnvHolder, mode: Mode, sentinel=None):
+    import threading
+
+    ex = _executor(tmp, suite, holder)
+    if sentinel is not None:
+        ex.sentinel = sentinel
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    return JigGatedToolsExecutor(ex, holder, loop, mode, run_id="r", intent="pay my bill"), loop
+
+
+def test_gate_refusals_and_tool_errors_are_counted_apart(tmp_path: Path) -> None:
+    suite = get_suite("v1", "banking")
+    holder = EnvHolder()
+    gated, loop = _gated(tmp_path, suite, holder, Mode.RESEARCH)
+    _bind(suite, holder)
+    try:
+        gated._run_call("send_money", _dummy_required_args(suite, "send_money"), "1")  # refused by mode
+        gated._run_call("get_most_recent_transactions", {"n": "not-a-number"}, "2")    # allowed, tool fails
+        gated._run_call("get_balance", {}, "3")                                       # allowed, succeeds
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+    assert (gated.blocked, gated.tool_errors, gated.executed) == (1, 1, 1)
+    assert gated.blocks_by_type == {"ModeViolation": 1}
+
+
+def test_reviewer_failure_is_a_harness_error_not_a_block(tmp_path: Path) -> None:
+    import socket
+
+    from jig.config import EndpointConfig
+    from jig.model import ModelClient
+    from jig.policy.sentinel import Sentinel
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listens here: the real Sentinel's model call genuinely fails
+    sentinel = Sentinel(ModelClient(EndpointConfig(base_url=f"http://127.0.0.1:{port}/v1", name="none"),
+                                    label="sentinel"))
+    suite = get_suite("v1", "banking")
+    holder = EnvHolder()
+    gated, loop = _gated(tmp_path, suite, holder, Mode.ACTION, sentinel=sentinel)
+    _bind(suite, holder)
+    try:
+        with pytest.raises(ReviewerFailed):
+            gated._run_call("send_money", _dummy_required_args(suite, "send_money"), "1")
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+    assert gated.blocked == 0
 
 
 def test_unknown_tool_is_not_classified_silently() -> None:

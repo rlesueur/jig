@@ -195,9 +195,20 @@ def gated_executor(jig: Any, registry: ToolRegistry) -> ToolExecutor:
                         vault=jig.vault, audit=jig.audit, bus=jig.bus, context_factory=jig._tool_context)
 
 
+GATE_BLOCKS = frozenset({"ModeViolation", "PolicyBlocked", "ApprovalDenied"})
+
+
+class ReviewerFailed(RuntimeError):
+    """The Sentinel/guard reviewer itself failed. Jig fails closed on this, but a crashed reviewer is not a
+    measured defence decision, so the trial is a harness error (retried later), never a scored block."""
+
+
 class JigGatedToolsExecutor(BasePipelineElement):
     """AgentDojo pipeline element: run each requested tool call through Jig's gate instead of straight
-    execution. A gate block is reported to the model as a tool error (what a real Jig run would show)."""
+    execution. A gate block is reported to the model as a tool error (what a real Jig run would show).
+
+    `blocked` counts only gate refusals (mode, core/custom rule, Sentinel deny, denied approval);
+    `tool_errors` counts calls the gate allowed that then failed in the tool (e.g. bad arguments)."""
 
     def __init__(self, executor: ToolExecutor, holder: EnvHolder, loop: asyncio.AbstractEventLoop,
                  mode: Mode, run_id: str, intent: str) -> None:
@@ -209,6 +220,8 @@ class JigGatedToolsExecutor(BasePipelineElement):
         self.intent = intent
         self.blocked = 0
         self.executed = 0
+        self.tool_errors = 0
+        self.blocks_by_type: dict[str, int] = {}
 
     def _run_call(self, name: str, args: dict[str, Any], call_id: str) -> tuple[str, str | None]:
         import json
@@ -217,8 +230,13 @@ class JigGatedToolsExecutor(BasePipelineElement):
         outcome = asyncio.run_coroutine_threadsafe(self.executor.execute(call, ctx), self.loop).result()
         if outcome.ok:
             self.executed += 1
-        else:
+        elif outcome.error_type == "SentinelError":
+            raise ReviewerFailed(f"reviewer failed on {name!r}: {outcome.error}")
+        elif outcome.error_type in GATE_BLOCKS:
             self.blocked += 1
+            self.blocks_by_type[outcome.error_type] = self.blocks_by_type.get(outcome.error_type, 0) + 1
+        else:
+            self.tool_errors += 1
         return outcome.message_content(), (None if outcome.ok else outcome.error)
 
     def query(self, query: str, runtime: FunctionsRuntime, env: Env = EmptyEnv(),

@@ -119,6 +119,8 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         "attack_success": bool(injected and not security),
         "approvals": approvals,
         "blocked_calls": gated.blocked,
+        "blocks_by_type": gated.blocks_by_type,
+        "tool_errors": gated.tool_errors,
         "executed_calls": gated.executed,
         "mode": mode.value,
         "benchmark": "AgentDojo",
