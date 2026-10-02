@@ -250,7 +250,7 @@ The API token is generated on first start into the data volume (`/var/lib/jig/da
 
 ```sh
 docker compose exec jig jig token show      # print it; paste it into the UI's sign-in dialog
-docker compose exec jig jig token rotate    # replace it; signs out every browser session
+docker compose exec jig jig token rotate    # replace it; signs out every browser and revokes every paired device
 ```
 
 `jig ui` (the one-time sign-in link) builds the link from `--url`, so run it with the address Jig sees inside the container. Pasting the token is simpler in container mode. Programs send `Authorization: Bearer <token>`.
@@ -263,6 +263,41 @@ Every service has `restart: unless-stopped`. Jig comes back after a crash, a fai
 - **Linux:** enable the Docker service with `sudo systemctl enable --now docker`. Containers then start at boot.
 
 Jig's host autostart (Task Scheduler, launchd or systemd) is **not** used in container mode. The image sets `JIG_DEPLOYMENT=container` and `deploy/jig.toml` sets `deployment = "container"`, so Jig knows it runs in a container without guessing. Inside it, `jig autostart enable` refuses with "Autostart is not applicable in container mode", `GET /autostart` returns `"applicable": false` with the reason, and the Status card shows "Docker keeps Jig running (restart: unless-stopped). Make sure Docker Desktop starts when you log in." instead of the toggle. Do not turn on the host autostart for the same data, and do not run a host Jig on the same host port.
+
+**Turning it off.** Use Docker, not Jig. `POST /power/stop` and `jig stop` refuse in container mode with this guidance, because the restart policy would start Jig again straight away:
+
+```sh
+docker compose stop jig        # Jig only; it stays stopped until you start it (also across reboots)
+docker compose stop            # Jig, the sandboxes and any model profile you started (frees the GPU)
+docker compose start           # start again
+```
+
+## Use Jig from your other devices (Tailscale)
+
+The README's [Use Jig from your other devices](../README.md#use-jig-from-your-other-devices) explains pairing, revoking and the security design. In container mode, Jig cannot run `tailscale` or change the host's Tailscale settings, so `jig remote enable` and `disable` refuse and `GET /remote` returns `"applicable": false`. Set it up on the host instead:
+
+1. Install Tailscale on the **host** and sign in, then turn on MagicDNS and HTTPS Certificates in the admin console.
+2. Point `tailscale serve` at the port compose publishes, which is bound to `127.0.0.1` only:
+
+   ```sh
+   tailscale serve --bg --https=443 http://127.0.0.1:8766
+   tailscale serve status                     # check; never use 'tailscale funnel' for this port
+   ```
+
+3. Tell Jig its tailnet name, which must end in `.ts.net`. Either set `JIG_REMOTE_HOSTNAME=machine.tailnet.ts.net` in `.env`, or set it in `deploy/jig.toml`:
+
+   ```toml
+   [remote]
+   hostname = "machine.tailnet.ts.net"
+   ```
+
+   Then run `docker compose up -d` again. Jig only accepts this setting in container mode, and logs at start-up that it accepts requests for that name.
+
+4. Pair each device from a browser **on the host** (`http://127.0.0.1:8766`, Settings > Add a device), or with `POST /devices/pairing`. Requests for the tailnet name can't create pairing codes.
+
+**What is different from a host install.** Requests reach the container through Docker's port forwarding, so Jig cannot prove a request came from tailscaled, and it cannot trust the `Tailscale-User-Login` header. In container mode it therefore ignores Tailscale identity headers, so `[remote] allowed_logins` does not apply. A **paired device session is the only way in** over the tailnet name. Everything else is the same: the bearer token and token sign-in are refused for that name, cookies are `Secure`, `Origin` must be exactly `https://<hostname>`, and requests marked as funnelled are refused. Revoke devices in Settings, or rotate the token with `docker compose exec jig jig token rotate` to revoke them all. To turn remote access off, run `tailscale serve --https=443 off` on the host and remove the hostname setting.
+
+A Tailscale sidecar container (the `tailscale/tailscale` image sharing Jig's network namespace, with its own auth key and serve config) also works in principle, but it is **not tested** with this compose file. The host `tailscale serve` above is the supported route.
 
 ## Updating
 

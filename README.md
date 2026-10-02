@@ -112,6 +112,8 @@ How to serve a vision model:
 | `jig/autostart/` | Opt-in start at logon: Windows Task Scheduler (tested), launchd and systemd (untested), the launcher, CLI and API |
 | `jig/instance.py`, `jig/lifecycle.py` | Single-instance lock per data directory, `jig stop`, graceful shutdown on logoff, rotating log files |
 | `jig/model_server.py` | Optional `[model.launch]` supervision and the bounded readiness wait |
+| `jig/power.py`, `jig/procinfo.py` | Turning Jig (and the model server it launched) off; what that frees on the GPU; re-adopting a server left running |
+| `jig/remote.py`, `jig/devices.py` | Use Jig from your other devices: `tailscale serve`, the funnel guard, proving a request came through tailscaled, and paired device sessions |
 
 ## Running it
 
@@ -261,9 +263,24 @@ If the configured endpoint is **already in use** when Jig starts (for example a 
 - it answers HTTP 503 (llama.cpp while it loads): Jig launches nothing and waits for it, within `readiness_timeout_s`;
 - anything else holds the port: Jig refuses to start and says so, because a second server could not bind the port.
 
-A server that Jig launched itself is stopped when Jig stops. If it exits on its own, Jig restarts it up to `max_restarts` times in a row (a run of 10 minutes or more resets the count), and audits each event (`model_server.exited`, `model_server.restarted`, `model_server.gave_up`).
+A server that Jig launched itself is stopped when Jig stops (Ctrl+C, logoff, `jig stop --model`); plain `jig stop` leaves it running, as described in **Turning Jig off** below. If it exits on its own, Jig restarts it up to `max_restarts` times in a row (a run of 10 minutes or more resets the count), and audits each event (`model_server.exited`, `model_server.restarted`, `model_server.gave_up`).
 
 In container mode (`deployment = "container"` or `JIG_DEPLOYMENT=container`, both set by the image and `deploy/jig.toml`), autostart does not apply: `jig autostart enable` refuses, `GET /autostart` returns `"applicable": false`, and the Status card explains that Docker keeps Jig running.
+
+**Turning Jig off.** Because Jig may start at logon, you can turn it off at any time, from Settings in the web UI, the API or the command line. There are two choices:
+
+| Choice | CLI | API | What stops |
+| --- | --- | --- | --- |
+| Turn Jig off | `jig stop` | `POST /power/stop` `{"scope": "jig", "confirm": true}` | Jig. A model server that Jig launched keeps running, and the next Jig start takes it back under supervision. |
+| Turn Jig and the model off (frees the GPU) | `jig stop --model` | `POST /power/stop` `{"scope": "jig_and_model", "confirm": true}` | Jig and the model server, **only if Jig launched and supervises it** |
+
+- **Graceful.** Running tasks are checkpointed and put back in the queue, exactly as on `jig stop` before, and nothing is left `running`. The API replies first (HTTP 202), then shuts down. Every request is audited (`power.stop`, with who asked, how and from where), and so is what happened to the model server (`model_server.left_running` or `model_server.stopped`).
+- **Never someone else's process.** Jig stops a model server only if it launched it. It records that server (pid, process start time and command line) in `<data_dir>/model-server.json`, and a later Jig adopts it again only if the same process, matched on pid *and* start time, still serves the endpoint (`model_server.adopted`). If the server was started any other way (by hand, or as a service such as Ollama), `jig_and_model` is refused (HTTP 409) with an explanation and how to stop it yourself.
+- **The confirmation is explicit.** `confirm` must be exactly `true`; anything else is refused (HTTP 400).
+- **Autostart stays on.** Stopping does not unregister autostart, and the reply says so: if 'Start with Windows' is on, Jig starts again at your next logon. Turn that off in Settings or with `jig autostart disable` to keep it off. Without autostart, start Jig again with `jig serve`.
+- **Container mode.** The API and `jig stop` refuse, because compose's restart policy (`unless-stopped`) would bring Jig straight back. Use `docker compose stop jig` (or `docker compose stop`) on the host instead, and `docker compose start` to start it again.
+
+`GET /power` says whether Jig manages the model server, whether stopping it would free GPU memory and how Jig starts again. On NVIDIA GPUs it asks `nvidia-smi` for the memory that process holds. On Windows with WDDM drivers, `nvidia-smi` lists the process but does not report per-process memory, so `vram_mib` is `null` with a note, and the GPU totals are given instead. To stop or restart just the model server while Jig keeps running, use `jig model stop` (or `POST /model/stop` `{"confirm": true}`) and `jig model start` (`POST /model/start`). `jig model status` (`GET /model`) reports its state. All three apply only to a server Jig launched.
 
 **Robustness.**
 
@@ -279,6 +296,42 @@ In container mode (`deployment = "container"` or `JIG_DEPLOYMENT=container`, bot
 - Turn it off with `jig autostart disable` (or the Status card). It removes the task and its now-empty `\Jig` folder, the plist or the unit. If Jig is still running, stop it with `jig stop`.
 
 **Boot before logon (not implemented).** On Windows, starting at boot would need a task that runs "whether the user is logged on or not", with your password stored in Task Scheduler and admin rights to register it. It would run without your interactive logon session. DPAPI can still work for a stored-credential (password) logon, but not for the S4U "do not store password" type, and it is easy to get wrong. A Windows service in session 0 would not have your profile at all. Jig therefore starts at logon only. On Linux, `loginctl enable-linger $USER` starts your user manager, and so Jig, at boot. Note that a desktop keyring is usually still locked until you log in, so vault access fails until then.
+
+## Use Jig from your other devices
+
+You can use the Jig on your computer from your phone, tablet or laptop, at home or away, through [Tailscale](https://tailscale.com). Jig itself keeps listening on `127.0.0.1` only. `tailscale serve` gives it an HTTPS address with a real certificate, `https://<machine>.<tailnet>.ts.net`, that only devices on **your tailnet** can reach, and forwards those requests to `http://127.0.0.1:8766`.
+
+**Setting it up.** Jig never installs Tailscale or signs in for you. `jig remote status` (or the Settings page) checks `tailscale version` and `tailscale status --json` and lists exactly what is still missing:
+
+1. Install Tailscale on this computer (Windows: [tailscale.com/download/windows](https://tailscale.com/download/windows) or `winget install Tailscale.Tailscale`) and sign in.
+2. In the [admin console's DNS page](https://login.tailscale.com/admin/dns), turn on MagicDNS and HTTPS Certificates.
+3. Install Tailscale on your other devices and sign in with the same account.
+4. Turn on remote access: Settings > Use Jig from your other devices, or:
+
+```powershell
+.\.venv\Scripts\jig remote status      # Tailscale installed? signed in? the URL, problems and next steps
+.\.venv\Scripts\jig remote enable      # shows what it exposes and to whom, asks y/N (--yes for scripts)
+.\.venv\Scripts\jig remote disable     # removes Jig's tailscale serve entry
+```
+
+`enable` runs `tailscale serve --bg --https=443 http://127.0.0.1:<port>`, checks that Tailscale now shows that entry, and records the tailnet name, the origin and the login that turned it on in `<data_dir>/remote.json` (audited `remote.enabled`). It changes nothing else in your Tailscale settings. If port 443 on your tailnet name already serves something else, it refuses rather than replacing it. `disable` removes only Jig's entry (`tailscale serve --https=443 off`) and is audited too. The API equivalents are `GET /remote`, `POST /remote/enable` and `POST /remote/disable`, each with `{"confirm": true}`. Enabling works only from the host itself.
+
+**After a restart.** Tailscale's documentation says that `tailscale serve --bg` entries persist until you turn them off, across restarts of tailscaled and of the computer. This has **not yet been verified on this machine**, because Tailscale is not installed here. Jig does not depend on it: every start compares `remote.json` with `tailscale serve status --json`. If remote access is on but Jig's entry has gone, it puts it back (`remote.restored`). If something else now uses that address, it leaves it alone, logs an error and reports it under `problems` in `GET /remote` (`remote.restore_failed`).
+
+**Pairing a device.** Your other devices never get the master API token. On the host, Settings > Add a device shows a one-time **pairing code**: 8 characters, valid for 5 minutes, usable once. It also shows a QR code of the pairing URL `https://<machine>.<tailnet>.ts.net/#pair=<code>`, generated locally with no online service. On the new device, scan or open the link, check the code and name the device. It then gets its own **device session**: a random 256-bit secret in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Jig keeps only a SHA-256 hash of it. Each device has a name, created and last-used times and an optional expiry (`expires_in_days`, 1 to 365). After five wrong codes in a row, every outstanding code is cancelled. API: `POST /devices/pairing` (host only), `POST /auth/pair` `{code, name}` (on the new device), `GET /devices`, `DELETE /devices/{id}`.
+
+**Revoking.** Revoke a lost or old device in Settings (`DELETE /devices/{id}`), and its cookie stops working at once. Signing out on a device unpairs it. Rotating the master token (`jig token rotate`, or `POST /auth/token/rotate` with `{"confirm": true}` on the host) revokes **every** device and signs out every browser, because each device session is bound to the current token.
+
+**Security notes: what is exposed, and to whom.**
+
+- **Exposed:** the same web UI and API as on `127.0.0.1`, at one HTTPS address on your tailnet. Nothing else on the computer is exposed, and Jig still binds to `127.0.0.1` only.
+- **To whom:** Tailscale lets only devices on your tailnet connect (subject to your tailnet's access rules). Jig then also requires all of the following:
+  1. **The connection really comes from tailscaled.** The request must arrive on a TCP connection from `127.0.0.1` that belongs to the running Tailscale service. On Windows, Jig looks up the connection's owning process (`GetExtendedTcpTable`) and compares it with the Tailscale service's pid. Any local program could send `Host: <machine>.ts.net` and fake `Tailscale-User-Login` headers, so those headers mean nothing unless this check passes. On a normal local connection Jig removes them before any route sees them. Uvicorn's proxy-header handling is off, so `X-Forwarded-For` can never replace the real peer. On Linux the check compares socket owners (UNTESTED); other systems are refused.
+  2. **An allowed Tailscale user.** tailscaled deletes any `Tailscale-User-*` header the client sent and adds the real tailnet user. Jig accepts only the login that turned remote access on, or the exact logins in `[remote] allowed_logins`, with no wildcards. Tagged devices, which have no user, are refused. A device paired over the tailnet is also bound to the login that paired it.
+  3. **A paired device session.** Over the tailnet, the master token (`Authorization: Bearer`) and browser sign-in with the token or a login code are refused. Only a device session works. Adding devices, turning remote access on and rotating the token all have to be done on the host.
+- **Origins.** Cookie-authenticated requests that change something, and every WebSocket handshake, must send exactly `Origin: https://<machine>.<tailnet>.ts.net`, the value recorded when remote access was turned on, or the local origin for local requests. There are no wildcards: `http://` and lookalike or other `.ts.net` names are refused, and any `.ts.net` name other than the recorded one is refused outright.
+- **Never Tailscale Funnel.** Funnel would put Jig on the public internet. Jig refuses to start if `tailscale serve status --json` shows a funnel to its port. `jig remote enable` refuses as well, and every request that tailscaled marks as funnelled (`Tailscale-Funnel-Request`) is rejected. Do not run `tailscale funnel` for Jig's port.
+- **In container mode**, see [docs/container.md](docs/container.md#use-jig-from-your-other-devices-tailscale): Jig cannot see which process owns a connection, so the tailnet name is configured explicitly and a paired device session is what grants access.
 
 ## Container sandbox and headless browser
 
@@ -374,7 +427,7 @@ Each tool category maps to a variant: web to `browsing`, files to `writing`, tim
 | Area | Endpoints |
 | --- | --- |
 | Health | `GET /health` (public, `{"status": "ok"}` only), `GET /status`, `GET /state`, `GET /tools` |
-| Auth | `POST /auth/login-code`, `GET/POST /auth/session`, `POST /auth/logout` |
+| Auth | `POST /auth/login-code`, `GET/POST /auth/session`, `POST /auth/logout`, `POST /auth/pair` `{code, name}` (public, a pairing code is the credential), `POST /auth/token/rotate` `{confirm: true}` (host only; revokes every device) |
 | Agent | `GET /agent`, `POST /agent/pause`, `POST /agent/resume` |
 | Events | `WS /events`, `GET /events/sse`, `GET /events/recent?after=` |
 | Chat | `POST /chat` (NDJSON stream: `start`, `reasoning`, `content`, `event`, `done` / `error`), `GET /sessions/{id}` |
@@ -387,15 +440,20 @@ Each tool category maps to a variant: web to `browsing`, files to `writing`, tim
 | Audit | `GET /audit?kind=&task_id=&run_id=&after_id=&before_id=&newest_first=&limit=` |
 | Vault | `GET /vault` (names only), `PUT /vault/{name}`, `DELETE /vault/{name}` |
 | Autostart | `GET /autostart`, `POST /autostart/enable` `{confirm: true, start_now}`, `POST /autostart/disable` |
+| Power | `GET /power`, `POST /power/stop` `{scope: "jig" \| "jig_and_model", confirm: true}` (202, then a graceful shutdown) |
+| Model server | `GET /model`, `POST /model/stop` `{confirm: true}`, `POST /model/start` (only a server Jig launched) |
+| Remote access | `GET /remote`, `POST /remote/enable` `{confirm: true}` (host only), `POST /remote/disable` `{confirm: true}` |
+| Devices | `GET /devices`, `POST /devices/pairing` `{expires_in_days}` (host only; code, link and QR code), `DELETE /devices/{id}` |
 
 ### Access and the API token
 
 The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI's static files needs authentication, including `/events`, `/events/sse` and `/approvals`.
 
-- **The token.** On first start Jig generates a random 256-bit token and saves it as `<data_dir>/api-token`. On Windows the file's ACL is cut down to your own account (inheritance removed) and then read back and checked; on other systems it is mode `0600`. If the permissions cannot be set or are looser than that, Jig refuses to start. `jig token show` prints it and `jig token rotate` replaces it; a rotation takes effect at once and signs out every browser session.
+- **The token.** On first start Jig generates a random 256-bit token and saves it as `<data_dir>/api-token`. On Windows the file's ACL is cut down to your own account (inheritance removed) and then read back and checked; on other systems it is mode `0600`. If the permissions cannot be set or are looser than that, Jig refuses to start. `jig token show` prints it and `jig token rotate` replaces it; a rotation takes effect at once, signs out every browser session and revokes every paired device.
 - **Programs** send `Authorization: Bearer <token>`, on the WebSocket handshake too. `jig chat`, `jig ui` and the scripts in `scripts/` read the token file themselves.
 - **The browser** never holds the token. `jig ui` asks the API for a one-time login code (valid for 2 minutes, single use) and opens `http://127.0.0.1:8766/#code=...`. The code is in the URL fragment, which the browser never sends to the server, so it does not appear in logs. The page exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie (an HMAC of the token with a 12-hour expiry) and removes the fragment from the address bar. You can also paste the token into the sign-in dialog. Requests that use the cookie and change something, and WebSocket handshakes that use it, must come from the UI's own origin, which stops other sites and pages from driving the API.
-- **WebSockets** are authenticated during the handshake, either by the bearer header or by the cookie plus the `Origin` check. The token is never put in a query string. A rejected handshake is closed with code 1008.
+- **Other devices** (over Tailscale, see [Use Jig from your other devices](#use-jig-from-your-other-devices)) use a paired device session instead: a separate, revocable cookie with a `Secure` flag. The bearer token and the session cookie are refused there.
+- **WebSockets** are authenticated during the handshake, either by the bearer header or by a cookie plus the `Origin` check. The token is never put in a query string. A rejected handshake is closed with code 1008.
 - **`/health` is public** so supervisors and container health checks can probe Jig without a secret. It returns only `{"status": "ok"}`. The model endpoint, model name and capability results are under `GET /status`, which needs authentication.
 
 ## Roadmap
