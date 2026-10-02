@@ -25,7 +25,7 @@ Jig is an open-source, always-on personal AI agent, **built for local models**. 
 
 Jig is an open alternative to hosted agents such as Meta's Muse and OpenAI's Dots. It takes their best safety ideas (an isolated reviewer, a credential vault, read-only background research, per-action rules and approvals) and adds the things that running locally makes possible: memory you can see and edit, and an audit trail you own.
 
-> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision and a Gmail connector are in place. Voice and the other connectors (calendars, files, GitHub, chat apps) are on the roadmap; see [Connectors](#connectors) for exactly what is built.
+> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision, a payment and booking checkpoint for the browser, and connectors for Gmail, Google Calendar, Google Drive, Outlook calendar and OneDrive, GitHub, Slack, Discord, Matrix and Signal are in place. Voice is on the roadmap; see [Connectors](#connectors) for exactly what is built and tested.
 
 ## Model requirements
 
@@ -472,27 +472,40 @@ Inside the browser, a click or the Enter key cannot submit a form. Every non-GET
 
 Connectors let Jig work with your own accounts. Each uses your own app registration or token, talks straight from your computer to the provider, and keeps its tokens only in the vault. Setup for each provider, with the scopes and why, is in [docs/connectors-setup.md](docs/connectors-setup.md).
 
-| Connector | Status | Tools |
+Every connector is built and tested against the provider's real service without an account (a made-up token or client gets the provider's real refusal; the gate, limits and approvals run for real). Each also has an opt-in live end-to-end test (`tests/test_connector_<name>_live.py`) that needs your own account's setup and is skipped, with the reason, until then.
+
+| Connector (`jig connect` name) | Sign-in | Tools |
 | --- | --- | --- |
-| Gmail | built; tested against Google's real endpoints without an account; the live end-to-end test (`tests/test_connector_gmail_live.py`) needs your Google setup and is skipped until then | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
-| Google Calendar, Outlook calendar, Google Drive, OneDrive, GitHub, Slack, Discord, Matrix, Signal | not built | none |
+| Gmail (`gmail`) | Google OAuth | `gmail_search`, `gmail_read_thread`, `gmail_list_labels` (read); `gmail_create_draft`, `gmail_send`, `gmail_reply`, `gmail_modify_labels`, `gmail_archive` (actions) |
+| Google Calendar (`google-calendar`) | Google OAuth | `gcal_list_calendars`, `gcal_list_events`, `gcal_get_event` (read); `gcal_create_event`, `gcal_update_event`, `gcal_cancel_event` (human-only) |
+| Google Drive (`google-drive`) | Google OAuth | `gdrive_search`, `gdrive_read_file` (read); `gdrive_create_file`, `gdrive_update_file` (actions; only files Jig created) |
+| Outlook calendar and OneDrive (`microsoft`) | Microsoft OAuth, one sign-in | `outlook_list_calendars`, `outlook_list_events`, `outlook_get_event`, `onedrive_search`, `onedrive_list_folder`, `onedrive_read_file` (read); `outlook_create_event`, `outlook_update_event`, `outlook_cancel_event` (human-only), `onedrive_upload_file` (action) |
+| GitHub (`github`) | fine-grained token | `github_list_repos`, `github_list_issues`, `github_read_issue`, `github_read_file` (read); `github_comment`, `github_create_issue` (human-only) |
+| Slack (`slack`) | bot token | `slack_list_channels`, `slack_read_channel` (read); `slack_post_message`, `slack_reply_in_thread` (human-only) |
+| Discord (`discord`) | bot token | `discord_list_channels`, `discord_read_channel` (read); `discord_post_message` (human-only) |
+| Matrix (`matrix`) | password login as a new device, or a token | `matrix_list_rooms`, `matrix_read_room` (read); `matrix_send_message` (human-only; unencrypted rooms only) |
+| Signal (`signal`) | your own linked signal-cli | `signal_send_message` (human-only), `signal_receive` |
 
 ```powershell
 .\.venv\Scripts\jig connect gmail --client-json <downloaded Desktop app client JSON>   # opens Google's consent page
+.\.venv\Scripts\jig connect microsoft --client-id <Entra app's client ID>              # opens Microsoft's sign-in page
+.\.venv\Scripts\jig connect github --access write                                     # asks for the token without echoing it
 .\.venv\Scripts\jig connections                                                       # status, account, scopes
-.\.venv\Scripts\jig disconnect gmail                                                  # revokes at Google, deletes the tokens
+.\.venv\Scripts\jig disconnect gmail                                                  # revokes where the provider can, deletes the tokens
 ```
 
-Settings > Connections in the web UI shows the same and has Connect and Disconnect buttons. The API is `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only; returns the sign-in link) and `POST /connections/{provider}/disconnect` `{confirm: true}`.
+Settings > Connections in the web UI shows the same and has Connect and Disconnect buttons for the browser sign-ins; token connectors are connected in a terminal, so the token never passes through the browser. The API is `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only; returns the sign-in link) and `POST /connections/{provider}/disconnect` `{confirm: true}`.
 
 **How connectors are kept safe.**
 
-- **Sign-in:** OAuth 2.0 with PKCE and a one-shot loopback listener on `127.0.0.1` that checks the `state` value. Gmail asks only for the scopes of the access level you choose (`read`, `send` or `manage`).
+- **Sign-in:** OAuth 2.0 with PKCE and a one-shot loopback listener on `127.0.0.1` that checks the `state` value (Google and Microsoft; Microsoft as a public client with no secret). Each asks only for the scopes of the access level you choose (`--access`). Token connectors take the token at a hidden prompt or on standard input, and check it with the provider before storing anything.
 - **Tokens:** access and refresh tokens and the app client are in the vault as `connector.<provider>.*`. The model never sees them; a core rule stops any tool from naming them with `{{secret:...}}`; the generic `/vault` API refuses to write or delete them; and every token value used is redacted from tool results, errors and the audit log. A connector sends its token only to its provider's own API hosts.
-- **Reads and actions:** reading mail is a `read` tool, so it works in read-only mode and is not reviewed. Every draft, send, reply, label change and archive is an outbound side effect: the Sentinel reviews it, and it needs your approval. Sending and replying are human-only, so no rule can make them automatic. Drafts and label changes ask by default. Read-only mode refuses all of them. There is no delete tool, and adding `TRASH` or `SPAM` is refused.
-- **What it refers to:** for a reply or a label change, Jig first looks up the thread and shows its subject and sender on the approval card and to the Sentinel, marked as text written by other people.
+- **Reads and actions:** reading is a `read` tool, so it works in read-only mode and is not reviewed. Every draft, send, post, comment, calendar change, file save and label change is an outbound side effect: the Sentinel reviews it, and it needs your approval. Sending mail and messages, posting, commenting and changing a calendar are human-only, so no rule can make them automatic. Drafts, label changes and file saves ask by default. Read-only mode refuses all of them. There are no tools to delete mail or files, share files, or close, merge or push on GitHub; adding `TRASH` or `SPAM` is refused; posts never ping a whole channel.
+- **What it refers to:** before review, Jig looks up what an action refers to (the thread, the calendar and event, the folder or file, the repository and issue, the channel or room) and shows it on the approval card and to the Sentinel, marked as text written by other people.
 - **Untrusted content:** the agent is told that content from connected accounts is information, never instructions, and connector results say so too.
-- **Limits for testing:** `[connectors.gmail] allowed_recipients` and `required_prefix` (for example `"[Jig test]"`) are checked by the gate before the Sentinel or an approval, and again just before sending.
+- **Limits for testing:** `[connectors.<name>] allowed_targets` (the calendars, folders, repositories, channels or rooms Jig may change), `allowed_recipients` and `required_prefix` (for example `"[Jig test]"`) are checked by the gate before the Sentinel or an approval, and again just before acting.
+
+**Paying and booking.** Before every browser click and form submission, Jig inspects the page without changing it for a checkout, payment or booking (card or bank fields, a payment provider's frame, a "Pay", "Place order" or "Book" button, or a checkout page with prices). If it finds one, the core rule `payment-checkpoint` asks you, whatever your rules say, and the approval card shows the site, the items and the total found on the page; the avatar shows that Jig is shopping. The browser itself refuses to type into card, security code, expiry, IBAN, sort code or account number fields, so Jig never enters payment details. Its tests run on real public demo pages and stop at the confirmation step.
 - **Errors:** an expired or revoked grant marks the connection "needs reconnecting" and says how to fix it. When a provider says "slow down", Jig waits as asked (at most 3 times and 30 seconds in all) and then fails with the reason. A failed send is never retried.
 
 ## Safety model
@@ -501,7 +514,7 @@ Jig enforces safety at the tool level, in code. The prompt describes the rules b
 
 1. **Schema.** The tool must exist and the arguments must match its JSON schema.
 2. **Mode.** Every tool is tagged `read`, `private_write` or `side_effect`. In **research mode** (proactive background work, as in Dots), only `read` and `private_write` tools are offered to the model, and the gate refuses anything else even if the model tries it. So research mode can read permitted sources and write private notes or memories, but it cannot change files, send anything or take actions. **Action mode** has every tool, subject to the steps below.
-3. **Core rules.** These are hard-coded and cannot be overridden (`GET /rules/core`). No credential or password changes. A secret may be used only by the tools on its allow-list, and model API keys and connected accounts' tokens by none. Sending a secret outbound always needs a human. Outbound tools may never reach localhost, the model server, Jig's own API or the local network, which also stops the agent from approving its own requests. Human-only tools (purchases, sending messages) always need approval. Core rules can only make a decision stricter.
+3. **Core rules.** These are hard-coded and cannot be overridden (`GET /rules/core`). No credential or password changes. A secret may be used only by the tools on its allow-list, and model API keys and connected accounts' tokens by none. Sending a secret outbound always needs a human. Outbound tools may never reach localhost, the model server, Jig's own API or the local network, which also stops the agent from approving its own requests. Human-only tools (sending messages, posting, changing calendars) always need approval, and so does any click or submission that looks like a payment, checkout or booking. Core rules can only make a decision stricter.
 4. **Custom rules.** Editable `allow`, `ask` or `block` rules per tool, with glob matching on tool names and, optionally, on an argument such as `url` matching `https://shop.*`. They are stored in SQLite and managed through `/rules`.
 5. **The Sentinel.** Every outbound or side-effecting action is reviewed by an isolated model call with its own system prompt and no tools. It sees only the trusted intent, the proposed action and the policy findings, never the agent's conversation, so injected web content cannot address it. It returns a structured verdict of `allow`, `ask_user` or `deny`, with a risk level and a reason. A `deny` cannot be overridden. If the Sentinel fails or returns an invalid verdict, the action does not run and the error is reported.
 6. **Approvals.** If a core rule, custom rule or the Sentinel asks for a human, an approval is queued (`/approvals`), the task's status becomes `waiting_approval`, and the run pauses. It resumes as soon as you approve or deny. Runs are checkpointed after every step, so a paused or interrupted task picks up where it left off after a restart.
@@ -565,7 +578,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - **A VM sandbox** (for example Firecracker or Hyper-V) as a stronger alternative to the container backend, and per-task egress leases.
 - **A mobile app** that connects to Jig running on your own computer, over the same paired-device, Tailscale-only connection the web UI uses, so you can take Jig with you while the model stays at home.
 - **Voice**: local speech-to-text and text-to-speech, driving the avatar's `talking` state.
-- **More connectors**: Google Calendar and Outlook calendar, Google Drive and OneDrive, GitHub, Slack, Discord, Signal and Matrix, on the same framework as Gmail, with every send or change as an approved action.
+- **Encrypted Matrix rooms**, and work or school Microsoft 365 accounts, for the connectors.
 - **Smaller-GPU support**: measured setups for 8 GB cards, with one model as both agent and safety checker (a different safety checker model stays optional via `[sentinel]`).
 - **MCP and plugin support**: third-party tools that declare their effect, outbound status and category.
 - **Multiple agents**, each with its own sandbox, memory and rules.
