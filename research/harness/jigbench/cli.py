@@ -39,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     o = sub.add_parser("overnight", help="work through the queue under the compute policy")
     o.add_argument("--queue", type=Path, required=True)
     sub.add_parser("policy-status", help="show what the compute policy would decide now")
+    sub.add_parser("restore-watchdog", help="restore the main model server from the latest unrestored "
+                                            "handover file if no harness is alive (run from a scheduled task)")
+    sub.add_parser("handover-status", help="show pending (unrestored) GPU handovers and 8080 idleness")
     args = ap.parse_args(argv)
 
     if args.cmd == "run":
@@ -66,6 +69,18 @@ def main(argv: list[str] | None = None) -> int:
         ok, why = Policy().may_start()
         print(json.dumps({"may_start": ok, "reason": why, "idle_s": round(idle_seconds()),
                           "must_stop": Policy().must_stop()}, indent=1))
+        return 0
+    if args.cmd == "restore-watchdog":
+        from .handover import restore_watchdog
+        _setup_logging("restore-watchdog")
+        return restore_watchdog()
+    if args.cmd == "handover-status":
+        from .handover import IdleWatch, JigClient, unrestored_handovers
+        jig = JigClient()
+        busy, why = jig.busy()
+        print(json.dumps({"pending_handovers": [str(p) for p in unrestored_handovers()],
+                          "main_8080_idle": IdleWatch().sample(), "jig_running": jig.running(),
+                          "jig_busy": busy, "jig_detail": why}, indent=1, default=str))
         return 0
     return 1
 
