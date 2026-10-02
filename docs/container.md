@@ -144,6 +144,8 @@ docker compose --profile llamacpp up -d
 
 Special forks are not in the official image. One example is the PrismML fork that some ternary models (such as Ternary Bonsai) need. Keep a fork on the host and use the default setup.
 
+**A cloud model.** Jig is built for local models; `host.docker.internal`, `ollama` and `llamacpp` all count as local. To use a cloud model instead, set up `deploy/jig.toml` as in one of the cloud profiles and follow [Using a cloud model](../README.md#using-a-cloud-model), running the `jig model key set` and `jig model cloud confirm` commands inside the container (`docker compose exec -it jig jig ...`). Until both are done, Jig exits with a message saying what would be sent and how to consent, and compose keeps restarting it.
+
 **GPUs.** The profiles reserve NVIDIA GPUs:
 
 - **Linux:** needs the NVIDIA Container Toolkit.

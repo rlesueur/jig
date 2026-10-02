@@ -4,7 +4,7 @@
 
 <h1 align="center">Jig</h1>
 
-<p align="center"><strong>An open-source, always-on personal AI agent that runs on your own local model.</strong></p>
+<p align="center"><strong>An open-source, always-on personal AI agent. Built for local models. Bring a cloud model if you want one.</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-9a54ff" alt="Licence: Apache-2.0"></a>
@@ -21,7 +21,7 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-Jig is an open-source, always-on personal AI agent that runs **only on local models**. It works with any sufficiently capable model behind an OpenAI-compatible endpoint that supports tool calling, such as llama.cpp (including forks), Ollama, LM Studio or vLLM. Your memory, audit trail, rules and secrets stay on your machine, in files you can inspect and edit.
+Jig is an open-source, always-on personal AI agent, **built for local models**. It works with any sufficiently capable model behind an OpenAI-compatible endpoint that supports tool calling, such as llama.cpp (including forks), Ollama, LM Studio or vLLM. Your memory, audit trail, rules and secrets stay on your machine, in files you can inspect and edit. If you want a cloud model instead (OpenAI, OpenRouter, Anthropic or Gemini), you can bring one, with your explicit consent: see [Using a cloud model](#using-a-cloud-model).
 
 Jig is an open alternative to hosted agents such as Meta's Muse and OpenAI's Dots. It takes their best safety ideas (an isolated reviewer, a credential vault, read-only background research, per-action rules and approvals) and adds the things that running locally makes possible: memory you can see and edit, and an audit trail you own.
 
@@ -117,7 +117,7 @@ How to serve a vision model:
 
 ## Running it
 
-Requirements: Python 3.11 or newer, and a local OpenAI-compatible server with a tool-capable model.
+Requirements: Python 3.11 or newer, and a local OpenAI-compatible server with a tool-capable model (or a cloud model; see [Using a cloud model](#using-a-cloud-model)).
 
 ```powershell
 git clone https://github.com/rlesueur/jig.git
@@ -148,8 +148,11 @@ Run `jig ui` to open it signed in (see [Access and the API token](#access-and-th
 | `profiles/ollama.toml` | Ollama (`http://127.0.0.1:11434/v1`); set a tool-capable model and a context of 32K or more |
 | `profiles/lmstudio.toml` | LM Studio local server (`http://127.0.0.1:1234/v1`) |
 | `profiles/vllm.toml` | vLLM with `--enable-auto-tool-choice --tool-call-parser ...` |
+| `profiles/openai.toml`, `openrouter.toml`, `anthropic.toml`, `gemini.toml` | Cloud models; see [Using a cloud model](#using-a-cloud-model) |
 
-Use one with `jig --config profiles/ollama.toml serve`, or set `JIG_CONFIG`. `[model.sampling]` is sent exactly as written, so include only parameters your server accepts. If your server needs an API key, put it in an environment variable and name that variable in `api_key_env`.
+Use one with `jig --config profiles/ollama.toml serve`, or set `JIG_CONFIG`. `[model.sampling]` is sent exactly as written, so include only parameters your server accepts. If your server needs an API key, store it in the vault with `jig model key set <name>` and set `api_key_secret = "model-key.<name>"`, or put it in an environment variable and name that variable in `api_key_env`.
+
+Jig works out where each endpoint is from its address alone (it never looks the name up): loopback, private network addresses (10/8, 172.16/12, 192.168/16, fc00::/7), link-local, Tailscale (100.64.0.0/10, `*.ts.net`) and local names (`localhost`, single-label names, `.local`, `.lan`, `.home.arpa`, `.internal`) are **local**; everything else is **cloud**. `jig health`, `jig model cloud status`, `GET /status` and Settings in the web UI show where the agent and the Sentinel run.
 
 The Sentinel inherits the `[model]` settings unless you override them. To give it a different (for example smaller) model or another server:
 
@@ -161,7 +164,7 @@ name = "your-small-reviewer-model"
 
 ### Tests
 
-The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com` and `https://httpbin.org`, so they need internet access. The container and browser tests (`tests/test_container_sandbox.py`, `tests/test_browser.py`) need Docker running and the sandbox image built (`jig sandbox build`). The vision tests need `[vision] enabled = true` and a vision-capable model. `tests/test_vault_keyfile.py` needs no model. `tests/test_compose_stack.py` runs against a live compose stack: start it, then set `JIG_STACK_URL` (for example `http://127.0.0.1:8766`) and run `pytest -m compose`. Without `JIG_STACK_URL` it is skipped.
+The tests use the real configured model server and a real temporary SQLite database. Nothing is mocked. Some tests also fetch `https://example.com` and `https://httpbin.org`, so they need internet access. The container and browser tests (`tests/test_container_sandbox.py`, `tests/test_browser.py`) need Docker running and the sandbox image built (`jig sandbox build`). The vision tests need `[vision] enabled = true` and a vision-capable model. `tests/test_vault_keyfile.py` needs no model. `tests/test_compose_stack.py` runs against a live compose stack: start it, then set `JIG_STACK_URL` (for example `http://127.0.0.1:8766`) and run `pytest -m compose`. Without `JIG_STACK_URL` it is skipped. `tests/test_cloud_models.py` tests the cloud path without a cloud account, against a real llama-server over TLS reached through a public host name (`llama.localtest.me`). `tests/test_cloud_live.py` runs against each real provider only when you set `JIG_LIVE_OPENAI_KEY`, `JIG_LIVE_OPENROUTER_KEY`, `JIG_LIVE_ANTHROPIC_KEY` or `JIG_LIVE_GEMINI_KEY` (and optionally `JIG_LIVE_<PROVIDER>_MODEL`); otherwise each is skipped with the reason.
 
 ```powershell
 .\.venv\Scripts\python -m pytest -q
@@ -175,6 +178,34 @@ With `jig serve` running:
 .\.venv\Scripts\python scripts\demo.py --url http://127.0.0.1:8766       # goal -> plan -> approval -> done
 .\.venv\Scripts\python scripts\chat_demo.py --url http://127.0.0.1:8766  # streaming chat with avatar states
 ```
+
+## Using a cloud model
+
+Jig is built for local models, and a local model is the private choice. If you would rather use a cloud model, Jig supports OpenAI, OpenRouter, Anthropic and Google Gemini through their OpenAI-compatible APIs, with these safeguards:
+
+- **The privacy trade-off is real.** With a cloud agent, your conversation, the memory and tool results the agent works with, and any images you share are sent to the provider, under its terms and retention policy. If the Sentinel is also on the cloud, every action Jig wants to take, with its details, is sent too. Your memory database, history, audit log, rules and vault stay on your machine; only what goes into a request leaves it.
+- **Explicit consent, twice.** Jig refuses to start with a cloud endpoint until you have set `allow_cloud = true` in that section of the config **and** run `jig model cloud confirm`, which shows exactly what is sent and records your confirmation in the audit log. The confirmation is per role (agent or Sentinel) and per endpoint, so pointing at a different provider asks again. `jig model cloud revoke` withdraws it.
+- **HTTPS only.** A cloud endpoint over `http://` is a configuration error.
+- **Keys in the vault.** `jig model key set <provider>` stores the key in the vault (prompted without echo, or `--stdin`). It is never logged, never shown to the model, never available to any tool (a core rule blocks it and tool results are redacted), and it is redacted from errors and the audit log, including the masked form some providers echo back. `jig model key status` shows which keys are stored, and `jig model key delete <provider>` removes one. `api_key_env` still works if you prefer an environment variable.
+- **The Sentinel stays local (recommended).** The cloud profiles keep the safety checker on your local server, so its reviews never leave your machine and it stays independent of the agent's provider. The Sentinel never inherits `allow_cloud`, the key or the provider settings from `[model]` when it points somewhere else.
+- **You can see it.** Settings > Model and connection shows "Local" or "Cloud: host" for the agent and the safety checker, with a short note on what is sent, and a "Cloud model" label sits next to the health dot whenever the agent is on the cloud.
+
+Set up a provider in three steps (Anthropic shown; use `openai`, `openrouter` or `gemini` in the same way):
+
+```powershell
+.\.venv\Scripts\jig --config profiles/anthropic.toml model key set anthropic   # paste the key
+.\.venv\Scripts\jig --config profiles/anthropic.toml model cloud confirm       # read what is sent, then confirm
+.\.venv\Scripts\jig --config profiles/anthropic.toml serve
+```
+
+| Profile | Provider and endpoint | What Jig handles differently |
+| --- | --- | --- |
+| `profiles/openai.toml` | [OpenAI](https://developers.openai.com/api/docs/guides/function-calling), `https://api.openai.com/v1` | Sends `max_completion_tokens` (`max_tokens` is deprecated and not accepted by reasoning models). Chat Completions has no function calling for some newer models; the start-up check fails clearly if yours is one. Key: [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `profiles/openrouter.toml` | [OpenRouter](https://openrouter.ai/docs/guides/features/tool-calling), `https://openrouter.ai/api/v1` | Routes only to providers that support every parameter sent (`require_parameters`) and that don't collect data (`data_collection = "deny"`). Reasoning details are passed back unchanged. Key: [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
+| `profiles/anthropic.toml` | [Anthropic](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk), `https://api.anthropic.com/v1` | Its compatibility layer ignores `response_format`, so structured output is asked for as a tool call and checked. Temperature is capped at 1, and sampling keys it would silently ignore are refused. Key: [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) |
+| `profiles/gemini.toml` | [Google Gemini](https://ai.google.dev/gemini-api/docs/openai), `https://generativelanguage.googleapis.com/v1beta/openai` | Thought signatures on tool calls are returned with the conversation, as Gemini requires. Sampling keys it would silently ignore are refused. Key: [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+
+Each profile cites the documentation it was checked against. Anything a provider doesn't support is a configuration error rather than a silent guess, and the same real capability check runs at start-up as for a local model. `[model.launch]` can't be used with a cloud endpoint.
 
 ## Run with Docker
 

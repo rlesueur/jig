@@ -1,7 +1,9 @@
-# Jig configuration. Jig works with any capable local model behind an
-# OpenAI-compatible endpoint that supports tool calling. See profiles/ for
-# examples (llama.cpp, Ollama, LM Studio, vLLM) and copy one over this file,
-# or point JIG_CONFIG / --config at it.
+# Jig configuration. Jig is built for local models: it works with any capable
+# model behind an OpenAI-compatible endpoint that supports tool calling. See
+# profiles/ for examples (llama.cpp, Ollama, LM Studio, vLLM) and copy one over
+# this file, or point JIG_CONFIG / --config at it. To bring a cloud model
+# (OpenAI, OpenRouter, Anthropic, Gemini), start from profiles/<provider>.toml
+# and read "Using a cloud model" in README.md.
 #
 # Relative paths are resolved against this file's folder.
 # Environment overrides: JIG_CONFIG, JIG_MODEL_BASE_URL, JIG_MODEL_NAME,
@@ -13,6 +15,13 @@ base_url = "http://127.0.0.1:8080/v1"
 name = ""
 # Name of an environment variable holding an API key, if your server needs one.
 api_key_env = ""
+# Or keep the key in the vault instead: 'jig model key set <name>', then
+#   api_key_secret = "model-key.<name>"
+# A cloud endpoint (anything that isn't loopback, a private or Tailscale address,
+# or a local name) must use https:// and needs both of these before Jig starts:
+#   allow_cloud = true          and          jig model cloud confirm
+# provider = "openai" | "openrouter" | "anthropic" | "gemini" tells Jig that
+# provider's documented differences; anything it doesn't support is an error.
 connect_timeout_s = 5.0
 read_timeout_s = 600.0
 max_tokens = 8192
@@ -25,7 +34,9 @@ top_k = 20
 min_p = 0.05
 
 # The Sentinel inherits everything from [model] unless set here, so it can use a
-# different endpoint or a smaller model. Example:
+# different endpoint or a smaller model. It never inherits allow_cloud, and when
+# its base_url differs it gets none of [model]'s key or provider settings. With a
+# cloud agent, keeping the Sentinel on a local model is recommended. Example:
 #   base_url = "http://127.0.0.1:11434/v1"
 #   name = "your-small-reviewer-model"
 [sentinel]

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jig"
 version = "0.1.0"
-description = "Jig: an open-source, always-on personal AI agent that runs only on local models."
+description = "Jig: an open-source, always-on personal AI agent. Built for local models; bring a cloud model if you want one."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "playwright>=1.50"]
 
 [project.scripts]
 jig = "jig.cli:main"
