@@ -107,16 +107,19 @@
 
     <section class="wrap section" id="features" aria-labelledby="features-title">
       <h2 id="features-title">What Jig does</h2>
-      <p class="section-lede">Jig is under active development. These parts are in the code today; voice and messaging channels are on the roadmap.</p>
+      <p class="section-lede">Jig is under active development. These parts are in the code today; voice is on the roadmap.</p>
       <ul class="grid">
         <li class="card"><h3>Always on</h3><p>A heartbeat scheduler runs schedules and queued tasks, breaks goals into tasks, and resumes interrupted runs from their last checkpoint after a restart.</p></li>
-        <li class="card"><h3>Background research</h3><p>Proactive work runs in a read-only research mode: it can read permitted sources and write private notes, but cannot change files, send anything or act.</p></li>
-        <li class="card"><h3>Memory you can see</h3><p>Every memory can be listed, searched, edited and truly forgotten through the API. Nothing is hidden in a vendor's cloud.</p></li>
+        <li class="card"><h3>Schedules</h3><p>Jobs that run by themselves daily, on weekdays, weekly, at an interval or on a cron expression. Manage them in Settings &gt; Schedules, or ask in the chat: Jig proposes the schedule and saves it only if you approve.</p></li>
+        <li class="card"><h3>Background research</h3><p>Proactive work runs in a read-only research mode: it can read permitted sources and keep its own private notes and memories, but cannot change your files, send anything or act.</p></li>
+        <li class="card"><h3>Memory you can see</h3><p>Every memory can be listed, searched, edited and truly forgotten, one at a time or all at once with Forget everything, in the web UI or through the API. Nothing is hidden in a vendor's cloud.</p></li>
         <li class="card"><h3>An audit trail you own</h3><p>Tool calls, policy decisions, reviews, approvals and vault use go to a local, append-only audit log in SQLite.</p></li>
-        <li class="card"><h3>Sandboxed tools</h3><p>File tools are confined to a per-agent folder. An optional hardened Docker container adds code execution and a headless browser behind a gated egress proxy.</p></li>
-        <li class="card"><h3>Vision, if your model has it</h3><p>Image input works with any vision-capable model. Jig checks at start-up that the model can really see, and refuses to start if it cannot.</p></li>
+        <li class="card"><h3>Your accounts, with approval</h3><p>Connectors for Gmail, Google Calendar, Google Drive, Outlook calendar, OneDrive, GitHub, Slack, Discord, Matrix (unencrypted rooms) and Signal. Reading is just reading. Sending, posting, commenting and calendar changes always ask you first; drafts, label changes and file saves ask by default. Tokens stay in the vault.</p></li>
+        <li class="card"><h3>Paying and booking</h3><p>Before any browser click or form submission, Jig checks the page for a checkout, payment or booking. If it finds one, it always asks you first and shows the site, the items and the total. It never types card details: the browser refuses card and bank fields.</p></li>
+        <li class="card"><h3>Sandboxed tools</h3><p>File tools are confined to a per-agent folder. Running code needs Docker: code, shell commands and the headless browser run only in an optional hardened Docker container, behind a gated egress proxy. Without it, Jig cannot run code.</p></li>
+        <li class="card"><h3>Vision, if your model has it</h3><p>Image input works with any vision-capable model. With vision turned on, Jig checks at start-up that the model can really see, and refuses to start if it cannot.</p></li>
         <li class="card"><h3>A face for the agent</h3><p>The runtime streams its state over WebSocket and server-sent events, so the avatar shows at a glance whether Jig is idle, working or waiting for you.</p></li>
-        <li class="card"><h3>HTTP API and CLI</h3><p>Chat, goals, tasks, schedules, approvals, rules, memory, audit and vault are all available locally through a documented API and the <code>jig</code> command.</p></li>
+        <li class="card"><h3>HTTP API and CLI</h3><p>Chat, goals, tasks, schedules, approvals, rules, memory, audit, vault and connections are all available locally through a documented API and the <code>jig</code> command.</p></li>
       </ul>
     </section>
 
@@ -127,9 +130,9 @@
         <ol class="gate">
           <li><strong>Schema.</strong> The tool must exist and its arguments must match its JSON schema.</li>
           <li><strong>Mode.</strong> Each tool is tagged read, private write or side effect. Research mode is never offered side-effecting tools, and the gate refuses them even if the model tries.</li>
-          <li><strong>Core rules.</strong> Hard-coded and stricter-only: no credential changes, secrets only for their allowed tools, no outbound calls to localhost or the local network, and human-only actions always need you.</li>
+          <li><strong>Core rules.</strong> Hard-coded and stricter-only: no credential changes, secrets only for their allowed tools, no outbound calls to localhost or the local network, and human-only actions, and anything that looks like a payment, checkout or booking, always need you.</li>
           <li><strong>Your rules.</strong> Allow, ask or block per tool, optionally matched on an argument such as a URL.</li>
-          <li><strong>The Sentinel.</strong> A separate model call with no tools reviews every outbound or side-effecting action. It never sees the agent's conversation, so injected web content cannot address it. A deny is final.</li>
+          <li><strong>The Sentinel.</strong> A safety checker reviews every outbound or side-effecting action. It is the agent's own model by default (a different one is optional), called on its own with its own instructions and no tools. It never sees the agent's conversation, so injected web content cannot address it. A deny is final.</li>
           <li><strong>Approvals.</strong> When a human is needed the task pauses, and resumes as soon as you approve or deny it.</li>
           <li><strong>Vault.</strong> Tools use secrets by reference. Values are inserted only when the tool runs and are redacted from results, so the model never sees them.</li>
         </ol>
@@ -165,7 +168,7 @@
         </div>
         <div class="card">
           <h3>One tested set-up</h3>
-          <p>Jig was developed against a 27B-class model on llama.cpp, at about 125 tokens a second on a single RTX 5090.</p>
+          <p>Jig was developed against a 27B-class model on llama.cpp, on a single RTX 5090.</p>
           <p class="muted">That is one example, not a requirement. Use whatever capable model your hardware runs well.</p>
         </div>
       </div>

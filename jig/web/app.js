@@ -1137,7 +1137,7 @@ const WILL = {
   gmail_modify_labels: (x) => `Jig will${x.add && x.add.length ? ` add ${joinList(x.add)}` : ''}${x.add && x.add.length && x.remove && x.remove.length ? ' and' : ''}${x.remove && x.remove.length ? ` remove ${joinList(x.remove)}` : ''} on the thread described below. Nothing is deleted.`,
   gmail_archive: () => 'Jig will take the thread described below out of your inbox. Nothing is deleted.',
   schedule_create: (x) => `Jig will save the schedule ${q(x.name)}. At the times below it will do this by itself, `
-    + `${x.mode === 'action' ? 'able to act (asking you when needed)' : 'just looking, without changing anything'}. You can pause or delete it at any time in Settings, Schedules.`,
+    + `${x.mode === 'action' ? 'able to act (asking you when needed)' : 'just looking, without changing, sending or saving anything of yours'}. You can pause or delete it at any time in Settings, Schedules.`,
   gcal_create_event: (x) => `Jig will add ${q(x.summary)} from ${x.start} to ${x.end} to the calendar described below${guestsText(x)}.`,
   gcal_update_event: () => 'Jig will change only the details under Why am I asking? on the event described below. Any guests are told.',
   gcal_cancel_event: () => 'Jig will cancel the event described below. Any guests are told it is cancelled.',

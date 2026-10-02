@@ -58,7 +58,7 @@
       </section>
 
       <form class="chat-form" id="chat-form">
-        <p class="readonly-note" id="readonly-note" data-testid="read-only-note" hidden>Just looking: Jig won't change, save or send anything. <a href="#settings/chat">Change this</a></p>
+        <p class="readonly-note" id="readonly-note" data-testid="read-only-note" hidden>Just looking: Jig won't change, send or save anything of yours. It can still keep its own private notes. <a href="#settings/chat">Change this</a></p>
         <div class="composer">
           <label for="chat-input" class="sr-only">Message</label>
           <textarea id="chat-input" rows="1" placeholder="Message Jig" required data-testid="chat-input"></textarea>
@@ -381,7 +381,7 @@
             <div class="switch-row">
               <input type="checkbox" role="switch" id="read-only" aria-describedby="read-only-hint" data-testid="setting-read-only">
               <div><label for="read-only">Just look, don't touch</label>
-                <p class="hint-quiet" id="read-only-hint">Jig can look things up and keep its own private notes and memories, but it won't change your files, send anything or act on websites. Applies to new messages.</p></div>
+                <p class="hint-quiet" id="read-only-hint">Jig can look things up and keep its own private notes and memories, but it won't change, send or save anything of yours, or act on websites. Applies to new messages.</p></div>
             </div>
             <div class="switch-row">
               <input type="checkbox" role="switch" id="show-working" aria-describedby="show-working-hint" data-testid="setting-show-working">
