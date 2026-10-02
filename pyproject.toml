@@ -30,7 +30,7 @@ jig = "jig.cli:main"
 include = ["jig*"]
 
 [tool.setuptools.package-data]
-jig = ["web/*", "web/fonts/*"]
+jig = ["web/*", "web/fonts/*", "web/icons/*", "sandbox_container/image/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

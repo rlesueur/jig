@@ -1,0 +1,48 @@
+# Jig's settings for this computer, written by the Jig installer. Most people never need to open this:
+# choose a model, add a cloud key or let Jig run code in Jig's Settings, which saves them to
+# data\settings.toml (those override this file). The full list of settings is in jig.toml in Jig's
+# source code: https://github.com/rlesueur/jig/blob/main/jig.toml
+#
+# Relative paths are resolved against this file's folder.
+
+[model]
+# Empty until you choose a model in Jig's set-up page, which opens the first time Jig starts.
+base_url = ""
+name = ""
+connect_timeout_s = 5.0
+read_timeout_s = 600.0
+
+[sentinel]
+
+[vision]
+enabled = false
+
+[sandbox]
+backend = "directory"
+
+[paths]
+data_dir = "data"
+sandbox_dir = "sandbox"
+
+[runtime]
+agent_id = "default"
+timezone = "Europe/London"
+max_steps = 12
+max_concurrent_tasks = 3
+heartbeat_s = 2.0
+min_context_tokens = 32768
+
+[tools.web_fetch]
+timeout_s = 20.0
+max_bytes = 2_000_000
+max_chars = 12_000
+max_redirects = 5
+
+[server]
+host = "127.0.0.1"
+port = @PORT@
+
+[autostart]
+# Start with Windows (if you agreed in the installer, or turn it on in Settings) starts Jig's tray icon.
+entry = "@ENTRY@"
+launcher = "tray"
