@@ -111,10 +111,30 @@ def sessions_for(q: dict[str, Any], max_sessions: int | None, seed: int = 0) -> 
     return rows
 
 
-def session_text(s: dict[str, Any], max_chars: int = 6000) -> str:
-    lines = [f"{t['role']}: {t['content']}" for t in s["turns"]]
-    text = "\n".join(lines)
-    return text[:max_chars] + (" [...]" if len(text) > max_chars else "")
+def session_text(s: dict[str, Any]) -> str:
+    return "\n".join(f"{t['role']}: {t['content']}" for t in s["turns"])
+
+
+def split_text(text: str, max_chars: int) -> list[str]:
+    """Consecutive pieces of at most `max_chars`, breaking at line ends where possible. Nothing is dropped."""
+    pieces, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > max_chars:
+            if cur:
+                pieces.append(cur)
+                cur = ""
+            pieces.append(line[:max_chars])
+            line = line[max_chars:]
+        if len(cur) + len(line) > max_chars:
+            pieces.append(cur)
+            cur = ""
+        cur += line
+    if cur:
+        pieces.append(cur)
+    return pieces
+
+
+CHUNK_CHARS = 6000
 
 
 def plan(cfg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -163,8 +183,12 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         if strat == "full_context":
             blocks, used = [], 0
             for s in reversed(sessions):
-                b = f"Conversation on {s['date']}:\n{session_text(s, 20000)}"
+                b = f"Conversation on {s['date']}:\n{session_text(s)}"
                 if used + len(b) > budget_chars:
+                    room = budget_chars - used
+                    if room > 500:
+                        blocks.insert(0, f"Conversation on {s['date']} (earlier part omitted):\n"
+                                         f"{session_text(s)[-room:]}")
                     break
                 blocks.insert(0, b)
                 used += len(b)
@@ -173,14 +197,17 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         elif strat == "rolling_summary":
             summary = "(empty)"
             for s in sessions:
-                r = await model.chat([
-                    {"role": "system", "content": "You maintain a concise long-term memory summary about the user."},
-                    {"role": "user", "content": f"Current summary:\n{summary}\n\nNew conversation on {s['date']}:\n"
-                                                f"{session_text(s)}\n\nRewrite the summary to include every durable "
-                                                "fact about the user, each with its date. Replace facts that have "
-                                                "changed. Keep it under 400 words. Reply with the summary only."}])
-                ingest_results.append(r)
-                summary = r.content.strip() or summary
+                parts = split_text(session_text(s), CHUNK_CHARS)
+                for k, part in enumerate(parts, start=1):
+                    r = await model.chat([
+                        {"role": "system", "content": "You maintain a concise long-term memory summary about the user."},
+                        {"role": "user", "content": f"Current summary:\n{summary}\n\nNew conversation on {s['date']} "
+                                                    f"(part {k} of {len(parts)}):\n{part}\n\nRewrite the summary to "
+                                                    "include every durable fact about the user, each with its date. "
+                                                    "Replace facts that have changed. Keep it under 400 words. Reply "
+                                                    "with the summary only."}])
+                    ingest_results.append(r)
+                    summary = r.content.strip() or summary
             res = await _answer_from_context(model, f"Memory summary:\n{summary}", q)
             response, answer_tokens = res.content, _usage_sum([res])
         else:
@@ -188,17 +215,20 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
             if strat == "retrieval":
                 for s in sessions:
                     for t in s["turns"]:
-                        env.jig.memory.add(f"[{s['date']}] {t['role']}: {t['content'][:1500]}", kind="episode",
-                                           tags=["origin:conversation"], source=f"session:{s['id']}")
+                        for piece in split_text(t["content"], 1500):
+                            env.jig.memory.add(f"[{s['date']}] {t['role']}: {piece}", kind="episode",
+                                               tags=["origin:conversation"], source=f"session:{s['id']}")
             else:
                 for i, s in enumerate(sessions, start=1):
-                    t = await env.run_task(
-                        f"Memory extraction: conversation on {s['date']}",
-                        f"Below is a conversation you had with the user on {s['date']}. Save every durable fact "
-                        "about the user (preferences, plans, possessions, events, numbers) with memory_add, one "
-                        f"fact per call, each starting with the date [{s['date'][:10]}]. Then reply 'done'.\n\n"
-                        f"{session_text(s)}", Mode.RESEARCH, timeout_s=timeout)
-                    ingest_results.append(t)
+                    parts = split_text(session_text(s), CHUNK_CHARS)
+                    for k, part in enumerate(parts, start=1):
+                        t = await env.run_task(
+                            f"Memory extraction: conversation on {s['date']} (part {k} of {len(parts)})",
+                            f"Below is part {k} of {len(parts)} of a conversation you had with the user on "
+                            f"{s['date']}. Save every durable fact about the user (preferences, plans, possessions, "
+                            "events, numbers) with memory_add, one fact per call, each starting with the date "
+                            f"[{s['date'][:10]}]. Then reply 'done'.\n\n{part}", Mode.RESEARCH, timeout_s=timeout)
+                        ingest_results.append(t)
                     if i % cfg.get("consolidate_every", 3) == 0 or i == len(sessions):
                         mems = env.jig.memory.list(limit=400)
                         listing = "\n".join(f"#{m['id']}: {m['content'][:300]}" for m in reversed(mems))

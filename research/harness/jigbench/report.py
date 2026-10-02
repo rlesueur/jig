@@ -132,7 +132,8 @@ def figure(exp: str, run_name: str, rows: list[dict[str, Any]], out: Path, pilot
     stats = [wilson(sum(groups[n]), len(groups[n])) for n in names]
     fig, ax = plt.subplots(figsize=(6, 0.45 * len(names) + 1.2))
     ys = range(len(names))
-    ax.barh(list(ys), [s[0] for s in stats], xerr=[[s[0] - s[1] for s in stats], [s[2] - s[0] for s in stats]],
+    ax.barh(list(ys), [s[0] for s in stats],
+            xerr=[[max(0.0, s[0] - s[1]) for s in stats], [max(0.0, s[2] - s[0]) for s in stats]],
             color="#4a6fa5", capsize=3)
     ax.set_yticks(list(ys), names)
     ax.set_xlim(0, 1)
