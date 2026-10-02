@@ -1,0 +1,195 @@
+{
+ "experiment": "c1",
+ "name": "c1-full-v1",
+ "pilot": false,
+ "planned": 150,
+ "trials": 7,
+ "errors": 2,
+ "errors_retried": 0,
+ "table": [
+  {
+   "condition": "bonsai27b-ternary",
+   "strategy": "full_context",
+   "n": 2,
+   "Accuracy": {
+    "k": 0,
+    "n": 2,
+    "ci": [
+     0.0,
+     0.0,
+     0.6576197760453506
+    ]
+   },
+   "Prompt tokens/question": {
+    "n": 2,
+    "ci": [
+     9517.5,
+     9344.0,
+     9691.0
+    ]
+   },
+   "Memories kept": {
+    "n": 2,
+    "ci": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "Approvals/question": {
+    "n": 2,
+    "ci": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "Wall s/question": {
+    "n": 2,
+    "ci": [
+     19.43,
+     12.32,
+     26.54
+    ]
+   }
+  },
+  {
+   "condition": "bonsai27b-ternary",
+   "strategy": "hybrid_forget",
+   "n": 1,
+   "Accuracy": {
+    "k": 1,
+    "n": 1,
+    "ci": [
+     1.0,
+     0.2065493117918027,
+     1.0
+    ]
+   },
+   "Prompt tokens/question": {
+    "n": 1,
+    "ci": [
+     134564.0,
+     134564.0,
+     134564.0
+    ]
+   },
+   "Memories kept": {
+    "n": 1,
+    "ci": [
+     94.0,
+     94.0,
+     94.0
+    ]
+   },
+   "Approvals/question": {
+    "n": 1,
+    "ci": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "Wall s/question": {
+    "n": 1,
+    "ci": [
+     714.08,
+     714.08,
+     714.08
+    ]
+   }
+  },
+  {
+   "condition": "bonsai27b-ternary",
+   "strategy": "hybrid_keep",
+   "n": 2,
+   "Accuracy": {
+    "k": 2,
+    "n": 2,
+    "ci": [
+     1.0,
+     0.3423802239546494,
+     1.0
+    ]
+   },
+   "Prompt tokens/question": {
+    "n": 2,
+    "ci": [
+     141943.0,
+     137306.0,
+     146580.0
+    ]
+   },
+   "Memories kept": {
+    "n": 2,
+    "ci": [
+     89.0,
+     86.0,
+     92.0
+    ]
+   },
+   "Approvals/question": {
+    "n": 2,
+    "ci": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "Wall s/question": {
+    "n": 2,
+    "ci": [
+     624.2149999999999,
+     607.38,
+     641.05
+    ]
+   }
+  },
+  {
+   "condition": "bonsai27b-ternary",
+   "strategy": "retrieval",
+   "n": 2,
+   "Accuracy": {
+    "k": 2,
+    "n": 2,
+    "ci": [
+     1.0,
+     0.3423802239546494,
+     1.0
+    ]
+   },
+   "Prompt tokens/question": {
+    "n": 2,
+    "ci": [
+     10825.0,
+     7425.0,
+     14225.0
+    ]
+   },
+   "Memories kept": {
+    "n": 2,
+    "ci": [
+     121.0,
+     121.0,
+     121.0
+    ]
+   },
+   "Approvals/question": {
+    "n": 2,
+    "ci": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "Wall s/question": {
+    "n": 2,
+    "ci": [
+     19.41,
+     12.66,
+     26.16
+    ]
+   }
+  }
+ ]
+}

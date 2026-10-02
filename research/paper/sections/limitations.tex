@@ -19,10 +19,13 @@
   progress; each run session records the commit and a hash of the uncommitted core changes.
 \item \textbf{Memory pilot scale.} The C1 pilot has one question per type and four sessions per question,
   so intervals are very wide and no difference reported here is statistically established.
-\item \textbf{Output limit and hidden reasoning.} The agent emits reasoning tokens that count towards its
-  8192-token output limit; on one LongMemEval question the rolling-summary rewrite reached the limit in
-  the pilot and again in the full run. Such trials are harness errors, not scored, which can flatter that
-  strategy; the treatment for the full run is an open decision.
+\item \textbf{Output limit and hidden reasoning.} The agent's hidden reasoning counts towards its
+  8192-token output limit. On every rolling-summary trial in the full run so far, the summary rewrite
+  reached the limit with no visible output: a diagnostic replay shows the model spending the whole budget
+  counting the summary's words one by one to honour the 400-word bound (27{,}000--29{,}000 characters of
+  reasoning, not a repetition loop). Such trials are harness errors, not scored, which can flatter that
+  strategy; the treatment (a higher limit, reasoning off for this call, or scoring the cut-off as a
+  failure of the strategy) is an open decision.
 \item \textbf{One agent.} The agent is one ternary 27B model; its Q4 counterpart is downloaded and queued.
 \item \textbf{Judge.} The judge is a local model, not the GPT-4o judge LongMemEval's prompts were
   validated with; a hand audit of a sample of verdicts is planned for the full run.
