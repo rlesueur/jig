@@ -29,6 +29,8 @@ from jig.model import ToolCall
 from jig.policy.gate import CallContext
 from jig.runtime import Jig
 
+from .connector_live import skip_if_in_use
+
 CONFIG = os.environ.get("JIG_LIVE_GMAIL_CONFIG", "")
 ADDRESS = os.environ.get("JIG_LIVE_GMAIL_ADDRESS", "").strip().lower()
 pytestmark = pytest.mark.skipif(
@@ -44,6 +46,7 @@ async def live(capabilities):
     limits = config.connectors.get("gmail")
     assert limits and limits.allowed_recipients == [ADDRESS] and limits.required_prefix == PREFIX, (
         "the live config must allow only JIG_LIVE_GMAIL_ADDRESS and require the '[Jig test]' prefix")
+    skip_if_in_use(CONFIG, config)
     runtime = Jig(config)
     await runtime.start(run_scheduler=False, check_capabilities=False)
     try:

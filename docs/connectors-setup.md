@@ -20,6 +20,8 @@ How much setup each one needs:
 
 "Tested against the real service" means the connector has been tested without an account against the provider's real service: a made-up token, app or code gets the provider's real refusal, and the gate, limits and approvals are tested with Jig's real policy engine. Each also has a live test that runs against your own account once it is connected; until then it is skipped and says why.
 
+A live test opens your test config's own data directory, where the connections are kept. While a Jig is serving that config (`jig --config <it> serve`), it holds the directory, so the live tests are skipped and name the Jig to stop: run `jig --config <it> stop`, run the live tests, then start it again.
+
 | Connector | `jig connect` name | How you connect | What it can do | Status |
 | --- | --- | --- | --- | --- |
 | Gmail | `gmail` | your own Google app, then sign in | search and read threads, list labels, draft, send, reply, label and archive | built; tested against the real service; live test passed against a real connected account (2 October 2026) |
