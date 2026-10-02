@@ -271,9 +271,10 @@ def test_tray_starts_once_per_data_folder_and_quits(tmp_path):
 @pytest.mark.skipif(sys.platform != "win32", reason="the tray icon is for Windows")
 def test_turn_jig_on_while_it_is_still_turning_off_starts_it_once_it_has(tmp_path):
     """The "Jig is off" page shows as soon as Jig stops answering, but its process can take a few seconds more to
-    end (here an open /events connection holds it, as Jig's window does). Turn Jig on (the jig://start link the
-    page offers, which reaches the running tray) in that gap still starts Jig, once the last one has gone."""
-    from websockets.sync.client import connect
+    end (here a request still uploading holds it: the server lets requests in progress finish). Turn Jig on (the
+    jig://start link the page offers, which reaches the running tray) in that gap still starts Jig, once the last
+    one has gone."""
+    import socket
 
     cfg = tmp_path / "jig.toml"
     cfg.write_text('[model]\nbase_url = ""\nname = ""\n\n[paths]\ndata_dir = "data"\nsandbox_dir = "sandbox"\n',
@@ -285,8 +286,11 @@ def test_turn_jig_on_while_it_is_still_turning_off_starts_it_once_it_has(tmp_pat
     try:
         wait_health(port, proc=tray, timeout=120)
         first = running_instance(data)["pid"]
-        with connect(f"ws://127.0.0.1:{port}/events", additional_headers=token(data), open_timeout=30) as ws:
-            assert json.loads(ws.recv(timeout=30))["type"] == "setup"
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as upload:
+            headers = "".join(f"{k}: {v}\r\n" for k, v in token(data).items())
+            upload.sendall(f"POST /power/stop HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{headers}"
+                           "Content-Type: application/json\r\nContent-Length: 1000\r\n\r\n{".encode())
+            time.sleep(0.5)
             r = httpx.post(f"{base}/power/stop", headers=token(data), json={"scope": "jig", "confirm": True},
                            timeout=30)
             assert r.status_code == 202, r.text
