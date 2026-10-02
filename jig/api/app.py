@@ -618,7 +618,6 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig = J(request)
         m = jig.memory.add(body.content, kind=body.kind, tags=body.tags, source="user")
         jig.audit.record("memory.added", f"memory {m['id']} added", actor="user", memory_id=m["id"])
-        jig.bus.publish(EventType.MEMORY_CHANGED, memory_id=m["id"], action="added")
         return m
 
     @app.get("/memory/{memory_id}")
@@ -630,7 +629,6 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig = J(request)
         m = jig.memory.edit(memory_id, **_set(body))
         jig.audit.record("memory.edited", f"memory {memory_id} edited", actor="user", memory_id=memory_id)
-        jig.bus.publish(EventType.MEMORY_CHANGED, memory_id=memory_id, action="edited")
         return m
 
     @app.delete("/memory/{memory_id}", status_code=204)
@@ -638,7 +636,6 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         jig = J(request)
         jig.memory.forget(memory_id)
         jig.audit.record("memory.forgotten", f"memory {memory_id} forgotten", actor="user", memory_id=memory_id)
-        jig.bus.publish(EventType.MEMORY_CHANGED, memory_id=memory_id, action="forgotten")
 
     @app.get("/notes")
     async def notes(request: Request, limit: int = 50) -> list[dict[str, Any]]:

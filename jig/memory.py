@@ -9,6 +9,7 @@ index, and the audit log records only the memory's id, never its content.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from .db import Database, now_iso
@@ -43,9 +44,17 @@ class FTS5Backend:
 
 
 class MemoryStore:
-    def __init__(self, db: Database, backend: SearchBackend | None = None):
+    def __init__(self, db: Database, backend: SearchBackend | None = None,
+                 on_change: Callable[[int, str], None] | None = None):
         self.db = db
         self.backend = backend or FTS5Backend(db)
+        # Called with (memory_id, "added" | "edited" | "forgotten") after every change, whoever made it
+        # (the user through the API or the agent through its memory tools), so open UIs stay current.
+        self.on_change = on_change
+
+    def _changed(self, memory_id: int, action: str) -> None:
+        if self.on_change:
+            self.on_change(memory_id, action)
 
     def add(self, content: str, *, kind: str = "fact", tags: list[str] | None = None,
             source: str | None = None) -> dict[str, Any]:
@@ -58,7 +67,9 @@ class MemoryStore:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (content, kind, " ".join(tags or []), source, ts, ts),
         )
-        return self.get(int(cur.lastrowid))
+        memory = self.get(int(cur.lastrowid))
+        self._changed(memory["id"], "added")
+        return memory
 
     def get(self, memory_id: int) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM memories WHERE id = ?", (memory_id,))
@@ -103,12 +114,15 @@ class MemoryStore:
                 memory_id,
             ),
         )
-        return self.get(memory_id)
+        memory = self.get(memory_id)
+        self._changed(memory_id, "edited")
+        return memory
 
     def forget(self, memory_id: int) -> None:
         cur = self.db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         if cur.rowcount == 0:
             raise NotFound(f"memory {memory_id} does not exist")
+        self._changed(memory_id, "forgotten")
 
     @staticmethod
     def _out(row: dict[str, Any]) -> dict[str, Any]:

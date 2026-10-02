@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from jig.constants import EventType, Mode
 from jig.errors import NotFound
+from jig.model import ToolCall
+from jig.policy.gate import CallContext
 
 
 async def test_memory_add_search_edit_forget(jig):
@@ -30,6 +35,21 @@ async def test_memory_add_search_edit_forget(jig):
     # Gone from the full-text index too, not just hidden.
     assert jig.db.query("SELECT rowid FROM memories_fts WHERE memories_fts MATCH 'dentist'") == []
     assert [m["id"] for m in jig.memory.list()] == [keep["id"]]
+
+
+async def test_every_memory_change_is_published(jig, events):
+    """The web UI refreshes its memory list on memory.changed, so changes made by the agent's own tools must
+    publish it too, not only the REST routes."""
+    call = ToolCall(id="m1", name="memory_add", arguments_raw=json.dumps({"content": "Robyn is vegetarian"}))
+    outcome = await jig.executor.execute(call, CallContext("r_mem", None, Mode.ACTION, "remember a preference"))
+    assert outcome.ok, outcome.error
+    memory_id = outcome.result["id"]
+
+    jig.memory.edit(memory_id, content="Robyn is vegan")
+    jig.memory.forget(memory_id)
+
+    changes = [(e.data["memory_id"], e.data["action"]) for e in events if e.type == EventType.MEMORY_CHANGED]
+    assert changes == [(memory_id, "added"), (memory_id, "edited"), (memory_id, "forgotten")]
 
 
 async def test_memory_search_is_injection_safe(jig):

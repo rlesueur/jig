@@ -60,7 +60,8 @@ class Jig:
         self.tracker = AvatarStateTracker(self.bus)
         self.audit = AuditLog(self.db)
         self.store = Store(self.db)
-        self.memory = MemoryStore(self.db)
+        self.memory = MemoryStore(self.db, on_change=lambda memory_id, action: self.bus.publish(
+            EventType.MEMORY_CHANGED, memory_id=memory_id, action=action))
         self.vault = Vault(self.db, config.vault)
         # Before any client exists, so nothing is sent to a cloud endpoint without consent.
         self.cloud = require_consent(config, self.audit)
