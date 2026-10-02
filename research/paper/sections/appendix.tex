@@ -2,6 +2,13 @@
 \label{app:versions}
 
 \begin{description}
+\item[0.3 (2 October 2026)] Protocol v0.4. D1 is widened to whole suites, three seeds and Jig's default
+  sampling, which is now sent explicitly. The earlier run is relabelled: its configured temperature 0 was
+  never sent for the agent. The Qwen reviewer's context is sized from measured review lengths. Jig fix
+  \texttt{733c80c} completes bare web addresses to \texttt{https://}, after the benchmark surfaced the bug;
+  results from before and after the fix are kept apart. The C1 rolling summary drops its word limit, and
+  the earlier cut-off attempts are reported as a finding. InjecAgent's MIT licence is confirmed, but it is
+  not yet used.
 \item[0.2 (2 October 2026, morning)] First real results: the interim D1 run on AgentDojo (560 of 700
   trials, four configurations, one seed) and the C1 pilot (19 of 20 trials). The safety method section
   now describes the run as executed. Harness fixes made during the night, each with a test and listed in

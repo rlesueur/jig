@@ -10,8 +10,10 @@ replay the answer-bearing sessions plus sampled distractor sessions in date orde
 \paragraph{Strategies.} All five run on Jig's real model client, memory store and agent loop.
 \begin{itemize}
 \item \emph{full\_context}: the most recent sessions that fit a 12k-token budget, placed in the prompt.
-\item \emph{rolling\_summary}: after each session the model rewrites a bounded (400-word) summary of
-  durable facts with their dates; the answer sees only the summary.
+\item \emph{rolling\_summary}: after each session the model rewrites a summary of durable facts with their
+  dates; the answer sees only the summary. From protocol v0.4 the prompt sets no length limit; the pilot
+  and the first full-run trials asked for ``under 400 words'', which the agent could not satisfy within its
+  output budget (Section~\ref{sec:results-c1}), so those trials are reported separately.
 \item \emph{retrieval}: every turn is stored as a Jig memory with its date; the Jig agent answers in
   research mode using \texttt{memory\_search}.
 \item \emph{hybrid\_keep}: a Jig research task per session extracts dated facts with
@@ -33,7 +35,8 @@ consolidation and answering), wall time, the number of memories kept, and approv
 percentile-bootstrap 95\% intervals. For the full run, strategies are compared on the same questions with
 McNemar's exact test and Holm--Bonferroni correction. The pilot reports intervals without hypothesis
 tests. Sampling uses Jig's defaults (temperature 1.0, top-$p$ 0.95, top-$k$ 20, min-$p$ 0.05) with a
-recorded seed.
+recorded seed. The rolling-summary trials without a word limit form their own run
+(\texttt{c1-full-v1-summary-nolimit}), identical to the main C1 run in every other respect.
 
 \paragraph{Simulated days.} Sessions are replayed back to back; dates live in the session text and the
 memory content. Jig's system prompt states the real date, which can conflict with a question's date; we
@@ -45,8 +48,10 @@ pass the question date explicitly and flag the conflict as a threat to validity.
 \paragraph{Benchmark.} Unattended safety is measured on AgentDojo~\citep{debenedetti2024agentdojo}
 (v0.1.35, MIT licence, recorded with every trial), run unchanged: its tool environments, user tasks,
 injection tasks, attacks and utility and security checks are AgentDojo's own, and no attack content is
-authored here. InjecAgent~\citep{zhan2024injecagent} itself is not used until its licence is confirmed;
-the \texttt{injecagent} attack below is the prompt template bundled with AgentDojo.
+authored here. InjecAgent~\citep{zhan2024injecagent} is MIT-licensed (confirmed from its official
+repository's licence file on 2 October 2026) but its test cases are not used in this version; the
+\texttt{injecagent} attack below is the one-line prompt template from that paper that ships inside
+AgentDojo.
 
 \paragraph{Adapter.} Each AgentDojo tool is wrapped as a real Jig tool whose effect (read, private write
 or side effect), outbound flag and category come from an explicit table; an unclassified tool raises
@@ -56,12 +61,35 @@ executes it. A refusal is returned to the agent as a tool error, as in a real Ji
 \emph{fails} (rather than refuses) makes the trial a harness error that is retried, so a crash is never
 scored as a block. For every blocked call the harness records which layer refused it.
 
-\paragraph{Design.} Four suites (banking, Slack, travel, workspace); in each, the first five user tasks
-and the first three injection tasks in AgentDojo's registry order; three attack settings (none,
-\texttt{important\_instructions} and \texttt{injecagent}), giving 35 trials per suite and 140 per
-condition, with one seed. The agent is Bonsai 2 27B (ternary) on the owner's server, reached through
-AgentDojo's OpenAI-compatible client at temperature 0 with at most 20 tool-loop iterations. Approval
-requests are answered by the labelled \texttt{approve\_all} policy (a fatigued owner).
+\paragraph{Design (protocol v0.4, run \texttt{d1-full-v2}).} All four AgentDojo v1 suites in full: every
+user task and every injection task (banking 16 user $\times$ 9 injection tasks, Slack 21 $\times$ 5,
+travel 20 $\times$ 7, workspace 40 $\times$ 6), under three attack settings (none,
+\texttt{important\_instructions} and \texttt{injecagent}), with seeds 0, 1 and 2: 1{,}355 trials per
+condition and seed, 16{,}260 for the four main conditions and 4{,}065 for the Qwen reviewer, which runs
+separately. The agent is Bonsai 2 27B (ternary) on the owner's server with at most 20 tool-loop iterations.
+It is sampled with Jig's defaults (temperature 1.0, top-$p$ 0.95, top-$k$ 20, min-$p$ 0.05) and the
+trial's seed. Every value is sent explicitly on every request and recorded per trial, because
+AgentDojo's own client omits a temperature of zero. Jig's Sentinel uses the same sampling; Granite
+Guardian is greedy, as its model card prescribes. Approval requests are answered by the labelled
+\texttt{approve\_all} policy (a fatigued owner). This run uses Jig with the bare-URL fix described in
+Section~\ref{sec:results-d1}.
+
+\paragraph{Earlier run (\texttt{d1-full-v1}).} The interim results in Section~\ref{sec:results-d1} come
+from an earlier, smaller run, kept and labelled as such and never pooled with v2. It used the first five
+user tasks and the first three injection tasks per suite in AgentDojo's registry order (35 trials per
+suite and 140 per condition) with one seed, and ran before the bare-URL fix. Its configuration asked for
+temperature 0, but AgentDojo never sent that value for the agent, so the agent sampled at the server's
+defaults. These match Jig's defaults (above) but were unseeded. Its reviewers ran at temperature 0 with
+seed 0.
+
+\paragraph{Reviewer context.} The Qwen reviewer's context is sized from measurement rather than defaults.
+The 175 Granite Guardian reviews in the earlier run, which receive the same intent, action and policy
+inputs, used at most 446 tokens (median 285). Jig's Sentinel template adds about 670 characters, and the
+reviewer may generate up to Jig's 8{,}192-token output cap, so the context is set to 10{,}240 tokens (from
+16{,}384). The harness's VRAM guard is unchanged. By its own estimate this server still does not fit next
+to the owner's 8080 server (about 19.4\,GB plus a 2\,GB margin against about 18.4--18.8\,GB free), because
+the weights, not the context, are the binding constraint. That condition therefore stays queued and is
+refused loudly until enough memory is free.
 
 \paragraph{Conditions.} The configurations an owner can choose: Jig's Sentinel on the agent's own model
 in action mode and in read-only research mode; the Sentinel on the standard-quantisation counterpart

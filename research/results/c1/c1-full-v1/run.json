@@ -155,7 +155,10 @@
    "services": {
     "services": "none",
     "routes": {}
-   }
+   },
+   "closed": true,
+   "closed_reason": "paused: user active (last input 3s ago)",
+   "closed_at": "2026-10-02T07:44:45+00:00"
   }
  ],
  "name": "c1-full-v1",

@@ -8,8 +8,14 @@
 \item \textbf{Subsample and floor.} D1 uses the first five user tasks and first three injection tasks of
   each AgentDojo suite in registry order, not a random sample, and attack success without any defence was
   near zero, so the run cannot discriminate between reviewers on security.
-\item \textbf{Decoding.} D1 samples the agent and reviewers at temperature 0, whereas the protocol
-  specifies Jig's default sampling; C1 uses Jig's defaults. This is recorded as a deviation.
+\item \textbf{Decoding in the earlier run.} The earlier D1 run was configured for temperature 0, but
+  AgentDojo's client omits a zero temperature, so its agent sampled at the server's defaults (equal to
+  Jig's) without a seed, while its reviewers ran at temperature 0. The protocol v0.4 run sends Jig's
+  defaults and the seed explicitly on every request and records them per trial.
+\item \textbf{Real DNS in a simulated benchmark.} Jig's \texttt{no-local-network} rule resolves every URL's
+  host in real DNS. A D1 run therefore makes DNS lookups for AgentDojo's host names (and no other network
+  traffic, because AgentDojo's tools are simulated). Fictional hosts that do not resolve are refused in
+  every condition, which lowers Slack utility for reasons unrelated to the reviewers.
 \item \textbf{Per-layer attribution is partial.} Which layer refused each call is recorded only for trials
   after a harness change during the run: none of the Granite Guardian trials and 87 of 140 no-reviewer
   trials (in which every refusal is necessarily a core rule).
@@ -20,12 +26,13 @@
 \item \textbf{Memory pilot scale.} The C1 pilot has one question per type and four sessions per question,
   so intervals are very wide and no difference reported here is statistically established.
 \item \textbf{Output limit and hidden reasoning.} The agent's hidden reasoning counts towards its
-  8192-token output limit. On every rolling-summary trial in the full run so far, the summary rewrite
-  reached the limit with no visible output: a diagnostic replay shows the model spending the whole budget
-  counting the summary's words one by one to honour the 400-word bound (27{,}000--29{,}000 characters of
-  reasoning, not a repetition loop). Such trials are harness errors, not scored, which can flatter that
-  strategy; the treatment (a higher limit, reasoning off for this call, or scoring the cut-off as a
-  failure of the strategy) is an open decision.
+  8192-token output limit. On every rolling-summary attempt in the full run so far (5 attempts on 3
+  questions), the summary rewrite reached the limit with no visible output. Diagnostic replays show the
+  model spending the whole budget counting the summary's words one by one to honour the 400-word bound
+  (27{,}000--29{,}000 characters of reasoning, not a repetition loop). Those trials are harness errors and are not scored. From protocol
+  v0.4 the summary prompt sets no word limit and these trials are re-run as a separate run. The cut-off
+  trials are kept as a finding: with a reasoning model, an explicit length limit in the prompt can use up
+  the whole output budget on self-checking.
 \item \textbf{One agent.} The agent is one ternary 27B model; its Q4 counterpart is downloaded and queued.
 \item \textbf{Judge.} The judge is a local model, not the GPT-4o judge LongMemEval's prompts were
   validated with; a hand audit of a sample of verdicts is planned for the full run.

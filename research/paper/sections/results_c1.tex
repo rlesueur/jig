@@ -15,3 +15,13 @@ every session triggers an extraction task and every third a consolidation task. 
 answered two of three (67\%; 21--94\%) and bounded full context one of four (25\%; 5--70\%), both at about
 7{,}400--8{,}100 tokens. Every strategy except retrieval missed the multi-session question. With $n \le 4$ per cell every interval overlaps, so these are \pilot{} observations,
 not findings, and carry no hypothesis tests.
+
+\paragraph{Finding: reasoning models spend their output budget counting words.} In the full run, every
+rolling-summary attempt so far was cut off at the 8{,}192-token output limit with no visible output: 5 of
+5 attempts on 3 questions. Diagnostic replays (streamed and not scored) of the three latest attempts
+recorded 27{,}345, 28{,}403 and 29{,}384 characters of hidden reasoning, in which the model counted the
+summary's words one by one to keep it ``under 400 words''. The reasoning was not a loop: 89\%, 100\% and
+98\% of its lines were distinct. The instruction was cheap to write but expensive to obey. From protocol
+v0.4 the prompt drops the limit and leaves everything else unchanged. All 30 rolling-summary trials re-run
+as their own run, and the cut-off attempts stay in the earlier run as this finding; neither is pooled with
+the other.

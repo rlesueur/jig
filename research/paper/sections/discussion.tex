@@ -24,7 +24,10 @@ return to.
 \paragraph{Incidental rules shape results.} Jig's core URL rule, which refuses addresses without a
 scheme, accounted for most refusals in every configuration because AgentDojo's Slack suite writes bare
 host names. Comparisons between reviewers are therefore only meaningful alongside a per-layer account of
-what was refused, which the harness now records for every blocked call.
+what was refused, which the harness now records for every blocked call. The account did more than
+explain the numbers: it exposed a usability bug in the rule itself, now fixed in Jig. This is a modest
+argument for running published benchmarks through the real product rather than through an idealised
+harness.
 
 \paragraph{Cost is where the configurations differ.} With security at the floor, the measurable
 differences are in utility and approvals: Granite Guardian, prompted with a criterion written for this

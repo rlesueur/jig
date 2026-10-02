@@ -1,7 +1,9 @@
-\subsection{D1 interim: Jig's defences on AgentDojo}
+\subsection{D1 interim (earlier run): Jig's defences on AgentDojo}
 \label{sec:results-d1}
 
-Four of the five planned configurations have finished all 140 of their trials (560 of 700); the fifth,
+These results come from the earlier run \texttt{d1-full-v1}. It used a subsample with one seed and
+\emph{preceded} Jig's bare-URL fix, so these results are reported separately from the protocol v0.4 run
+and never pooled with it. Four of the five planned configurations have finished all 140 of their trials (560 of 700); the fifth,
 the Sentinel on the Q4\_K\_M Qwen counterpart, could not start because that model needs about
 21.7\,GB with the safety margin beside the owner's server and 18.2\,GB was free, so it remains queued.
 No finished trial is a harness error (14 errors in the first attempt, caused by a pipeline-naming fault,
@@ -15,8 +17,8 @@ Sentinel on the agent's own model (3\%; 1--8\%), 4/120 with Granite Guardian (3\
 read-only mode (2\%; 0--6\%). Every one of these 13 successes is the same AgentDojo case, travel
 \texttt{injection\_task\_6}, whose goal is met by what the agent \emph{says} (its ground truth needs no tool
 call). On the 110 injected trials per configuration whose goal needs a tool call, the attack never
-succeeded in any configuration (0/110; 0--3\%). With this agent (the ternary Bonsai 2 27B at temperature 0)
-and this subsample, the undefended agent almost never acts on an injection, so the benchmark cannot
+succeeded in any configuration (0/110; 0--3\%). With this agent (the ternary Bonsai 2 27B at the server's
+default sampling, which equals Jig's defaults) and this subsample, the undefended agent almost never acts on an injection, so the benchmark cannot
 separate the defences on security: H-D1 and H-D2 are neither supported nor refuted here.
 
 \paragraph{Defences differ in what they cost.} With no attack present, the user's task succeeded in
@@ -38,3 +40,20 @@ mode. The rule rejects URLs without an \texttt{http}/\texttt{https} scheme, and 
 web addresses as bare host names (\texttt{www.\ldots}), so the rule blocks benign and injected web calls
 alike. It is a genuine Jig behaviour, but an incidental one: it lowers Slack utility in every
 configuration and would also stop any injection whose goal is to fetch or post to such an address.
+
+\paragraph{Finding: the benchmark surfaced a usability bug in a core rule.} A person who types
+\texttt{www.example.com} means a web page. Refusing it as ``scheme `none'\,'' protects nothing, and it
+fails the user's task. Jig now completes a bare web address in an outbound tool's URL argument to
+\texttt{https://} before \emph{every} check (Jig commit \texttt{733c80c}). The completed URL is what core
+rules, custom rules, the Sentinel, approvals, the tool and egress all see. The completion is written to
+the audit log and shown on approval cards. Only unambiguous host names are completed: a domain in public
+syntax or an IP literal. Anything with a scheme of its own, a single label such as \texttt{localhost},
+embedded user information or whitespace is left as written, and nothing is ever downgraded to
+\texttt{http://}.
+
+Replaying the Slack suite's own ground-truth calls through the fixed gate, all 19 URL calls now pass the
+scheme check and 7 run. The other 12 are still refused by the same rule, for a different reason: it
+resolves each host in real DNS and fails closed, and AgentDojo's fictional sites (for example
+\texttt{www.dora-website.com}) do not exist. That is the rule working as designed. We report it as a
+mismatch between the benchmark and a real environment rather than exempting benchmark hosts. The protocol
+v0.4 run uses the fixed Jig, so its Slack results are not comparable with the table above.

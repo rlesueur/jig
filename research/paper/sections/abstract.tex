@@ -19,5 +19,8 @@ see; on cases that need a tool call the attack never succeeded (0/110 per config
 configurations therefore differ in cost rather than in security: Granite Guardian in the reviewer slot
 lowered task utility under attack from 77\% to 59\%, and read-only mode to 46\%, while Jig's Sentinel kept
 utility at 78\% at the price of 0.3 approval requests per task. Most refusals came from a core URL rule,
-not from a reviewer. In the memory pilot ($n=4$ questions) retrieval answered all four using a quarter to a
+not from a reviewer. The benchmark thereby surfaced a usability bug: the rule refused web addresses
+written without a scheme. That bug is now fixed in Jig, and later runs are reported separately. In the
+memory full run, a reasoning agent asked to keep a summary under 400 words spent its whole output budget
+counting words. In the memory pilot ($n=4$ questions) retrieval answered all four using a quarter to a
 third of the prompt tokens of agent-curated consolidation. All results are interim or pilot, with wide intervals.
