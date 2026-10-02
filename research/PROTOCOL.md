@@ -163,8 +163,47 @@ Full runs start only between 01:00 and 07:00 Europe/London after 5 minutes witho
 after 30 minutes without input, and only if a 5-second GPU utilisation sample averages ≤25%. While a trial
 runs, the harness checks user input every 5 seconds and cancels the trial, stops its model servers and
 exits as soon as the user is active; between trials it also re-checks GPU use. Unfinished trials leave no
-record, so the next start resumes cleanly. Port 8080 (the owner's server) is never started or stopped;
-harness servers use ports 8090–8099 and are refused if free VRAM would drop below a 2 GiB margin.
+record, so the next start resumes cleanly. Harness servers use ports 8090–8099 and are refused if free
+VRAM would drop below a 2 GiB margin.
+
+### 9a. Safe GPU handover for the main (8080) server
+
+Some runs need a test model to have the whole GPU to itself, which means briefly stopping the main model
+server on port 8080. The harness does this through a **safe, reversible handover** (implemented in
+`jigbench.handover`, not in Jig's core) that never interrupts anything in use and always restores the
+original server. It replaces the earlier "never touch 8080" rule.
+
+**Preconditions (all must hold, re-checked immediately before stopping):**
+1. inside the overnight window, or the user idle ≥ 30 minutes;
+2. the 8080 server has had no active request for ≥ 10 continuous minutes, polled from llama-server's
+   `/slots` (all slots idle) or `/metrics` (`requests_processing == 0`) as a fallback — this also protects
+   other agents running tests against 8080;
+3. Jig (`127.0.0.1:8766`, token from `jig token show` or the data directory) reports no running tasks or
+   steps, no in-flight chat and nothing scheduled during the handover window, via its real API
+   (`/status`, `/state`, `/tasks`, `/schedules`); if Jig is not running this passes and is recorded;
+4. no `pytest`, demo-recording or `playwright` process is running.
+If any check fails, nothing is stopped: the reason is logged and the handover is retried later.
+
+**Sequence.** Pause Jig first (`POST /agent/pause`) so no new work starts; capture the exact command line,
+working directory and relevant environment of the live 8080 process (via `psutil`) to
+`research/logs/handover-<ts>.json`; stop it gracefully (polite stop, wait, force only on timeout) and
+confirm VRAM was released; run the test model(s) within the VRAM budget, still re-checking user activity.
+
+**Always restore.** When the runs finish, or the user becomes active, or Jig receives queued work, or any
+error occurs: stop our server, restart the original from the recorded command line/cwd/environment (logs to
+`research/logs/`), wait until `/v1/models` serves the same alias again, then unpause Jig only if we paused
+it. Restoration is guaranteed by `try/finally` in the harness **and** by an independent per-user watchdog
+task `\Jig\Jig Research Restore` (every 5 minutes) that restores from the latest unrestored handover file
+when no harness process is alive. Handover files are marked `restored` when done; restoration must succeed
+or fail loudly in `research/logs/handover.log`. At most one handover is in progress at a time, and the
+watchdog restores within a few minutes of the user returning.
+
+**Ownership.** If Jig *launched and supervises* the 8080 server (its `[model.launch]` supervisor would
+restart it), the harness never kills it behind Jig's back: it uses Jig's own power API
+(`POST /power/stop` / `/power/start` with scope `jig_and_model`, or `jig model stop|start`) when that has
+landed, and otherwise refuses the handover and logs why. A hand-started 8080 server is stopped and restored
+directly. The case is detected from the process ancestry and Jig's `/status` before each handover. Port
+8080 is never started or stopped except through this handover.
 
 ## 10. Threats to validity and ethics
 
