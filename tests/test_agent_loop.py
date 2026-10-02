@@ -75,6 +75,17 @@ async def test_a_chat_turn_that_fails_is_kept_and_can_be_continued(jig):
     assert jig.store.get_session(sid)[0]["content"] == ask
 
 
+async def test_a_long_conversation_still_gets_the_whole_step_limit_each_turn(jig):
+    earlier = [m for i in range(jig.agent.max_steps + 2) for m in (
+        {"role": "user", "content": f"Question {i}: say a number."}, {"role": "assistant", "content": str(i)})]
+    jig.store.save_session("sess_long", earlier)
+    items = [item async for item in jig.chat("Use current_time for Europe/London, then tell me the hour.",
+                                             session_id="sess_long")]
+    assert items[-1]["type"] == "done" and not items[-1].get("limit_reached"), items[-1]
+    run = jig.store.get_run(items[-1]["run_id"])
+    assert any(s["name"] == "current_time" for s in run["step_records"] if s["type"] == "tool_call")
+
+
 async def test_streaming_chat_yields_deltas_and_done(jig):
     items = [item async for item in jig.chat("Reply with one short sentence greeting me.")]
     kinds = [i["type"] for i in items]

@@ -45,6 +45,12 @@ class RunResult:
     messages: list[dict[str, Any]]
 
 
+def _steps_taken(messages: list[dict[str, Any]]) -> int:
+    """Model calls already made for the newest user message (a resumed run's own steps), not earlier turns'."""
+    last_user = max((i for i, m in enumerate(messages) if m["role"] == "user"), default=-1)
+    return sum(1 for m in messages[last_user + 1:] if m["role"] == "assistant")
+
+
 def _pending_tool_calls(messages: list[dict[str, Any]]) -> list[ToolCall]:
     """Tool calls in the last assistant message that have no result yet (used on resume)."""
     for i in range(len(messages) - 1, -1, -1):
@@ -83,7 +89,7 @@ class Agent:
                           **ids, run_kind=spec.kind, mode=spec.mode.value)
         call_ctx = CallContext(run_id=run_id, task_id=spec.task_id, mode=spec.mode, intent=spec.intent,
                                on_wait=spec.on_wait, pause=spec.pause)
-        steps = sum(1 for m in messages if m["role"] == "assistant")
+        steps = _steps_taken(messages)
         try:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
