@@ -210,7 +210,7 @@ def build_registry() -> ToolRegistry:
         category=ToolCategory.MEMORY,
         args={"content": "The fact to remember, as one sentence.", "tags": "Optional tags."},
     )
-    async def memory_add(ctx: ToolContext, content: str, tags: list | None = None) -> dict[str, Any]:
+    async def memory_add(ctx: ToolContext, content: str, tags: list[str] | None = None) -> dict[str, Any]:
         source = f"task:{ctx.task_id}" if ctx.task_id else f"run:{ctx.run_id}"
         return ctx.memory.add(content, tags=[str(t) for t in tags or []], source=source)
 
@@ -300,7 +300,7 @@ def build_registry() -> ToolRegistry:
     )
     async def schedule_create(ctx: ToolContext, name: str, prompt: str,
                               repeat: Literal["daily", "weekdays", "weekly", "interval", "cron"], at: str = "",
-                              days: list | None = None, every_minutes: int = 0, cron: str = "",
+                              days: list[str] | None = None, every_minutes: int = 0, cron: str = "",
                               mode: Literal["research", "action"] = "research", timezone: str = "") -> dict[str, Any]:
         rec, tz = _schedule_recurrence(ctx, {"repeat": repeat, "at": at, "days": days,
                                              "every_minutes": every_minutes, "cron": cron, "timezone": timezone})

@@ -543,7 +543,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
     )
     async def outlook_create_event(ctx: ToolContext, subject: str, start: str, end: str, calendar_id: str = "default",
                                    time_zone: str = "", location: str = "", notes: str = "",
-                                   attendees: list | None = None) -> dict[str, Any]:
+                                   attendees: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_WRITE_CAL, "create events")
         _check_text(subject, notes)
         guests = _attendees(attendees)
@@ -575,7 +575,7 @@ def register_microsoft_tools(registry: ToolRegistry, connectors: Connectors) -> 
     async def outlook_update_event(ctx: ToolContext, event_id: str, calendar_id: str = "default",
                                    subject: str | None = None, start: str | None = None, end: str | None = None,
                                    time_zone: str = "", location: str | None = None, notes: str | None = None,
-                                   attendees: list | None = None) -> dict[str, Any]:
+                                   attendees: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, CAN_WRITE_CAL, "change events")
         _check_text(subject, notes)
         body: dict[str, Any] = {}

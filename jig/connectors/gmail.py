@@ -385,8 +385,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
         args={"to": "Recipient email addresses.", "subject": "Subject line.", "body": "Plain-text message.",
               "cc": "Optional Cc addresses.", "thread_id": "Optional thread to reply in."},
     )
-    async def gmail_create_draft(ctx: ToolContext, to: list, subject: str, body: str, cc: list | None = None,
-                                 thread_id: str = "") -> dict[str, Any]:
+    async def gmail_create_draft(ctx: ToolContext, to: list[str], subject: str, body: str,
+                                 cc: list[str] | None = None, thread_id: str = "") -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, COMPOSE, "create drafts")
         args = {"to": to, "cc": cc, "subject": subject, "body": body}
         _check_message(args)
@@ -410,7 +410,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
         args={"to": "Recipient email addresses.", "subject": "Subject line.", "body": "Plain-text message.",
               "cc": "Optional Cc addresses."},
     )
-    async def gmail_send(ctx: ToolContext, to: list, subject: str, body: str, cc: list | None = None) -> dict[str, Any]:
+    async def gmail_send(ctx: ToolContext, to: list[str], subject: str, body: str,
+                         cc: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, COMPOSE, "send mail")
         args = {"to": to, "cc": cc, "subject": subject, "body": body}
         _check_message(args)
@@ -448,8 +449,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
         args={"thread_id": "Thread to reply in.", "to": "Recipient email addresses.", "body": "Plain-text reply.",
               "cc": "Optional Cc addresses."},
     )
-    async def gmail_reply(ctx: ToolContext, thread_id: str, to: list, body: str,
-                          cc: list | None = None) -> dict[str, Any]:
+    async def gmail_reply(ctx: ToolContext, thread_id: str, to: list[str], body: str,
+                          cc: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, COMPOSE, "send mail")
         subject, in_reply_to, references = await _reply_headers(ctx, _check_id(thread_id, "thread_id"))
         args = {"to": to, "cc": cc, "subject": subject, "body": body}
@@ -469,8 +470,8 @@ def register_gmail_tools(registry: ToolRegistry, connectors: Connectors) -> None
         variant=TaskVariant.WRITING, available=can_modify, resolve=resolve_thread, precheck=limits_problem,
         args={"thread_id": "Thread to change.", "add": "Labels to add.", "remove": "Labels to remove."},
     )
-    async def gmail_modify_labels(ctx: ToolContext, thread_id: str, add: list | None = None,
-                                  remove: list | None = None) -> dict[str, Any]:
+    async def gmail_modify_labels(ctx: ToolContext, thread_id: str, add: list[str] | None = None,
+                                  remove: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, MODIFY, "change labels")
         if not add and not remove:
             raise ToolArgumentError("give labels to add or to remove")

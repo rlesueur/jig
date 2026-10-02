@@ -244,7 +244,7 @@ def register_calendar_tools(registry: ToolRegistry, connectors: Connectors) -> N
     )
     async def gcal_create_event(ctx: ToolContext, summary: str, start: str, end: str, calendar_id: str = "primary",
                                 time_zone: str = "", location: str = "", description: str = "",
-                                attendees: list | None = None) -> dict[str, Any]:
+                                attendees: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, WRITE, "create events")
         _check_text(summary, description)
         guests = _attendees(attendees)
@@ -275,7 +275,7 @@ def register_calendar_tools(registry: ToolRegistry, connectors: Connectors) -> N
     async def gcal_update_event(ctx: ToolContext, event_id: str, calendar_id: str = "primary",
                                 summary: str | None = None, start: str | None = None, end: str | None = None,
                                 time_zone: str = "", location: str | None = None, description: str | None = None,
-                                attendees: list | None = None) -> dict[str, Any]:
+                                attendees: list[str] | None = None) -> dict[str, Any]:
         ctx.connectors.require_scope(NAME, WRITE, "change events")
         _check_text(summary, description)
         body: dict[str, Any] = {}

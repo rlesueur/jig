@@ -17,6 +17,7 @@ from typing import Any
 
 from ..constants import CATEGORY_TO_VARIANT, RESEARCH_ALLOWED_EFFECTS, Decision, Effect, Mode, TaskVariant, ToolCategory
 from ..errors import ToolArgumentError, ToolNotFound
+from ..schema import problems
 
 _JSON_TYPES: dict[Any, str] = {str: "string", int: "integer", float: "number", bool: "boolean",
                                dict: "object", list: "array"}
@@ -111,35 +112,29 @@ class ToolSpec:
         }
 
     def validate(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Check arguments in place. ``null`` for an optional argument means "use the default"."""
+        """Check arguments in place. ``null`` for an optional argument means "use the default".
+
+        Every problem is reported at once, nested ones included, so the model can fix them all in one go."""
         props = self.parameters["properties"]
         required = set(self.parameters.get("required", []))
         for key in [k for k, v in args.items() if v is None and k in props and k not in required]:
             del args[key]
-        unknown = set(args) - set(props)
-        if unknown:
-            raise ToolArgumentError(f"{self.name}: unknown arguments {sorted(unknown)}")
-        missing = [k for k in self.parameters.get("required", []) if k not in args]
-        if missing:
-            raise ToolArgumentError(f"{self.name}: missing required arguments {missing}")
+        found = [f"unknown argument {k!r}" for k in sorted(set(args) - set(props))]
+        found += [f"missing required argument {k!r}" for k in self.parameters.get("required", []) if k not in args]
         for key, value in args.items():
-            expected = props[key].get("type")
-            if expected and not _matches(value, expected):
-                raise ToolArgumentError(f"{self.name}: argument {key!r} must be of type {expected}")
-            if "enum" in props[key] and value not in props[key]["enum"]:
-                raise ToolArgumentError(f"{self.name}: argument {key!r} must be one of {props[key]['enum']}")
-            if "pattern" in props[key] and not re.fullmatch(props[key]["pattern"], value):
-                raise ToolArgumentError(f"{self.name}: argument {key!r} must match {props[key]['pattern']}")
+            if key not in props:
+                continue
+            found += problems(value, props[key], key)
+            pattern = props[key].get("pattern")
+            if pattern and isinstance(value, str) and not re.fullmatch(pattern, value):
+                found.append(f"{key} must match {pattern}")
+        if found:
+            raise ToolArgumentError(f"{self.name}: {len(found)} problem{'s' if len(found) > 1 else ''} with the "
+                                    f"arguments: " + "; ".join(found))
+        for key, value in args.items():
+            if props[key].get("type") == "integer" and isinstance(value, float):
+                args[key] = int(value)
         return args
-
-
-def _matches(value: Any, expected: str) -> bool:
-    if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    py = {"string": str, "boolean": bool, "object": dict, "array": list}[expected]
-    return isinstance(value, py)
 
 
 def _json_type(annotation: Any) -> dict[str, Any]:
@@ -152,6 +147,11 @@ def _json_type(annotation: Any) -> dict[str, Any]:
     if origin is typing.Literal:
         values = list(typing.get_args(annotation))
         return {"type": _JSON_TYPES[type(values[0])], "enum": values}
+    if origin is list and typing.get_args(annotation):
+        try:
+            return {"type": "array", "items": _json_type(typing.get_args(annotation)[0])}
+        except TypeError:
+            return {"type": "array"}
     if origin in (list, dict):
         return {"type": _JSON_TYPES[origin]}
     if annotation in _JSON_TYPES:
