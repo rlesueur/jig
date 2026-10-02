@@ -174,7 +174,7 @@ class AvatarStateTracker:
                 act.phase, act.variant = AvatarState.TALKING, None
             else:
                 return
-        elif t == EventType.TOOL_START:
+        elif t in (EventType.TOOL_START, EventType.TOOL_CHECKOUT):
             variant = d.get("variant")
             if act.background and d.get("effect") == Effect.READ:
                 variant = TaskVariant.BROWSING.value  # background fetching or reading shows dimmed browsing

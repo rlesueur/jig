@@ -15,11 +15,27 @@ from datetime import datetime
 from typing import Any, Literal
 
 from ..constants import Effect, TaskVariant, ToolCategory
+from ..errors import ToolError
 from ..vault import SECRET_REF
+from .checkout import classify
 from .registry import ToolContext, ToolRegistry
 from .web import ensure_public
 
 SCREENSHOT_DIR = "screenshots"
+
+
+async def inspect_target(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """Before review: what this submit or click would send, and whether it is a checkout or booking
+    (see checkout.py). Read-only and offline: it only looks at the page already open."""
+    session = await ctx.container.browser()
+    try:
+        info = await session.call("inspect_submit", selector=args.get("selector") or args.get("submit_selector"))
+    except ToolError as exc:
+        if "unknown command" in str(exc):
+            raise ToolError("the sandbox image is older than this Jig and can't check for checkouts; rebuild it "
+                            "with 'jig sandbox build'") from None
+        raise
+    return classify(info)
 
 
 async def _call(ctx: ToolContext, tool: str, command: str, *, network: bool, **args: Any) -> dict[str, Any]:
@@ -76,8 +92,9 @@ def register_browser_tools(registry: ToolRegistry) -> None:
 
     @tool(
         description="Click an element on the current page. Selector: CSS, text=..., or role=button[name=\"...\"]. "
-        "Form submissions caused by the click are blocked; use browser_submit for those.",
-        effect=Effect.SIDE_EFFECT, outbound=True, **web,
+        "Form submissions caused by the click are blocked; use browser_submit for those. Clicking anything that "
+        "pays, buys or books always needs the user's approval.",
+        effect=Effect.SIDE_EFFECT, outbound=True, resolve=inspect_target, **web,
         args={"selector": "Playwright selector of the element to click."},
     )
     async def browser_click(ctx: ToolContext, selector: str) -> dict[str, Any]:
@@ -95,7 +112,8 @@ def register_browser_tools(registry: ToolRegistry) -> None:
                            press_enter=press_enter)
 
     @tool(
-        description="Set the value of a form field on the current page (replaces its contents). Does not submit.",
+        description="Set the value of a form field on the current page (replaces its contents). Does not submit. "
+        "Card and bank fields are refused: the user enters payment details themselves.",
         effect=Effect.SIDE_EFFECT, outbound=True, **web,
         args={"selector": "Playwright selector of the field.", "value": "Value to put in the field."},
     )
@@ -104,8 +122,9 @@ def register_browser_tools(registry: ToolRegistry) -> None:
 
     @tool(
         description="Submit a form on the current page, by its form element or its submit button. Always needs "
-        "the user's approval.",
-        effect=Effect.SIDE_EFFECT, outbound=True, human_only=True, **web,
+        "the user's approval. Jig never types card or bank details: at a payment step, stop and let the user "
+        "enter them.",
+        effect=Effect.SIDE_EFFECT, outbound=True, human_only=True, resolve=inspect_target, **web,
         args={"selector": "Playwright selector of the form or its submit button."},
     )
     async def browser_submit(ctx: ToolContext, selector: str) -> dict[str, Any]:

@@ -9,6 +9,12 @@ JIG_BROWSER_PROXY. Two guards stop the page from sending data on its own:
   sent by a click or an Enter key either.
 
 Values filled by ``login`` are remembered and redacted from every later reply.
+
+Jig never types payment details: ``type``, ``fill`` and ``login`` refuse any field that is for a card
+number, expiry, security code, cardholder name or bank account (by its autocomplete hint, name, id,
+label or placeholder). ``inspect_submit`` describes, read-only, what a form or button would submit
+(the site, the button, the fields' kinds, amounts and lines on the page, payment-provider frames), so
+Jig can recognise a checkout, payment or booking and show it to the user before asking.
 """
 
 from __future__ import annotations
@@ -28,7 +34,62 @@ WORKSPACE = Path("/workspace")
 NAV_TIMEOUT_MS = 30_000
 ACTION_TIMEOUT_MS = 10_000
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-COMMANDS = {"open", "read", "screenshot", "click", "type", "fill", "submit", "login"}
+COMMANDS = {"open", "read", "screenshot", "click", "type", "fill", "submit", "login", "inspect_submit"}
+
+# Describes a field without its value. Shared by the payment-field guard and inspect_submit.
+FIELD_JS = """
+(f) => {
+  const labels = f.labels ? Array.from(f.labels).map((l) => l.innerText || '') : [];
+  return {
+    tag: f.tagName.toLowerCase(), type: (f.getAttribute('type') || '').toLowerCase(),
+    name: f.getAttribute('name') || '', id: f.id || '',
+    autocomplete: (f.getAttribute('autocomplete') || '').toLowerCase(),
+    label: (labels.join(' ') || f.getAttribute('aria-label') || '').trim().slice(0, 80),
+    placeholder: (f.getAttribute('placeholder') || '').slice(0, 80),
+  };
+}
+"""
+
+INSPECT_JS = """
+(el) => {
+  const describe = %s;
+  const form = el.tagName === 'FORM' ? el : (el.form || el.closest('form'));
+  let button = el;
+  if (el.tagName === 'FORM') {
+    button = el.querySelector('button[type=submit], input[type=submit], button:not([type])') || el;
+  }
+  const meta = (n) => (document.querySelector(`meta[property="${n}"], meta[name="${n}"]`) || {}).content || '';
+  const fields = form ? Array.from(form.elements).filter((f) => f.tagName !== 'BUTTON' && f.type !== 'submit'
+    && f.type !== 'hidden').slice(0, 40).map(describe) : [];
+  const frames = Array.from(document.querySelectorAll('iframe[src]')).map((f) => {
+    try { return new URL(f.src, location.href).host; } catch (e) { return ''; }
+  }).filter(Boolean);
+  const heads = Array.from(document.querySelectorAll('h1, h2, h3')).map((h) => (h.innerText || '').trim())
+    .filter(Boolean).slice(0, 12);
+  return {
+    url: location.href, host: location.host, title: document.title,
+    site_name: meta('og:site_name') || meta('application-name'),
+    button: ((button.innerText || button.value || button.getAttribute('aria-label') || '') + '').trim().slice(0, 120),
+    form_action: form ? (form.getAttribute('action') || '') : '', form_method: form ? (form.method || 'get') : '',
+    is_form: Boolean(form), fields, frames, headings: heads,
+    text: (document.body ? document.body.innerText : '').slice(0, 20000),
+  };
+}
+""" % FIELD_JS.strip()
+
+_PAYMENT_AUTOCOMPLETE = ("cc-", "transaction-amount")
+_PAYMENT_WORDS = ("card", "cvv", "cvc", "csc", "security code", "securitycode", "expir", "expmonth", "expyear",
+                  "exp-month", "exp-year", "iban", "sort code", "sortcode", "account number", "accountnumber",
+                  "routing")
+
+
+def payment_field(info: dict) -> bool:
+    """True for a field meant for payment details (it must never be typed into by Jig)."""
+    if any(info.get("autocomplete", "").startswith(p) or f" {p}" in info.get("autocomplete", "")
+           for p in _PAYMENT_AUTOCOMPLETE):
+        return True
+    text = " ".join(str(info.get(k, "")) for k in ("name", "id", "label", "placeholder")).lower()
+    return any(w in text for w in _PAYMENT_WORDS)
 
 SUBMIT_GUARD_JS = """
 (() => {
@@ -158,10 +219,20 @@ class Browser:
         self.page.screenshot(path=str(target), full_page=full_page)
         return self._state(path=path, bytes=target.stat().st_size)
 
+    def _refuse_payment_field(self, selector: str) -> None:
+        loc = self.page.locator(selector).first
+        info = loc.evaluate(FIELD_JS)
+        if payment_field(info):
+            what = info.get("label") or info.get("name") or info.get("id") or info.get("autocomplete")
+            raise CommandError(f"refused: {what!r} is a payment field (card or bank details). Jig never types "
+                               "payment details; the user enters them in their own browser.")
+
     def click(self, selector: str) -> dict:
         return self._guarded(lambda: self.page.click(selector))
 
     def type(self, selector: str, text: str, press_enter: bool = False) -> dict:
+        self._refuse_payment_field(selector)
+
         def action() -> None:
             self.page.locator(selector).first.press_sequentially(text, delay=20)
             if press_enter:
@@ -169,7 +240,15 @@ class Browser:
         return self._guarded(action)
 
     def fill(self, selector: str, value: str) -> dict:
+        self._refuse_payment_field(selector)
         return self._guarded(lambda: self.page.fill(selector, value))
+
+    def inspect_submit(self, selector: str) -> dict:
+        """What submitting this form or clicking this button would send, read-only, without any values."""
+        info = self.page.locator(selector).first.evaluate(INSPECT_JS)
+        for field in info["fields"]:
+            field["payment"] = payment_field(field)
+        return info
 
     def submit(self, selector: str) -> dict:
         loc = self.page.locator(selector).first
@@ -179,6 +258,8 @@ class Browser:
 
     def login(self, username_selector: str, username: str, password_selector: str, password: str,
               submit_selector: str) -> dict:
+        self._refuse_payment_field(username_selector)
+        self._refuse_payment_field(password_selector)
         self.secrets.update(v for v in (username, password) if v)
         self.page.fill(username_selector, username)
         self.page.fill(password_selector, password)

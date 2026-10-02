@@ -42,6 +42,9 @@ CORE_RULES: tuple[CoreRule, ...] = (
              "Jig's own API or the local network)."),
     CoreRule("human-only-actions", Decision.ASK,
              "Tools marked human-only (purchases, sending messages and similar) always need the user's approval."),
+    CoreRule("payment-checkpoint", Decision.ASK,
+             "Submitting or clicking anything that looks like a checkout, payment, purchase or booking always "
+             "needs the user's approval, and Jig never types card or bank details."),
     CoreRule("sentinel-review", Decision.ASK,
              "Every outbound or side-effecting action is reviewed by the Sentinel; its deny cannot be overridden."),
 )
@@ -100,3 +103,13 @@ async def evaluate_core(spec: ToolSpec, args: dict[str, Any], vault: Vault) -> l
     if spec.human_only:
         findings.append(_finding("human-only-actions", f"{spec.name!r} always needs the user's approval"))
     return findings
+
+
+def checkpoint_finding(resolved: dict[str, Any] | None) -> CoreFinding | None:
+    """A lookup that recognised a checkout, payment or booking (jig.tools.checkout) forces a human."""
+    if not resolved or not resolved.get("checkout"):
+        return None
+    what = resolved["checkout"]
+    where = resolved.get("merchant") or resolved.get("site") or "this site"
+    amount = f" for {resolved['amount']}" if resolved.get("amount") else ""
+    return _finding("payment-checkpoint", f"this looks like a {what} at {where}{amount}; the user must decide")

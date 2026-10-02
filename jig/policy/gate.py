@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..audit import AuditLog
-from ..constants import ApprovalStatus, Decision, Effect, EventType, Mode, Verdict
+from ..constants import ApprovalStatus, Decision, Effect, EventType, Mode, TaskVariant, Verdict
 from ..errors import (ApprovalDenied, JigError, ModeViolation, PolicyBlocked, SentinelError, ToolArgumentError,
                       ToolError, ToolNotFound)
 from ..events import EventBus
@@ -33,7 +33,7 @@ from ..pause import until_paused
 from ..tools.registry import ToolContext, ToolRegistry
 from ..vault import Vault
 from .approvals import ApprovalQueue
-from .core import evaluate_core
+from .core import checkpoint_finding, evaluate_core
 from .rules import RuleStore
 from .sentinel import Sentinel
 from .urls import complete_url_args
@@ -156,6 +156,11 @@ class ToolExecutor:
             policy["resolved"] = resolved
             self.audit.record("policy.resolved", f"{spec.name}: looked up what it refers to", task_id=ctx.task_id,
                               run_id=ctx.run_id, tool=spec.name, call_id=call.id, resolved=resolved)
+            if checkpoint := checkpoint_finding(resolved):
+                findings.append(checkpoint)
+                self.bus.publish(EventType.TOOL_CHECKOUT, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
+                                 call_id=call.id, variant=TaskVariant.SHOPPING.value, checkout=resolved["checkout"],
+                                 merchant=resolved.get("merchant"), amount=resolved.get("amount"))
         if spec.precheck and not blocks:
             if problem := spec.precheck(self.config, args, resolved):
                 self.audit.record("policy.connector_limit", f"{spec.name} refused: {problem}", task_id=ctx.task_id,
@@ -226,8 +231,12 @@ class ToolExecutor:
             self.audit.record("vault.use", f"{spec.name} used secrets {sorted(used)}", task_id=ctx.task_id,
                               run_id=ctx.run_id, tool=spec.name, secrets=sorted(used))
         tool_ctx = self.context_factory(ctx)
+        # A lookup can say what the call really is (a form that turns out to be a checkout is shopping).
+        variant = spec.avatar_variant.value
+        if resolved and resolved.get("avatar_variant") in {v.value for v in TaskVariant}:
+            variant = resolved["avatar_variant"]
         self.bus.publish(EventType.TOOL_START, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
-                         category=spec.category.value, variant=spec.avatar_variant.value, effect=spec.effect.value,
+                         category=spec.category.value, variant=variant, effect=spec.effect.value,
                          call_id=call.id)
         redact = {**self.always_redact, **used}
         ok = False
