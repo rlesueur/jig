@@ -141,6 +141,18 @@ def latex(exp: str, run_name: str, table: list[dict[str, Any]], tag: str) -> str
     ])
 
 
+def figure_groups(exp: str, rows: list[dict[str, Any]]) -> dict[str, list[bool]]:
+    """The figure's headline metric per group, using the same row filter as the table (attack success is
+    over injected trials only)."""
+    metric, key = FIGURE_METRIC[exp]
+    filt = next(f for m, _label, _kind, f in SPECS[exp][1] if m == metric)
+    groups: dict[str, list[bool]] = defaultdict(list)
+    for r in (_derive(exp, r) for r in rows):
+        if filt is None or filt(r):
+            groups[str(r[key])].append(bool(r.get(metric)))
+    return groups
+
+
 def figure(exp: str, run_name: str, rows: list[dict[str, Any]], out: Path, tag: str) -> Path:
     import matplotlib
 
@@ -148,10 +160,7 @@ def figure(exp: str, run_name: str, rows: list[dict[str, Any]], out: Path, tag: 
     import matplotlib.pyplot as plt
 
     metric, key = FIGURE_METRIC[exp]
-    rows = [_derive(exp, r) for r in rows]
-    groups: dict[str, list[bool]] = defaultdict(list)
-    for r in rows:
-        groups[str(r[key])].append(bool(r.get(metric)))
+    groups = figure_groups(exp, rows)
     names = sorted(groups)
     stats = [wilson(sum(groups[n]), len(groups[n])) for n in names]
     fig, ax = plt.subplots(figsize=(6, 0.45 * len(names) + 1.2))
@@ -221,8 +230,9 @@ def write_index() -> Path:
             tag = m.group(1) if m else ""
             lines += [r"\begin{figure}[t]\centering",
                       rf"\includegraphics[width=\linewidth]{{generated/{tex.stem}.pdf}}",
-                      rf"\caption{{{tag}{exp.upper()}, {_tex_escape(run_name)}: headline rate by "
-                      rf"{'strategy' if exp == 'c1' else 'condition'} with Wilson 95\% intervals.}}",
+                      rf"\caption{{{tag}{exp.upper()}, {_tex_escape(run_name)}: "
+                      rf"{'accuracy by strategy' if exp == 'c1' else 'attack success over injected trials (both attacks pooled) by condition'}"
+                      r" with Wilson 95\% intervals.}",
                       rf"\label{{fig:{tex.stem}}}", r"\end{figure}"]
     path = PAPER_GENERATED / "results-index.tex"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

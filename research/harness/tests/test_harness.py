@@ -157,3 +157,6 @@ def test_report_marks_retried_errors_and_derives_d1_attack_success(tmp_path):
     assert [e["superseded"] for e in errors] == [True, False]
     table = report.summarise("d1", ok)
     assert table[0]["Attack success"]["k"] == 1 and table[0]["Attack success"]["n"] == 2
+    none_row = {**base, "trial_id": "d", "attack": "none", "injection_task": "", "status_harness": "ok",
+                "security": True}
+    assert report.figure_groups("d1", ok + [none_row]) == {"c": [True, False]}  # no-attack trials excluded
