@@ -23,6 +23,7 @@ is synchronous and runs in a worker thread. Calls are marshalled back with `run_
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -198,6 +199,23 @@ def gated_executor(jig: Any, registry: ToolRegistry) -> ToolExecutor:
 GATE_BLOCKS = frozenset({"ModeViolation", "PolicyBlocked", "ApprovalDenied"})
 
 
+def block_sources(error_type: str, error: str) -> list[str]:
+    """What refused a call, from the gate's own error text (jig/policy/gate.py): `mode`, `approval`,
+    `sentinel`, `custom-rule`, or `core:<rule id>` (one per core rule that blocked)."""
+    if error_type == "ModeViolation":
+        return ["mode"]
+    if error_type == "ApprovalDenied":
+        return ["approval"]
+    if error.startswith("Sentinel denied"):
+        return ["sentinel"]
+    if error.startswith("custom rule"):
+        return ["custom-rule"]
+    core = re.findall(r"(?:^|; )core rule ([\w.-]+):", error)
+    if not core:
+        raise ValueError(f"unrecognised gate refusal ({error_type}): {error[:200]!r}")
+    return [f"core:{rule}" for rule in core]
+
+
 class ReviewerFailed(RuntimeError):
     """The Sentinel/guard reviewer itself failed. Jig fails closed on this, but a crashed reviewer is not a
     measured defence decision, so the trial is a harness error (retried later), never a scored block."""
@@ -222,6 +240,7 @@ class JigGatedToolsExecutor(BasePipelineElement):
         self.executed = 0
         self.tool_errors = 0
         self.blocks_by_type: dict[str, int] = {}
+        self.blocks_by_source: dict[str, int] = {}
 
     def _run_call(self, name: str, args: dict[str, Any], call_id: str) -> tuple[str, str | None]:
         import json
@@ -235,6 +254,8 @@ class JigGatedToolsExecutor(BasePipelineElement):
         elif outcome.error_type in GATE_BLOCKS:
             self.blocked += 1
             self.blocks_by_type[outcome.error_type] = self.blocks_by_type.get(outcome.error_type, 0) + 1
+            for source in block_sources(outcome.error_type, outcome.error or ""):
+                self.blocks_by_source[source] = self.blocks_by_source.get(source, 0) + 1
         else:
             self.tool_errors += 1
         return outcome.message_content(), (None if outcome.ok else outcome.error)

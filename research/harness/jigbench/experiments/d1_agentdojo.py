@@ -131,6 +131,7 @@ async def run_trial(ctx: Any, trial: dict[str, Any]) -> dict[str, Any]:
         "approvals": approvals,
         "blocked_calls": gated.blocked,
         "blocks_by_type": gated.blocks_by_type,
+        "blocks_by_source": gated.blocks_by_source,
         "tool_errors": gated.tool_errors,
         "executed_calls": gated.executed,
         "mode": mode.value,

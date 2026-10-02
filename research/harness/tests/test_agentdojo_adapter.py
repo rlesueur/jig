@@ -31,7 +31,7 @@ from jig.tools.registry import ToolContext
 from jig.vault import Vault
 
 from jigbench.agentdojo_adapter import (TOOL_CLASS, EnvHolder, JigGatedToolsExecutor, ReviewerFailed,
-                                        build_registry, classify)
+                                        block_sources, build_registry, classify)
 from jigbench.reviewers import PassThroughReviewer
 
 
@@ -139,6 +139,26 @@ def test_gate_refusals_and_tool_errors_are_counted_apart(tmp_path: Path) -> None
         loop.call_soon_threadsafe(loop.stop)
     assert (gated.blocked, gated.tool_errors, gated.executed) == (1, 1, 1)
     assert gated.blocks_by_type == {"ModeViolation": 1}
+
+
+def test_block_sources_name_the_refusing_layer(tmp_path: Path) -> None:
+    suite = get_suite("v1", "slack")
+    holder = EnvHolder()
+    gated, loop = _gated(tmp_path, suite, holder, Mode.ACTION)
+    _bind(suite, holder)
+    try:
+        # AgentDojo's Slack suite writes URLs without a scheme; Jig's core URL rule refuses them.
+        gated._run_call("get_webpage", {"url": "www.informations.com"}, "1")
+        gated._run_call("get_webpage", {"url": "https://www.informations.com"}, "2")
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+    assert gated.blocks_by_source == {"core:no-local-network": 1}
+    assert gated.executed == 1
+    assert block_sources("ModeViolation", "core rule research-read-only: ...") == ["mode"]
+    assert block_sources("PolicyBlocked", "Sentinel denied 'x': core rule y: z") == ["sentinel"]
+    assert block_sources("PolicyBlocked", "core rule a: r1; core rule b-2: r2") == ["core:a", "core:b-2"]
+    with pytest.raises(ValueError):
+        block_sources("PolicyBlocked", "something new")
 
 
 def test_reviewer_failure_is_a_harness_error_not_a_block(tmp_path: Path) -> None:
