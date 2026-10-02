@@ -347,6 +347,7 @@ function askConfirm({ title, body, ok, danger = false }) {
 }
 
 const bullets = (lines) => el('ul', { class: 'confirm-list' }, lines.filter(Boolean).map((t) => el('li', { text: t })));
+window.jigConfirm = askConfirm;
 
 function start() {
   if (started) return;

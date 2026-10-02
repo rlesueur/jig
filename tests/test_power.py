@@ -87,8 +87,9 @@ def test_turn_off_through_the_api_refuses_an_external_model_server(tmp_path):
         assert state["applicable"] is True and state["can_stop_model"] is False
         assert state["model_server"]["already_running"] is True and state["model_server"]["managed"] is False
         assert "Jig didn't start the model server" in state["model_server"]["refusal"]
-        assert state["autostart"] == {"applicable": True, "registered": True, "entry": POWER_TEST_TASK}
-        assert "start again the next time you log on" in state["start_again"]
+        assert state["autostart"] == {"applicable": True, "registered": True, "entry": POWER_TEST_TASK,
+                                      "other_install": False}
+        assert "Start with Windows is on" in state["start_again"]
         assert httpx.get(f"{base}/power").status_code == 401  # authenticated like everything else
 
         # The confirmation field is required and must be exactly true; the scope must be known.
@@ -120,7 +121,7 @@ def test_turn_off_through_the_api_refuses_an_external_model_server(tmp_path):
         print("POST /power/stop:", json.dumps(r.json(), indent=2))
         assert r.status_code == 202 and r.json()["stopping"] is True
         assert r.json()["model_server"] == "not managed by Jig; left as it is"
-        assert "start again the next time you log on" in r.json()["message"]
+        assert "Start with Windows is on" in r.json()["message"]
         assert proc.wait(60) == 0, log.read_text(errors="replace")
     finally:
         kill(proc)

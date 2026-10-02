@@ -13,12 +13,11 @@ In container mode it is refused, because compose's restart policy would bring Ji
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from typing import Any
 
-from .autostart import AutostartError, LaunchSpec, backend_for, not_applicable_reason
+from .autostart import AutostartError, backend_from_config, not_applicable_reason
 from .config import Config
 from .errors import JigError
 from .model_server import ModelServerSupervisor
@@ -72,24 +71,26 @@ def gpu_usage(pid: int) -> dict[str, Any]:
 
 
 def autostart_summary(config: Config) -> dict[str, Any]:
+    """Whether THIS install starts with Windows. An entry that starts another Jig folder counts as not registered."""
     if reason := not_applicable_reason(config):
         return {"applicable": False, "registered": False, "reason": reason}
-    backend = backend_for(LaunchSpec.from_config(config), entry=os.environ.get("JIG_AUTOSTART_ENTRY") or None)
+    backend = backend_from_config(config)
     try:
-        return {"applicable": True, "registered": backend.is_registered(), "entry": backend.entry}
+        owner = backend.registered_owner()
+        return {"applicable": True, "registered": owner is not None and bool(backend.owned(owner)),
+                "entry": backend.entry, "other_install": owner is not None and not backend.owned(owner)}
     except AutostartError as exc:
         return {"applicable": True, "registered": None, "entry": backend.entry, "error": str(exc)}
 
 
-def start_again(autostart: dict[str, Any]) -> str:
+def start_again(autostart: dict[str, Any], *, tray: bool = False) -> str:
+    how = "use Jig from the Start menu or its tray icon" if tray else "run jig serve"
     if autostart.get("registered"):
-        return ("Stopping does not turn off 'Start with Windows': Jig will start again the next time you log on. "
-                "To start it sooner, run 'jig serve'. To keep it off, turn off 'Start with Windows' in Settings "
-                "(or run 'jig autostart disable').")
+        return (f"To start Jig again, {how}, or restart your computer: Start with Windows is on. To stop it "
+                "starting by itself, turn off Start with Windows in Settings next time Jig is running.")
     if autostart.get("registered") is None and autostart.get("applicable"):
-        return (f"Jig couldn't check 'Start with Windows' ({autostart.get('error')}). Start Jig again with "
-                "'jig serve'.")
-    return "Start Jig again with 'jig serve'."
+        return f"Jig couldn't check Start with Windows ({autostart.get('error')}). To start Jig again, {how}."
+    return f"To start Jig again, {how}."
 
 
 def power_state(config: Config, supervisor: ModelServerSupervisor) -> dict[str, Any]:

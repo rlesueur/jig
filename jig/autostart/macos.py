@@ -81,7 +81,21 @@ class LaunchdAgent(AutostartBackend):
     def is_registered(self) -> bool:
         return self.plist_path.exists()
 
+    def registered_owner(self) -> dict[str, Any] | None:
+        if not self.plist_path.exists():
+            return None
+        try:
+            data = plistlib.loads(self.plist_path.read_bytes())
+        except (OSError, plistlib.InvalidFileException) as exc:
+            raise AutostartError(f"could not read {self.plist_path}: {exc}") from exc
+        args = [str(a) for a in data.get("ProgramArguments") or []]
+        config = args[args.index("--config") + 1] if "--config" in args[:-1] else None
+        port = args[args.index("--port") + 1] if "--port" in args[:-1] else None
+        return {"data_dir": (data.get("EnvironmentVariables") or {}).get("JIG_DATA_DIR"), "config": config,
+                "port": int(port) if port and port.isdigit() else None}
+
     def enable(self, *, start_now: bool = False) -> Plan:
+        self.refuse_if_other_install()
         if self.is_registered():
             raise AutostartError(f"{self.plist_path} already exists; run 'jig autostart disable' first")
         plan = self.plan()
@@ -94,6 +108,7 @@ class LaunchdAgent(AutostartBackend):
         return plan
 
     def disable(self) -> list[str]:
+        self.refuse_if_other_install()
         removed = []
         if self._launchctl("print", f"{self._domain()}/{self.entry}", check=False).returncode == 0:
             self._launchctl("bootout", f"{self._domain()}/{self.entry}")

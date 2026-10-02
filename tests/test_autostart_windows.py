@@ -1,7 +1,8 @@
 """Real Task Scheduler tests: register a TEST task, run it, talk to the Jig it starts, then remove it.
 
-Only test entries are used ('\\Jig\\Jig Agent Test', '\\Jig\\Jig Agent API Test'), each with a temporary
-data directory, so the user's own autostart setting is never touched.
+Only test entries are used ('\\Jig\\Jig Agent Test', '\\Jig\\Jig Agent API Test', '\\Jig\\Jig Agent Owner
+Test'), each with a temporary data directory, so the user's own autostart setting is never changed (one test
+only reads it).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from jig.autostart import LaunchSpec
+from jig.autostart import AutostartError, LaunchSpec
 from jig.autostart.base import current_account
 from jig.autostart.windows import WindowsTaskScheduler, current_user_sid
 from jig.config import load_config
@@ -30,6 +31,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows Task Sc
 
 TEST_TASK = "\\Jig\\Jig Agent Test"
 API_TEST_TASK = "\\Jig\\Jig Agent API Test"
+OWNER_TEST_TASK = "\\Jig\\Jig Agent Owner Test"
 E2E_PORT = 8767
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 
@@ -169,7 +171,8 @@ def test_api_enable_needs_confirm_and_auth(tmp_path):
 
         info = httpx.get(f"{base}/autostart", headers=headers, timeout=60).json()
         assert info["status"]["registered"] is False and info["plan"]["entry"] == API_TEST_TASK
-        assert info["plan"]["trigger"].startswith("at logon of") and info["plan"]["command_line"]
+        assert info["plan"]["trigger"].startswith("when ") and "signs in" in info["plan"]["trigger"]
+        assert info["plan"]["command_line"]
 
         assert httpx.post(f"{base}/autostart/enable", headers=headers, json={}).status_code == 422
         r = httpx.post(f"{base}/autostart/enable", headers=headers, json={"confirm": False})
@@ -193,6 +196,48 @@ def test_api_enable_needs_confirm_and_auth(tmp_path):
         if schtasks_query(API_TEST_TASK).returncode == 0:
             remove(API_TEST_TASK, data_dir)
         kill(proc)
+
+
+def test_another_installs_task_is_never_touched(tmp_path):
+    """A task registered by one install (data folder A) is left alone by another (data folder B) that shares
+    the entry name: B sees it as not its own and refuses to remove or replace it, from the code, the CLI and
+    the status summary."""
+    mine, theirs = tmp_path / "mine", tmp_path / "theirs"
+    assert schtasks_query(OWNER_TEST_TASK).returncode != 0, f"{OWNER_TEST_TASK} is left over from an earlier run"
+    owner_backend = WindowsTaskScheduler(LaunchSpec.from_config(load_config(data_dir=theirs), port=8799),
+                                         entry=OWNER_TEST_TASK)
+    try:
+        owner_backend.enable()
+        before = schtasks_query(OWNER_TEST_TASK).stdout
+        owner = owner_backend.registered_owner()
+        assert Path(owner["data_dir"]) == theirs and owner["port"] == 8799 and owner_backend.owned() is True
+
+        other = WindowsTaskScheduler(LaunchSpec.from_config(load_config(data_dir=mine)), entry=OWNER_TEST_TASK)
+        assert other.owned() is False
+        with pytest.raises(AutostartError, match="another Jig"):
+            other.disable()
+        with pytest.raises(AutostartError, match="another Jig"):
+            other.enable()
+        st = other.status()
+        assert st.registered and st.owned is False and "another Jig folder" in st.summary
+
+        cli = jig_cli("autostart", "disable", "--entry", OWNER_TEST_TASK, "--data-dir", str(mine))
+        assert cli.returncode == 1 and "Not removed" in cli.stderr and str(theirs) in cli.stderr
+        assert schtasks_query(OWNER_TEST_TASK).stdout == before
+        assert owner_backend.status().summary == "On. Jig will start the next time you sign in to Windows."
+    finally:
+        if schtasks_query(OWNER_TEST_TASK).returncode == 0:
+            owner_backend.disable()
+    assert schtasks_query(OWNER_TEST_TASK).returncode != 0
+
+
+def test_registered_owner_reads_real_task_read_only():
+    """Reads (never changes) the default task, if this machine has one, to check real arguments parse."""
+    backend = WindowsTaskScheduler(LaunchSpec.from_config(load_config()))
+    if schtasks_query(backend.entry).returncode != 0:
+        pytest.skip(f"no {backend.entry} task on this machine")
+    owner = backend.registered_owner()
+    assert owner["data_dir"] and Path(owner["data_dir"]).is_absolute() and isinstance(owner["port"], int)
 
 
 def test_no_jig_test_tasks_left():

@@ -162,6 +162,17 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class AutostartConfig:
+    """``[autostart]``: how 'Start with Windows' (or login, on macOS and Linux) is registered for this install."""
+
+    # The task name, launchd label or systemd unit. Empty: the backend's default (\Jig\Jig Agent on Windows).
+    # Give each install its own, so two Jigs on one computer never share (or remove) one entry.
+    entry: str = ""
+    # "service": start Jig itself at login. "tray": start the tray icon, which starts Jig (Windows installs).
+    launcher: str = "service"
+
+
+@dataclass(frozen=True)
 class RemoteConfig:
     """``[remote]``: use Jig from your other devices through ``tailscale serve`` (see ``jig.remote``)."""
 
@@ -209,6 +220,7 @@ class Config:
     model_launch: ModelLaunchConfig = field(default_factory=ModelLaunchConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
+    autostart: AutostartConfig = field(default_factory=AutostartConfig)
     connectors: dict[str, ConnectorLimits] = field(default_factory=dict)
     # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
     # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
@@ -326,6 +338,7 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         model_launch=model_launch,
         vault=_vault_config(_section(raw, "vault")),
         remote=_remote_config(_section(raw, "remote"), deployment),
+        autostart=_autostart_config(_section(raw, "autostart")),
         connectors=_connectors_config(_section(raw, "connectors")),
         deployment=deployment,
     )
@@ -422,6 +435,13 @@ def _remote_config(values: dict[str, Any], deployment: str) -> RemoteConfig:
     if hostname and (not hostname.endswith(".ts.net") or "*" in hostname):
         raise ConfigError(f"[remote] hostname must be the exact tailnet name ending in .ts.net, not {hostname!r}")
     return replace(cfg, allowed_logins=logins, hostname=hostname)
+
+
+def _autostart_config(values: dict[str, Any]) -> AutostartConfig:
+    cfg = _build(AutostartConfig, values, "autostart")
+    if cfg.launcher not in ("service", "tray"):
+        raise ConfigError(f"[autostart] launcher must be 'service' or 'tray', not {cfg.launcher!r}")
+    return replace(cfg, entry=cfg.entry.strip())
 
 
 def _vault_config(values: dict[str, Any]) -> VaultConfig:

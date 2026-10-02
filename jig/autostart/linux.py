@@ -93,7 +93,30 @@ class SystemdUserUnit(AutostartBackend):
     def is_registered(self) -> bool:
         return self.unit_path.exists()
 
+    def registered_owner(self) -> dict[str, Any] | None:
+        if not self.unit_path.exists():
+            return None
+        try:
+            text = self.unit_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise AutostartError(f"could not read {self.unit_path}: {exc}") from exc
+        owner: dict[str, Any] = {"data_dir": None, "config": None, "port": None}
+        for line in text.splitlines():
+            key, _, value = line.partition("=")
+            if key == "Environment":
+                setting = shlex.split(value)[0] if value.strip() else ""
+                if setting.startswith("JIG_DATA_DIR="):
+                    owner["data_dir"] = setting.split("=", 1)[1]
+            elif key == "ExecStart":
+                args = shlex.split(value.replace("%%", "%").replace("$$", "$"))
+                if "--config" in args[:-1]:
+                    owner["config"] = args[args.index("--config") + 1]
+                if "--port" in args[:-1] and args[args.index("--port") + 1].isdigit():
+                    owner["port"] = int(args[args.index("--port") + 1])
+        return owner
+
     def enable(self, *, start_now: bool = False) -> Plan:
+        self.refuse_if_other_install()
         if self.is_registered():
             raise AutostartError(f"{self.unit_path} already exists; run 'jig autostart disable' first")
         plan = self.plan()
@@ -105,6 +128,7 @@ class SystemdUserUnit(AutostartBackend):
         return plan
 
     def disable(self) -> list[str]:
+        self.refuse_if_other_install()
         removed = []
         if self.unit_path.exists():
             self._systemctl("disable", "--now", self.entry)

@@ -10,7 +10,7 @@ import httpx
 
 from ..config import load_config
 from ..instance import request_stop
-from . import AutostartError, LaunchSpec, backend_for, disable, enable, not_applicable_reason
+from . import AutostartError, backend_from_config, disable, enable, not_applicable_reason
 
 
 def add_parsers(sub: argparse._SubParsersAction) -> None:
@@ -22,8 +22,8 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
     a.add_argument("--now", action="store_true", help="with enable: also start it now")
     a.add_argument("--port", type=int, help="port the autostarted Jig listens on (default: [server] port)")
     a.add_argument("--data-dir", help="data directory (default: from the config)")
-    a.add_argument("--entry", help="task name, launchd label or systemd unit (default: \\Jig\\Jig Agent, "
-                                   "io.github.rlesueur.jig or jig.service)")
+    a.add_argument("--entry", help="task name, launchd label or systemd unit (default: [autostart] entry, else "
+                                   "\\Jig\\Jig Agent, io.github.rlesueur.jig or jig.service)")
     a.add_argument("--json", action="store_true", help="machine-readable output")
     s = sub.add_parser("stop", help="turn the running Jig (for this data directory) off gracefully")
     s.add_argument("--data-dir", help="data directory (default: from the config)")
@@ -32,8 +32,7 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 def _backend(config, args: argparse.Namespace):
-    spec = LaunchSpec.from_config(config, port=args.port)
-    return backend_for(spec, entry=args.entry)
+    return backend_from_config(config, entry=args.entry, port=args.port)
 
 
 def run_stop(args: argparse.Namespace) -> int:
@@ -83,6 +82,11 @@ def run(args: argparse.Namespace) -> int:
             print(json.dumps(st.as_dict(), indent=2, default=str))
             return 0
         print(f"Autostart ({st.backend}): {'REGISTERED' if st.registered else 'not registered'} as {st.entry}")
+        print(f"  {st.summary}")
+        if st.registered and not st.owned:
+            owner = st.owner or {}
+            print(f"  It starts another Jig: data {owner.get('data_dir')}, config {owner.get('config')}, port "
+                  f"{owner.get('port')}. This install ({backend.spec.data_dir}) leaves it alone.")
         if st.registered:
             print(f"  State:       {st.state}")
             print(f"  Last run:    {st.last_run or 'never'}")
@@ -96,7 +100,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"  Log:         {st.log_path}")
         return 0
     if args.action == "disable":
-        removed = disable(backend, via="cli")
+        try:
+            removed = disable(backend, via="cli")
+        except AutostartError as exc:
+            print(f"Not removed: {exc}", file=sys.stderr)
+            return 1
         print("Removed:\n" + "\n".join(f"  - {r}" for r in removed) if removed else
               f"Autostart was not registered ({backend.entry}); nothing to remove.")
         st = backend.status()

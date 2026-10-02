@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..config import Config
-from . import AutostartError, LaunchSpec, backend_for, disable, enable, not_applicable_reason
+from . import AutostartError, backend_from_config, disable, enable, not_applicable_reason
 from .base import CONTAINER_MODE_HINT
 
 
@@ -29,7 +28,7 @@ def autostart_router(config: Config) -> APIRouter:
     def backend():
         if reason:
             raise HTTPException(409, reason)
-        return backend_for(LaunchSpec.from_config(config), entry=os.environ.get("JIG_AUTOSTART_ENTRY") or None)
+        return backend_from_config(config)
 
     @router.get("")
     def autostart_status() -> dict[str, Any]:
@@ -50,7 +49,10 @@ def autostart_router(config: Config) -> APIRouter:
         if body.confirm is not True:
             raise HTTPException(400, "autostart was not enabled: send \"confirm\": true after showing the user "
                                      "the plan from GET /autostart")
-        if b.is_registered():
+        owner = b.registered_owner()
+        if owner is not None and not b.owned(owner):
+            raise HTTPException(409, b.other_install_message(owner))
+        if owner is not None:
             raise HTTPException(409, f"autostart is already registered as {b.entry}")
         try:
             plan = enable(b, confirmed=True, via="api", start_now=body.start_now)
@@ -60,8 +62,12 @@ def autostart_router(config: Config) -> APIRouter:
 
     @router.post("/disable")
     def autostart_disable() -> dict[str, Any]:
+        b = backend()
+        owner = b.registered_owner()
+        if owner is not None and not b.owned(owner):
+            raise HTTPException(409, b.other_install_message(owner))
         try:
-            return {"enabled": False, "removed": disable(backend(), via="api")}
+            return {"enabled": False, "removed": disable(b, via="api")}
         except AutostartError as exc:
             raise HTTPException(500, str(exc)) from exc
 

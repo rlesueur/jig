@@ -1,6 +1,7 @@
-// Autostart row in the Status card: shows whether Jig starts at logon and lets the user turn it on or off.
-// Enabling always shows the full disclosure (what is registered, the trigger, the account and the log)
-// and needs an explicit OK; the request then carries "confirm": true. Kept separate from app.js.
+// Start with Windows row in Settings > Startup: shows whether this Jig starts at sign-in and lets the user
+// turn it on or off. Turning it on shows what will be registered and needs an explicit OK; the request then
+// carries "confirm": true. An entry that starts another Jig folder is shown but never offered for removal.
+// Kept separate from app.js.
 
 const cell = () => document.getElementById('st-autostart');
 
@@ -12,25 +13,34 @@ async function call(path, method = 'GET', body) {
   }
   const r = await fetch(path, opts);
   const data = await r.json().catch(() => null);
-  if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${r.status}`);
   return data;
 }
 
-function disclosure(plan) {
-  return [
-    `Start Jig automatically? This registers (${plan.backend}):`,
-    '',
-    `Entry: ${plan.entry}`,
-    `Command line: ${plan.command_line}`,
-    `Trigger: ${plan.trigger}`,
+const confirmBox = (options) => window.jigConfirm(options);
+
+function details(plan) {
+  const list = document.createElement('ul');
+  list.className = 'confirm-list';
+  const lines = [
+    `When: ${plan.trigger}`,
     `Runs as: ${plan.account}`,
-    `Logs: ${plan.log_path}`,
-    '',
-    ...plan.settings.map((s) => `- ${s}`),
-    ...(plan.tested ? [] : ['', 'WARNING: this backend has not been tested on a real machine yet.']),
-    '',
-    'You can turn it off again here or with "jig autostart disable".',
-  ].join('\n');
+    `Log: ${plan.log_path}`,
+    ...plan.settings,
+    ...(plan.tested ? [] : ['This way of starting Jig has not been tested on a real machine yet.']),
+  ];
+  for (const t of lines) {
+    const li = document.createElement('li');
+    li.textContent = t;
+    list.append(li);
+  }
+  return list;
+}
+
+function plainLabel(status) {
+  if (status.summary) return status.summary;
+  if (!status.registered) return 'Off.';
+  return status.last_result ? `On (last result ${status.last_result}).` : 'On. Jig will start the next time you sign in.';
 }
 
 function render(info, error) {
@@ -38,7 +48,7 @@ function render(info, error) {
   if (!dd) return;
   dd.replaceChildren();
   if (error) {
-    dd.textContent = `Error: ${error}`;
+    dd.textContent = `Jig couldn't change Start with Windows: ${error}`;
     return;
   }
   if (info.applicable === false) {
@@ -49,9 +59,9 @@ function render(info, error) {
   }
   const { status, plan } = info;
   const label = document.createElement('span');
-  label.textContent = status.registered
-    ? `On (${status.last_result ? `last result ${status.last_result}` : 'not run yet'}) `
-    : 'Off ';
+  label.textContent = `${plainLabel(status)} `;
+  dd.append(label);
+  if (status.registered && status.owned === false) return;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'btn btn-small';
@@ -60,10 +70,21 @@ function render(info, error) {
     button.disabled = true;
     try {
       if (status.registered) {
-        if (!window.confirm(`Remove the autostart entry ${status.entry}? Jig keeps running until you stop it.`)) return;
+        const ok = await confirmBox({
+          title: 'Stop Jig starting with Windows?',
+          body: ['Jig keeps running now. It just won’t start by itself next time you sign in.'],
+          ok: 'Turn off',
+        });
+        if (!ok) return;
         await call('/autostart/disable', 'POST');
       } else {
-        if (!window.confirm(disclosure(plan))) return;
+        const ok = await confirmBox({
+          title: 'Start Jig when you sign in?',
+          body: ['Jig will start quietly in the background each time you sign in to this computer, so your schedules keep running.', details(plan),
+            'You can turn this off here at any time.'],
+          ok: 'Turn on',
+        });
+        if (!ok) return;
         await call('/autostart/enable', 'POST', { confirm: true });
       }
       await refresh();
@@ -73,7 +94,7 @@ function render(info, error) {
       button.disabled = false;
     }
   });
-  dd.append(label, button);
+  dd.append(button);
 }
 
 async function refresh() {

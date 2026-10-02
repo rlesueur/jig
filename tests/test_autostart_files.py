@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from jig.autostart import LaunchSpec, backend_for
+from jig.autostart import AutostartError, LaunchSpec, backend_for
 from jig.config import load_config
 from jig.errors import ConfigError
 from jig.autostart.linux import SystemdUserUnit
@@ -53,6 +53,33 @@ def test_systemd_user_unit(tmp_path):
     assert unit.unit_path == tmp_path / "systemd" / "user" / "jig.service"
     plan = unit.plan()
     assert plan.tested is False and any("enable-linger" in n for n in plan.notes)
+
+
+def test_launchd_and_systemd_entries_name_their_install(tmp_path):
+    """Each written entry is read back as starting its own data folder; another folder's entry is not ours and
+    is never removed (the refusal comes before launchctl or systemctl would run)."""
+    agent = LaunchdAgent(spec(tmp_path), home=tmp_path)
+    unit = SystemdUserUnit(spec(tmp_path), config_home=tmp_path)
+    assert agent.registered_owner() is None and unit.registered_owner() is None
+    agent.plist_path.parent.mkdir(parents=True)
+    agent.plist_path.write_bytes(agent.plist_bytes())
+    unit.unit_path.parent.mkdir(parents=True)
+    unit.unit_path.write_text(unit.unit_text(), encoding="utf-8")
+    for backend in (agent, unit):
+        owner = backend.registered_owner()
+        assert owner["data_dir"] == "/home/user/.local/share/jig"
+        assert owner["config"] == "/home/user/My Jig/jig.toml" and owner["port"] == 8766
+        assert backend.owned(owner) is True
+
+    other = LaunchSpec(config_path=PurePosixPath("/home/user/Other/jig.toml"), data_dir=PurePosixPath("/home/user/other-data"),
+                       host="127.0.0.1", port=8799, python=PurePosixPath("/usr/bin/python3"))
+    for backend in (LaunchdAgent(other, home=tmp_path), SystemdUserUnit(other, config_home=tmp_path)):
+        assert backend.owned() is False
+        with pytest.raises(AutostartError, match="another Jig"):
+            backend.disable()
+        with pytest.raises(AutostartError, match="another Jig"):
+            backend.enable()
+    assert agent.plist_path.exists() and unit.unit_path.exists()
 
 
 def test_llamacpp_profile_launch_example_parses(tmp_path):

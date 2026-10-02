@@ -31,6 +31,38 @@ _RESULTS = {0: "success", 0x41300: "ready", 0x41301: "currently running", 0x4130
             0x41303: "has not run yet", 0x41306: "terminated by the user", 0x8004131F: "an instance is already running",
             0x800710E0: "the operator or administrator refused the request", 1: "failed (exit code 1)",
             75: "another Jig already uses the data directory"}
+# Results that are not a problem: success, ready, running, not run yet, stopped by the user, already running.
+_FINE = {0, 0x41300, 0x41301, 0x41303, 0x41306, 0x8004131F}
+_PROBLEMS = {0x41302: "the task is disabled in Task Scheduler.",
+             75: "the last start found another Jig already using this data folder."}
+
+
+def split_command_line(line: str) -> list[str]:
+    """Split a Windows command line exactly as programs receive it (CommandLineToArgvW)."""
+    import ctypes
+    from ctypes import wintypes
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    count = ctypes.c_int()
+    # A leading program name, because CommandLineToArgvW parses the first word by different rules.
+    argv = shell32.CommandLineToArgvW(f"x {line}", ctypes.byref(count))
+    if not argv:
+        raise AutostartError(f"could not read the task's arguments (Windows error {ctypes.get_last_error()})")
+    try:
+        return [argv[i] for i in range(1, count.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
+def _option(args: list[str], name: str) -> str | None:
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
 
 
 def _run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -68,6 +100,7 @@ class WindowsTaskScheduler(AutostartBackend):
     backend_name = "Windows Task Scheduler (per-user logon task)"
     tested = True
     default_entry = DEFAULT_TASK
+    sign_in_words = "sign in to Windows"
 
     def __init__(self, spec: LaunchSpec, *, entry: str | None = None):
         super().__init__(spec, entry=entry)
@@ -86,6 +119,9 @@ class WindowsTaskScheduler(AutostartBackend):
         return exe
 
     def action_args(self) -> list[str]:
+        if self.spec.launcher == "tray":
+            return ["-m", "jig.tray", "--config", str(self.spec.config_path), "--data-dir", str(self.spec.data_dir),
+                    "--port", str(self.spec.port), "--start-reason", "autostart"]
         return ["-m", "jig.autostart.launch", "--config", str(self.spec.config_path), "--data-dir",
                 str(self.spec.data_dir), "--port", str(self.spec.port), "--retries", str(LAUNCHER_RETRIES),
                 "--retry-delay", str(LAUNCHER_RETRY_DELAY_S)]
@@ -152,13 +188,14 @@ class WindowsTaskScheduler(AutostartBackend):
         return Plan(
             backend=self.backend_name, entry=self.entry, tested=self.tested,
             command_line=subprocess.list2cmdline([str(self.pythonw), *self.action_args()]),
-            trigger=f"at logon of {current_account()} only, after a {LOGON_DELAY[2:].lower()} delay",
+            trigger=f"when {current_account()} signs in to Windows, after a {LOGON_DELAY[2:].lower()} delay",
             account=f"{current_account()} ({sid}), interactive token, least privilege (not elevated); "
                     "runs only while you are logged on; no password is stored",
             log_path=str(self.spec.log_path),
             files=[f"Task Scheduler task {self.entry}", f"{self.spec.data_dir / 'logs'} (jig.log, autostart.log; "
                    "rotated at 5 MB, 5 kept)"],
             settings=["no console window (pythonw.exe)",
+                      *(["starts Jig's tray icon, which starts Jig"] if self.spec.launcher == "tray" else []),
                       f"the launcher restarts Jig up to {LAUNCHER_RETRIES} times, {LAUNCHER_RETRY_DELAY_S}s apart, "
                       "if it exits with an error; a clean stop ('jig stop') is not restarted",
                       "Task Scheduler restart on launch failure: every 1 minute, up to 3 times",
@@ -179,7 +216,23 @@ class WindowsTaskScheduler(AutostartBackend):
     def is_registered(self) -> bool:
         return self.query_xml() is not None
 
+    def registered_owner(self) -> dict[str, Any] | None:
+        xml = self.query_xml()
+        if xml is None:
+            return None
+        import re
+        import xml.etree.ElementTree as ET
+
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        root = ET.fromstring(re.sub(r"^\s*<\?xml[^>]*\?>", "", xml))
+        command = root.findtext("t:Actions/t:Exec/t:Command", namespaces=ns) or ""
+        args = split_command_line(root.findtext("t:Actions/t:Exec/t:Arguments", namespaces=ns) or "")
+        port = _option(args, "--port")
+        return {"data_dir": _option(args, "--data-dir"), "config": _option(args, "--config"),
+                "port": int(port) if port and port.isdigit() else None, "command": command}
+
     def enable(self, *, start_now: bool = False) -> Plan:
+        self.refuse_if_other_install()
         if self.is_registered():
             raise AutostartError(f"the task {self.entry} is already registered; run 'jig autostart disable' first "
                                  "to replace it")
@@ -199,6 +252,7 @@ class WindowsTaskScheduler(AutostartBackend):
         _run(["schtasks", "/Run", "/TN", self.entry])
 
     def disable(self) -> list[str]:
+        self.refuse_if_other_install()
         removed: list[str] = []
         if self.is_registered():
             _run(["schtasks", "/Delete", "/TN", self.entry, "/F"])
@@ -230,5 +284,9 @@ class WindowsTaskScheduler(AutostartBackend):
         info = json.loads(out)
         code = int(info["LastTaskResult"])
         never = code == 0x41303
+        problem = None
+        if (code & 0xFFFFFFFF) not in _FINE:
+            problem = _PROBLEMS.get(code & 0xFFFFFFFF, f"the last start didn't work (Task Scheduler result "
+                                                       f"{describe_result(code)}).")
         return {"last_run": None if never else info["LastRunTime"], "last_result": describe_result(code),
-                "state": info["State"], "last_result_code": code, "missed_runs": info["Missed"]}
+                "state": info["State"], "last_result_code": code, "missed_runs": info["Missed"], "problem": problem}
