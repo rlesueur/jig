@@ -38,7 +38,10 @@ async def test_real_photo_is_described(client):
     result = await client.chat([image_message("What is shown in this image? Answer in one sentence.",
                                               [MASCOT.read_bytes()])])
     text = result.content.lower()
-    assert any(w in text for w in ("creature", "character", "mascot", "figure", "animal", "robot", "monster")), text
+    # The picture is a neon cat-like spirit. A correct one-sentence description often says
+    # "cat" or "spirit" and none of the narrower words below.
+    assert any(w in text for w in ("creature", "character", "mascot", "figure", "animal", "robot", "monster",
+                                   "cat", "spirit", "ghost")), text
 
 
 async def test_tools_fail_loudly_when_vision_is_disabled(config):
