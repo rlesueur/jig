@@ -6,10 +6,12 @@
 
 <p align="center"><strong>An open-source, always-on personal AI agent. Built for local models. Bring a cloud model if you want one.</strong></p>
 
+<p align="center">This release is a <strong>beta</strong> (version 0.1.0b1).</p>
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-9a54ff" alt="Licence: Apache-2.0"></a>
   <a href="https://github.com/rlesueur/jig/actions/workflows/pages.yml"><img src="https://github.com/rlesueur/jig/actions/workflows/pages.yml/badge.svg" alt="GitHub Pages deployment status"></a>
-  <img src="https://img.shields.io/badge/status-under%20active%20development-ffb246" alt="Status: under active development">
+  <img src="https://img.shields.io/badge/release-beta-ffb246" alt="Release: beta">
 </p>
 
 <p align="center">

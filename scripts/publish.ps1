@@ -314,7 +314,12 @@ function Find-InnoSetup([string]$Given) {
 function Get-Version([string]$Python, [string]$RepoPath) {
     $pyproject = Join-Path $RepoPath 'pyproject.toml'
     $version = (Run $Python -c "import tomllib, sys; print(tomllib.load(open(sys.argv[1], 'rb'))['project']['version'])" $pyproject).Trim()
-    if ($version -notmatch '^\d+\.\d+\.\d+$') { Fail "pyproject.toml's version '$version' is not of the form X.Y.Z." }
+    # PEP 440: a final X.Y.Z, or a pre-release X.Y.ZaN / X.Y.ZbN / X.Y.ZrcN (this beta is 0.1.0b1).
+    # The same string is the git tag without the leading v, and the GHCR tag. It is not SemVer
+    # (0.1.0-beta.1 is not valid Python), so the container workflow also emits it as a raw tag.
+    if ($version -notmatch '^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$') {
+        Fail "pyproject.toml's version '$version' is not X.Y.Z or a PEP 440 pre-release (X.Y.ZaN, X.Y.ZbN or X.Y.ZrcN)."
+    }
     $init = Get-Content -Raw (Join-Path $RepoPath 'jig\__init__.py')
     if ($init -notmatch "(?m)^__version__ = `"$([regex]::Escape($version))`"\s*$") { Fail "jig/__init__.py's __version__ is not $version." }
     $compose = Get-Content -Raw (Join-Path $RepoPath 'compose.yaml')
@@ -356,10 +361,15 @@ function Build-Installer([string]$RepoPath, [string]$Version, [string]$Python, [
     return [pscustomobject]@{ Exe = $exe; SumFile = $sumFile; Name = $name; Hash = $hash; Size = $size; Commit = $commit; Dir = $out }
 }
 
+function Test-PreRelease([string]$Version) {
+    return $Version -match '(?:a|b|rc)\d+$'
+}
+
 function Get-ReleaseNotes([string]$Version, $Installer) {
     $name = $Installer.Name
+    $beta = if (Test-PreRelease $Version) { " This is a beta." } else { "" }
     return @"
-Jig $Version for Windows (64-bit).
+Jig $Version for Windows (64-bit).$beta
 
 Download **$name** and run it. It needs no administrator rights, and no Python, Git or terminal. At the end, Jig opens in your browser on its set-up page, where you choose a model.
 
@@ -388,8 +398,10 @@ function Publish-Release([string]$Version, $Installer) {
 
     $notes = Join-Path $Installer.Dir 'release-notes.md'
     [IO.File]::WriteAllText($notes, (Get-ReleaseNotes $Version $Installer), (New-Object Text.UTF8Encoding $false))
-    Run $script:Gh release create $tag $Installer.Exe $Installer.SumFile --repo "$Owner/$Repo" --title "Jig $Version" `
-        --notes-file $notes --verify-tag --latest | Out-Null
+    $releaseArgs = @('release', 'create', $tag, $Installer.Exe, $Installer.SumFile, '--repo', "$Owner/$Repo",
+        '--title', "Jig $Version", '--notes-file', $notes, '--verify-tag', '--latest')
+    if (Test-PreRelease $Version) { $releaseArgs += '--prerelease' }
+    Run $script:Gh @releaseArgs | Out-Null
 
     $check = Join-Path $Installer.Dir 'downloaded'
     New-Item -ItemType Directory -Path $check | Out-Null
@@ -441,7 +453,8 @@ if ($DryRun) {
 
     Step "Release that would be published (steps (f) to (k) not run)"
     Write-Host "    Tag:      $tag (annotated, by $NewIdent), on the rewritten HEAD $($installer.Commit)"
-    Write-Host "    Release:  'Jig $version' on https://github.com/$Owner/$Repo/releases/tag/$tag, marked latest"
+    $kind = if (Test-PreRelease $version) { 'marked latest, and as a pre-release' } else { 'marked latest' }
+    Write-Host "    Release:  'Jig $version' on https://github.com/$Owner/$Repo/releases/tag/$tag, $kind"
     Write-Host "    Assets:   $($installer.Name) ($($installer.Size) bytes)"
     Write-Host "              $($installer.Name).sha256"
     Write-Host "    SHA-256:  $($installer.Hash)"

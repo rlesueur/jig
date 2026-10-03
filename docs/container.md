@@ -312,7 +312,7 @@ docker compose pull                    # or: docker compose build
 docker compose up -d                   # recreates only what changed; volumes are kept
 ```
 
-Images are tagged with the full version (`0.1.0`), the minor version (`0.1`) and the commit (`sha-<commit>`). `compose.yaml` pins the version it was released with. Set `JIG_IMAGE` and `JIG_SANDBOX_IMAGE` in `.env` to pin another, and keep the two at the same version. Each release's images carry provenance and SBOM attestations; inspect them with `docker buildx imagetools inspect ghcr.io/rlesueur/jig:<version> --format '{{json .Provenance}}'`.
+Images are tagged with the full version (`0.1.0b1` for this beta) and the commit (`sha-<commit>`). A final release such as `0.1.0` also gets the minor tag (`0.1`); a pre-release does not, so `0.1` never points at a beta. The version is PEP 440 in Python, on the image, and on the git tag (`v0.1.0b1`). `compose.yaml` pins the version it was released with. Set `JIG_IMAGE` and `JIG_SANDBOX_IMAGE` in `.env` to pin another, and keep the two at the same version. Each release's images carry provenance and SBOM attestations; inspect them with `docker buildx imagetools inspect ghcr.io/rlesueur/jig:<version> --format '{{json .Provenance}}'`.
 
 ## Backups
 

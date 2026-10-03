@@ -114,9 +114,13 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          # SemVer patterns cover a final tag such as v0.1.0 (full version and minor). A PEP 440
+          # pre-release such as v0.1.0b1 is not SemVer, so those patterns emit nothing for it; the raw
+          # tag is the version string itself, which is what compose.yaml pins.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ github.ref_type == 'tag' }}
             type=sha,format=long
             type=ref,event=pr
           labels: |

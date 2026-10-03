@@ -20,7 +20,7 @@ from .server_helpers import config_path, free_port, kill, start_jig, token, wait
 
 ROOT = Path(__file__).resolve().parent.parent
 DEPLOY_CONFIG = ROOT / "deploy" / "jig.toml"
-IMAGE = os.environ.get("JIG_TEST_IMAGE", "ghcr.io/rlesueur/jig:0.1.0")
+IMAGE = os.environ.get("JIG_TEST_IMAGE", "ghcr.io/rlesueur/jig:0.1.0b1")
 
 
 def _container_config(tmp_path: Path) -> Path:
