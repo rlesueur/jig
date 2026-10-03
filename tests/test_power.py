@@ -217,7 +217,8 @@ def test_jig_stop_cli_refuses_in_container_mode(tmp_path):
 
 def _llama_config(tmp_path: Path, model_port: int) -> Path:
     cfg = tmp_path / "llama.toml"
-    args = ["-m", str(SMALL_MODEL), "--host", "127.0.0.1", "--port", str(model_port), "-ngl", "99", "-c", "8192",
+    # llama-server splits -c between its slots, and Jig's agent won't start with under 16K per request.
+    args = ["-m", str(SMALL_MODEL), "--host", "127.0.0.1", "--port", str(model_port), "-ngl", "99", "-c", "32768",
             "--parallel", "2", "--jinja", "--alias", ALIAS]
     cfg.write_text(f"""
 [model]

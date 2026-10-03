@@ -253,9 +253,12 @@ def test_setup_loads_the_lmstudio_model_with_jigs_context_and_health_reloads_it(
 
 
 def test_jig_starts_lmstudios_server_without_opening_lmstudio():
+    # An uninstall leaves ~/.lmstudio (and its lms) behind, so ask whether LM Studio itself is installed.
+    if not any(a["app"] == "lmstudio" for a in find_installed_apps()):
+        pytest.skip("LM Studio isn't installed on this computer")
     lms = _lms()
     if lms is None:
-        pytest.skip("LM Studio isn't installed on this computer (no lms command)")
+        pytest.skip("LM Studio is installed but its lms command isn't there")
     was_on = _answers(f"{LMSTUDIO}/api/v0/models") is not None
     subprocess.run([str(lms), "server", "stop"], capture_output=True, timeout=60, **_no_window())
     try:
