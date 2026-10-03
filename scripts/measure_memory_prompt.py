@@ -93,6 +93,7 @@ async def main() -> None:
 
             runtime.model.chat = chat
             started = time.perf_counter()
+            declined = 0
             try:
                 for s in sessions_for(q, 10, 0):
                     for t in s["turns"]:
@@ -102,7 +103,15 @@ async def main() -> None:
                 memories = len(runtime.memory.list(limit=100_000))
                 task = runtime.create_task(title="Answer a question about past conversations",
                                            description=question_text(q, ask), mode=Mode.RESEARCH)
-                await runtime.run_task(task["id"])
+                # Nobody is there to answer an approval card: decline it, the same way in every version.
+                running = asyncio.create_task(runtime.run_task(task["id"]))
+                while not running.done():
+                    for approval in runtime.approvals.list(status="pending"):
+                        runtime.approvals.respond(approval["id"], approve=False,
+                                                  note="Nobody can approve this here; answer without it.")
+                        declined += 1
+                    await asyncio.sleep(0.5)
+                await running
                 task = runtime.store.get_task(task["id"])
             finally:
                 await runtime.stop()
@@ -119,6 +128,7 @@ async def main() -> None:
                    "outcome": task.get("outcome"),
                    "model_calls": len(calls), "prompt_tokens": sum(c["prompt_tokens"] for c in calls),
                    "searches": sum(c["tools"].count("memory_search") for c in calls), "memories": memories,
+                   "approvals_declined": declined,
                    "wall_s": round(time.perf_counter() - started, 1), "question": q["question"],
                    "answer": answer, "response": response[:1500]}
             with out.open("a", encoding="utf-8") as f:
