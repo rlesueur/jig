@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +39,7 @@ from ..connectors import walkthrough as connector_walkthrough
 from ..constants import EventType, Mode
 from ..db import now_iso
 from ..devices import DeviceStore, PairingError
+from ..attachments import IMAGE_MAX_BYTES, MAX_PER_MESSAGE, AttachmentError
 from ..errors import CannotDelete, ConfigError, ConnectorError, JigError
 from ..errors import ModelServerUnavailable, NotFound, SecretNotFound, ToolArgumentError
 from ..events import SubscriberOverflow
@@ -59,6 +60,8 @@ class ChatIn(BaseModel):
     mode: Mode = Mode.ACTION
     # After a reply Jig stopped for repeating itself: "retry" asks again, "continue" carries it on.
     action: Literal["send", "retry", "continue"] = "send"
+    # Ids from POST /attachments, for this session_id. At most one message's worth.
+    attachment_ids: list[str] = Field(default_factory=list, max_length=MAX_PER_MESSAGE)
 
 
 class TaskRetryIn(BaseModel):
@@ -247,6 +250,21 @@ def _require_local(request: Request, what: str) -> None:
 def _require_confirm(body: ConfirmIn, what: str) -> None:
     if body.confirm is not True:
         raise HTTPException(400, f'{what}: send "confirm": true once the user has confirmed')
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    """Read an upload, stopping once it passes the largest file Jig accepts."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        block = await file.read(1024 * 1024)
+        if not block:
+            break
+        total += len(block)
+        if total > IMAGE_MAX_BYTES:
+            raise AttachmentError("That file is larger than 8 MB, which is the most Jig will accept.")
+        chunks.append(block)
+    return b"".join(chunks)
 
 
 def _qr_data_uri(text: str) -> str:
@@ -454,6 +472,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
 
     @app.exception_handler(ValueError)
     @app.exception_handler(ToolArgumentError)
+    @app.exception_handler(AttachmentError)
     async def bad_request(_: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -614,10 +633,39 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         return [e.as_dict() for e in J(request).bus.recent if e.seq > after and (type is None or e.type == type)]
 
     # Chat ------------------------------------------------------------------
+    @app.post("/attachments", status_code=201)
+    async def upload_attachment(request: Request, file: UploadFile = File(),
+                                session_id: str | None = Form(None)) -> dict[str, Any]:
+        """Store one file for a conversation. The bytes are checked here; the chat turn only receives the id."""
+        jig = J(request)
+        raw = await _read_upload(file)
+        saved = jig.attachments.save(session_id or None, file.filename or "", raw)
+        jig.audit.record("attachment.added", "a file was attached to a conversation", actor="user",
+                         session_id=saved["session_id"], attachment_id=saved["id"], file_kind=saved["kind"],
+                         bytes=saved["bytes"], **_who(request))
+        return saved
+
+    @app.get("/attachments/{session_id}/{attachment_id}")
+    async def download_attachment(request: Request, session_id: str, attachment_id: str) -> FileResponse:
+        jig = J(request)
+        meta = jig.attachments.get(session_id, attachment_id)
+        name = str(meta["name"]).replace('"', "").replace("\r", "").replace("\n", "")
+        return FileResponse(jig.attachments.path(session_id, attachment_id), media_type=meta["media_type"],
+                            headers={"Content-Disposition": f'inline; filename="{name}"'})
+
+    @app.delete("/attachments/{session_id}/{attachment_id}", status_code=204)
+    async def delete_attachment(request: Request, session_id: str, attachment_id: str) -> None:
+        """Remove a file that has not been sent yet. A file already in the conversation stays with it."""
+        jig = J(request)
+        jig.attachments.delete(session_id, attachment_id)
+        jig.audit.record("attachment.removed", "an unsent attachment was removed", actor="user",
+                         session_id=session_id, attachment_id=attachment_id, **_who(request))
+
     @app.post("/chat")
     async def chat(request: Request, body: ChatIn) -> StreamingResponse:
         jig = J(request)
-        stream = jig.chat(body.message, session_id=body.session_id, mode=body.mode, action=body.action)
+        stream = jig.chat(body.message, session_id=body.session_id, mode=body.mode, action=body.action,
+                          attachment_ids=body.attachment_ids)
         first = await anext(stream)
 
         async def gen() -> AsyncIterator[str]:

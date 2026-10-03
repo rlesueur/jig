@@ -88,6 +88,8 @@ def test_health_is_public_and_minimal(anon):
     ("GET", "/audit", None),
     ("GET", "/vault", None),
     ("POST", "/chat", {"message": "hello"}),
+    ("POST", "/attachments", None),
+    ("GET", "/attachments/sess_000000000000/att_000000000000", None),
     ("GET", "/events/sse", None),
     ("GET", "/events/recent", None),
     ("POST", "/auth/login-code", None),

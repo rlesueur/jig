@@ -57,6 +57,8 @@ class CallContext:
     on_wait: Callable[[bool], Awaitable[None]] | None = None
     # Set when the user pauses the run; an approval wait is interrupted and resumes later.
     pause: asyncio.Event | None = None
+    # The chat conversation, so read_attachment can open only that conversation's files.
+    session_id: str | None = None
 
 
 @dataclass

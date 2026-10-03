@@ -12,8 +12,10 @@ from typing import Any
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
 from .agent.prompts import (CONTEXT_KEY, CONTINUE_KEY, CONTINUE_PROMPT, OUTCOME_PROMPT, OUTCOME_SCHEMA, STOPPED_KEY,
-                            agent_system_prompt, chosen_memories, for_model, kept_apart, shown_memories,
+                            agent_system_prompt, chosen_memories, kept_apart, shown_memories,
                             turn_context)
+from .attachments import (ATTACHMENT_PAGE, IMAGE_KINDS, AttachmentStore, ensure_vision, expand_message,
+                          for_model_message, render_turn)
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -29,7 +31,7 @@ from .memory import MemoryStore
 from .searxng import Searxng
 from .instance import InstanceLock
 from .logs import describe_exception
-from .model import ModelClient
+from .model import ATTACHMENTS_KEY, ModelClient
 from .model_server import ModelServerSupervisor
 from .pause import RunPaused
 from .policy.approvals import ApprovalQueue
@@ -90,7 +92,7 @@ def trimmed_history(history: list[dict[str, Any]], context_tokens: int | None) -
     It is cut only where a user message starts, so every tool call keeps its result."""
     if not context_tokens or not history:
         return history, 0
-    sizes = [len(json.dumps(m, ensure_ascii=False)) / _CHARS_PER_TOKEN for m in history]
+    sizes = [_message_chars(m) / _CHARS_PER_TOKEN for m in history]
     over = sum(sizes) - HISTORY_SHARE * context_tokens
     if over <= 0:
         return history, 0
@@ -101,6 +103,21 @@ def trimmed_history(history: list[dict[str, Any]], context_tokens: int | None) -
             return history[i:], i
         position += size
     return [], len(history)
+
+
+def _message_chars(message: dict[str, Any]) -> int:
+    """How much of the prompt a saved message becomes, including attached text and pictures.
+
+    Pictures are not stored in the message, but they cost the model a block of tokens when they are sent."""
+    extra = 0
+    for item in message.get(ATTACHMENTS_KEY) or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") in IMAGE_KINDS:
+            extra += 4500
+        else:
+            extra += min(int(item.get("chars") or 0), ATTACHMENT_PAGE)
+    return len(json.dumps(message, ensure_ascii=False)) + extra
 
 
 def trim_note(left_out: int) -> str:
@@ -159,6 +176,7 @@ class Jig:
             raise
 
     def _init_components(self, config: Config) -> None:
+        self.attachments = AttachmentStore(config.data_dir)
         self.db = Database(config.db_path)
         self.bus = EventBus()
         self.tracker = AvatarStateTracker(self.bus)
@@ -200,6 +218,7 @@ class Jig:
         self.agent = Agent(model=self.model, registry=self.registry, executor=self.executor, store=self.store,
                            bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps,
                            context_tokens=self.context_tokens)
+        self.agent.prepare_outgoing = self._prepare_outgoing
         self.planner = Planner(model=self.model, registry=self.registry, store=self.store, bus=self.bus,
                                audit=self.audit)
         self.scheduler = Scheduler(self, max_concurrent=config.runtime.max_concurrent_tasks,
@@ -230,11 +249,14 @@ class Jig:
         memories = chosen_memories(self.memory, message, how=self.config.runtime.memory_prompt, shown=shown)
         return turn_context(self.config.runtime.timezone, memories, max_steps=self.agent.max_steps)
 
+    def _prepare_outgoing(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [expand_message(m, self.attachments) for m in messages]
+
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
                            http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id,
                            vision=self.vision, container=self.container, connectors=self.connectors,
-                           searxng=self.searxng)
+                           searxng=self.searxng, attachments=self.attachments, session_id=ctx.session_id)
 
     def _container_backend(self) -> Any:
         """With ``[sandbox] backend = "container"`` (per-agent Docker) or ``"compose"`` (sandbox services next
@@ -691,12 +713,13 @@ class Jig:
         return self.store.wipe_jobs(vacuum=vacuum)
 
     def _history_changed(self, action: str, ids: set[str]) -> None:
+        self.attachments.discard(ids)
         self.bus.forget(ids)
         self.bus.publish(EventType.HISTORY_CHANGED, action=action)
 
     # Chat ------------------------------------------------------------------
     async def chat(self, message: str = "", *, session_id: str | None = None, mode: Mode = Mode.ACTION,
-                   action: str = "send") -> AsyncIterator[dict[str, Any]]:
+                   action: str = "send", attachment_ids: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
         """Stream one chat turn: reasoning/content deltas, tool and approval events, then ``done``, ``stopped``
         (Jig stopped the reply because it was repeating itself; what had arrived is kept) or ``error``.
 
@@ -705,13 +728,19 @@ class Jig:
         to continue that reply (``ModelClient._carry_on``). If that continuation is stopped again, the note
         (CONTINUE_PROMPT) stays in the conversation. If nothing new comes back, the stopped reply is kept and
         the turn says so (``NOTHING_MORE``). Neither happens unless the user asks. If the turn is cancelled
-        (the user's Stop), what was said and done so far is kept, with the part of the reply that had arrived."""
+        (the user's Stop), what was said and done so far is kept, with the part of the reply that had arrived.
+
+        ``attachment_ids`` are files already stored for this conversation (``POST /attachments``). Pictures
+        need vision; otherwise the turn stops before the model is asked, and says so."""
         if action not in ("send", "retry", "continue"):
             raise ValueError(f"action must be 'send', 'retry' or 'continue', not {action!r}")
-        if action == "send" and not message.strip():
-            raise ValueError("message must not be empty")
+        attachment_ids = list(attachment_ids or [])
+        if action == "send" and not message.strip() and not attachment_ids:
+            raise ValueError("Write a message or attach a file.")
         if action != "send" and not session_id:
             raise ValueError(f"{action} needs the conversation's session_id")
+        if action == "send" and attachment_ids and not session_id:
+            raise ValueError("Send the conversation id these files were attached to.")
         session_id = session_id or new_id("sess")
         try:
             history = self.store.get_session(session_id)
@@ -720,29 +749,47 @@ class Jig:
                 raise
             history = []
         asked = message
+        metas: list[dict[str, Any]] = []
         if action != "send":
             if not history or (history[-1].get(STOPPED_KEY) or {}).get("kind") != "repetition":
                 raise ValueError("the last reply in this conversation was not stopped for repeating itself")
             last_user = max(i for i, m in enumerate(history) if m["role"] == "user" and not m.get(CONTINUE_KEY))
             asked = history[last_user]["content"]
             if action == "retry":
+                metas = list(history[last_user].get(ATTACHMENTS_KEY) or [])
                 message, history = asked, history[:last_user]
+                if not str(asked).strip() and metas:
+                    asked = "Attached: " + ", ".join(m["name"] for m in metas)
+        elif attachment_ids:
+            metas = self.attachments.resolve(session_id, attachment_ids)
+            await ensure_vision(self.vision, metas)
+            metas = self.attachments.take(session_id, attachment_ids)
+            if not message.strip():
+                asked = "Attached: " + ", ".join(m["name"] for m in metas)
+        if action != "send" and metas:
+            await ensure_vision(self.vision, metas)
         continuing = action == "continue"
         shown, left_out = trimmed_history(history, self.context_tokens())
         if left_out:
             self.audit.record("chat.history_trimmed", f"the first {left_out} of {len(history)} messages of a long "
                               "conversation were left out of the prompt to fit the model's context", actor="runtime",
                               session_id=session_id, left_out=left_out, messages=len(history))
-        context = "" if continuing else self._turn_context(message, shown_memories(shown))
-        ask = CONTINUE_PROMPT if continuing else message + context
-        replay = [for_model(m) for m in shown]
+        memory_text = message.strip() or " ".join(m["name"] for m in metas)
+        context = "" if continuing else self._turn_context(memory_text, shown_memories(shown))
+        replay = [for_model_message(m, self.attachments, session_id) for m in shown]
+        if continuing:
+            ask = CONTINUE_PROMPT
+        else:
+            ask = render_turn(message, metas, context, self.attachments, session_id) if metas else message + context
         if left_out:
             if replay:
                 replay = [{**replay[0], "content": trim_note(left_out) + replay[0]["content"]}, *replay[1:]]
             else:
                 ask = trim_note(left_out) + ask
-        messages = [{"role": "system", "content": self._system_prompt(mode)},
-                    *replay, {"role": "user", "content": ask, **({CONTINUE_KEY: True} if continuing else {})}]
+        user_message: dict[str, Any] = {"role": "user", "content": ask, **({CONTINUE_KEY: True} if continuing else {})}
+        if metas:
+            user_message[ATTACHMENTS_KEY] = metas
+        messages = [{"role": "system", "content": self._system_prompt(mode)}, *replay, user_message]
         turn_start = len(messages) - 1
         extra = {"history_trimmed": left_out} if left_out else {}
         if action != "send":
@@ -752,8 +799,12 @@ class Jig:
         def saved() -> list[dict[str, Any]]:
             """The whole conversation, with this turn as the user wrote it and the tool results as the tools gave
             them; what Jig added for the model is kept apart (``CONTEXT_KEY``) to be replayed with them."""
-            first = ({"role": "user", "content": CONTINUE_PROMPT, CONTINUE_KEY: True} if continuing
-                     else {**messages[turn_start], "content": message, CONTEXT_KEY: context})
+            if continuing:
+                first: dict[str, Any] = {"role": "user", "content": CONTINUE_PROMPT, CONTINUE_KEY: True}
+            else:
+                first = {"role": "user", "content": message, CONTEXT_KEY: context}
+                if metas:
+                    first[ATTACHMENTS_KEY] = metas
             return [*history, first, *(kept_apart(m) for m in messages[turn_start + 1:])]
 
         def finished() -> list[dict[str, Any]]:

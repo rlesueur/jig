@@ -28,7 +28,7 @@ class Planner:
         run_id = self.store.create_run(kind="plan", mode=Mode.RESEARCH, goal_id=goal_id)
         ids = {"run_id": run_id, "task_id": None, "goal_id": goal_id}
         self.bus.publish(EventType.RUN_START, kind="plan", mode=Mode.ACTION.value, **ids)
-        tools = ", ".join(f"{t.name} ({t.effect.value})" for t in self.registry.available())
+        tools = ", ".join(f"{t.name} ({t.effect.value})" for t in self.registry.available() if not t.chat_only)
         messages = [
             {"role": "system", "content": PLANNER_SYSTEM_PROMPT.format(tools=tools)},
             {"role": "user", "content": f"Goal: {goal['title']}\n\n{goal['description']}"},

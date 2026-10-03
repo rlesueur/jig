@@ -44,6 +44,9 @@ class ToolContext:
     connectors: Any = None
     # Optional local SearXNG (jig.searxng). web_search uses it and never scrapes another engine.
     searxng: Any = None
+    # Files attached in the current chat (jig.attachments.AttachmentStore). None outside a conversation.
+    attachments: Any = None
+    session_id: str | None = None
 
 
 ToolFn = Callable[..., Awaitable[Any]]
@@ -77,6 +80,8 @@ class ToolSpec:
     precheck: PrecheckFn | None = None
     # Offered only in background task runs (reading an earlier task's result), never in chat.
     tasks_only: bool = False
+    # Offered only in chat (files the user attached to the conversation), never in a background task.
+    chat_only: bool = False
 
     def is_available(self) -> bool:
         return self.available is None or bool(self.available())
@@ -181,6 +186,7 @@ class ToolRegistry:
         resolve: ResolveFn | None = None,
         precheck: PrecheckFn | None = None,
         tasks_only: bool = False,
+        chat_only: bool = False,
     ) -> Callable[[ToolFn], ToolFn]:
         def decorator(fn: ToolFn) -> ToolFn:
             if not inspect.iscoroutinefunction(fn):
@@ -223,6 +229,7 @@ class ToolRegistry:
                 resolve=resolve,
                 precheck=precheck,
                 tasks_only=tasks_only,
+                chat_only=chat_only,
             )
             return fn
 
@@ -250,7 +257,8 @@ class ToolRegistry:
         return [t for t in self._tools.values() if t.is_available()]
 
     def for_mode(self, mode: Mode, *, task: bool = True) -> list[ToolSpec]:
-        return [t for t in self.available() if t.allowed_in(mode) and (task or not t.tasks_only)]
+        return [t for t in self.available() if t.allowed_in(mode) and (task or not t.tasks_only)
+                and (not task or not t.chat_only)]
 
     def schemas_for_mode(self, mode: Mode, *, task: bool = True) -> list[dict[str, Any]]:
         return [t.schema() for t in self.for_mode(mode, task=task)]

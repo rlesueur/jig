@@ -9,7 +9,7 @@ from typing import Any
 from .constants import TERMINAL_GOAL_STATUSES, TERMINAL_TASK_STATUSES, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, dumps, iso, later_iso, new_id, now, now_iso
 from .errors import CannotDelete, NotFound
-from .model import JIG_ONLY_KEYS
+from .model import ATTACHMENTS_KEY, JIG_ONLY_KEYS
 from .recurrence import Recurrence
 
 
@@ -370,13 +370,27 @@ class Store:
             messages = json.loads(session["messages_json"])
         else:
             messages = next((json.loads(r["messages_json"]) for r in reversed(runs) if r["messages_json"]), [])
-        stopped_key, continue_key = JIG_ONLY_KEYS
-        said = [{"role": m["role"], "text": m["content"],
-                 **({"stopped": m[stopped_key]["kind"], "stopped_reason": m[stopped_key].get("reason")}
-                    if m.get(stopped_key) else {})}
-                for m in messages if m.get("role") in ("user", "assistant") and not m.get(continue_key)
-                and isinstance(m.get("content"), str) and m["content"].strip()]
-        first = next((m["text"] for m in said if m["role"] == "user"), "")
+        stopped_key, continue_key = JIG_ONLY_KEYS[:2]
+        said = []
+        for m in messages:
+            if m.get("role") not in ("user", "assistant") or m.get(continue_key):
+                continue
+            text = m.get("content") if isinstance(m.get("content"), str) else ""
+            files = m.get(ATTACHMENTS_KEY) or []
+            if not str(text).strip() and not (m.get("role") == "user" and files):
+                continue
+            item = {"role": m["role"], "text": text}
+            if m.get(stopped_key):
+                item["stopped"] = m[stopped_key]["kind"]
+                item["stopped_reason"] = m[stopped_key].get("reason")
+            if files:
+                item["attachments"] = [{"id": a.get("id"), "name": a.get("name"), "kind": a.get("kind"),
+                                        "bytes": a.get("bytes")} for a in files if isinstance(a, dict)]
+            said.append(item)
+        first = next((m["text"] for m in said if m["role"] == "user" and str(m["text"]).strip()), "")
+        if not first:
+            named = next((m["attachments"][0]["name"] for m in said if m["role"] == "user" and m.get("attachments")), "")
+            first = named
         out = {"id": sid, "title": " ".join(first.split())[:120], "started_at": row["started_at"],
                "updated_at": row["updated_at"], "messages": len(said),
                "replying": any(r["status"] == RunStatus.RUNNING for r in runs)}

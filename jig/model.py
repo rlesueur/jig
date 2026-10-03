@@ -48,7 +48,10 @@ RETRY_TEMPERATURE_STEP = 0.2
 # that refuses it is asked again without it, and its replies say why they have no counts (usage_missing).
 USAGE_FIELD = "stream_options"
 # Keys Jig keeps on saved messages for itself; they are never sent to a model.
-JIG_ONLY_KEYS = ("jig_stopped", "jig_continue")
+# jig_attachments is the files on a user message (names and ids, never the bytes). The agent turns
+# pictures into image parts just before the request (jig.attachments.expand_message).
+ATTACHMENTS_KEY = "jig_attachments"
+JIG_ONLY_KEYS = ("jig_stopped", "jig_continue", ATTACHMENTS_KEY)
 # llama.cpp's server answers HTTP 500 with one of these when its chat parser cannot read the model's output as
 # the tool call it was asked for ("Failed to parse input at pos" up to about b8700; the PEG parser after that).
 _UNPARSED = re.compile(r"The model produced output that does not match the expected|Failed to parse input at pos")

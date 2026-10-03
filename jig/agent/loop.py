@@ -122,6 +122,9 @@ class Agent:
         self.max_steps = max_steps
         # The model's context window, for the budget line (None when unknown).
         self.context_tokens = context_tokens or (lambda: model.server_info.get("context_tokens"))
+        # Turns attached pictures into image parts on a copy of the messages, just before they are sent.
+        # The stored conversation keeps only the file ids (jig.attachments.expand_message).
+        self.prepare_outgoing: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None
 
     async def run(self, messages: list[dict[str, Any]], spec: RunSpec, *, max_steps: int | None = None) -> RunResult:
         limit = max_steps or self.max_steps
@@ -133,7 +136,7 @@ class Agent:
         self.audit.record("run.start", f"{spec.kind} run in {spec.mode} mode{' (resumed)' if resuming else ''}",
                           **ids, run_kind=spec.kind, mode=spec.mode.value)
         call_ctx = CallContext(run_id=run_id, task_id=spec.task_id, mode=spec.mode, intent=spec.intent,
-                               on_wait=spec.on_wait, pause=spec.pause)
+                               on_wait=spec.on_wait, pause=spec.pause, session_id=spec.session_id)
         steps = _steps_taken(messages)
         limit_reached = False
         relaxed = _continuing(messages)
@@ -326,7 +329,8 @@ class Agent:
                 await sink(kind, text)
 
         try:
-            result = await self.model.chat(messages, tools=tools or None, on_delta=on_delta, relaxed=relaxed)
+            outgoing = self.prepare_outgoing(messages) if self.prepare_outgoing else messages
+            result = await self.model.chat(outgoing, tools=tools or None, on_delta=on_delta, relaxed=relaxed)
         except asyncio.CancelledError:
             self.store.finish_step(step_id, status="cancelled", error="interrupted")
             self.bus.publish(EventType.MODEL_END, step=idx, ok=False, **ids)
