@@ -5,7 +5,7 @@
  * and no Jig may be drawn smaller than 112px.
  */
 import { createRequire } from 'node:module';
-import { readFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, appendFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
 const require = createRequire('C:/Users/you/Jig/demos/package.json');
@@ -42,7 +42,7 @@ async function scrub(page) {
   await page.evaluate(() => {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let t = walker.nextNode(); t; t = walker.nextNode()) {
-      if (/bonsai|qwen|gemma|llama|mistral|gpt-oss|granite|phi\d/i.test(t.nodeValue)) t.nodeValue = t.nodeValue.replace(/[\w.-]*(bonsai|qwen|gemma|llama|mistral|gpt-oss|granite|phi\d)[\w.:-]*/gi, 'local model');
+      if (/bonsai|qwen|gemma|\bllama[\d-]|mistral|gpt-oss|granite|phi\d/i.test(t.nodeValue)) t.nodeValue = t.nodeValue.replace(/[\w.-]*(bonsai|qwen|gemma|\bllama[\d-]|mistral|gpt-oss|granite|phi\d)[\w.:-]*/gi, 'local model');
     }
   });
 }
@@ -119,7 +119,7 @@ async function contrast(page, name) {
     const seen = new Set();
     for (let t = walker.nextNode(); t; t = walker.nextNode()) {
       const el = t.parentElement;
-      if (!t.nodeValue.trim() || seen.has(el) || !el.offsetParent || el.closest('.sr-only, [hidden], jig-avatar, script, style')) continue;
+      if (!t.nodeValue.trim() || seen.has(el) || !el.offsetParent || el.closest('.sr-only, [hidden], jig-avatar, script, style') || (el.closest('details:not([open])') && !el.closest('summary'))) continue;
       seen.add(el);
       const box = el.getBoundingClientRect();
       if (box.width < 1 || box.height < 1 || box.bottom < 0 || box.top > innerHeight) continue;
@@ -187,8 +187,27 @@ async function waitIdleChat(page, timeoutMs) {
 
 async function setup(port = 8821, which = 'b') {
   const { browser, page } = await open(port, which);
-  await sleep(1500);
+  await sleep(2500);
   await shoot(page, '30-setup');
+  // the help, opened on the app you already have ("You already have Ollama, so:")
+  const help = page.locator('#setup details').filter({ hasText: 'I don\u2019t have a model app yet' }).first();
+  if (await help.count()) {
+    await help.locator('summary').click();
+    await sleep(600);
+    await help.scrollIntoViewIfNeeded();
+    await shoot(page, '31-setup-help', { sizes: ['desktop', 'narrow'], themes: ['light'] });
+  }
+  // a model with too small a context: the check explains which setting to change
+  const small = page.locator('#setup label, #setup .pick').filter({ hasText: /\b[1-8]K context/ }).locator('input[type="radio"]').first();
+  if (await small.count()) {
+    await small.check();
+    await sleep(500);
+    await shoot(page, '32-setup-picked', { sizes: ['desktop'], themes: ['light'] });
+    await page.getByRole('button', { name: 'Check it and start' }).click();
+    await page.waitForFunction(() => /too small|couldn|can\u2019t|All set/i.test(document.getElementById('setup').innerText), null, { timeout: 300000 });
+    await sleep(800);
+    await shoot(page, '33-setup-check-result');
+  }
   await browser.close();
 }
 
@@ -214,11 +233,15 @@ async function chat(port = 8820, which = 'a') {
   await browser.close();
 }
 
-const CODING = 'In your workspace, make a folder budget with budget.py: a function parse_amount(text) that turns text like "£1,250.00" or "12.5" into a float, and total(rows) that adds up the amounts in a list of strings. Write unittest tests in budget/test_budget.py, including amounts with a £ sign and commas, and run them with python3 -m unittest -v from the budget folder. If any fail, fix the code and run the tests again until they pass.';
+const CODING = 'The tests for report.py in your workspace are failing. Run them in your sandbox with python3 -m unittest -v, find out why, fix report.py (standard library only) and run the tests again until they all pass. Then run report.py and show me the summary.';
 
 async function coding(port = 8820, which = 'a') {
+  // a take that stops early must not leave an earlier take's shots in the set
+  for (const f of readdirSync(OUT)) if (/^1\d-coding-/.test(f)) unlinkSync(path.join(OUT, f));
   const { browser, page } = await open(port, which);
   const end = Date.now() + 15 * 60000;
+  await page.getByTestId('chat-new').click();
+  await sleep(500);
   await send(page, CODING);
   let approvals = 0;
   const posed = new Set();
@@ -254,6 +277,12 @@ async function coding(port = 8820, which = 'a') {
     await sleep(150);
   }
   log('approvals', approvals, 'poses', [...posed].join(','));
+  await waitIdleChat(page, 300000);
+  await page.locator('#corner-work .work-mark').waitFor({ timeout: 120000 });
+  if (!(await page.locator('#corner-work .work-mark.ok').count())) {
+    const line = (await page.getByTestId('work-line').innerText()).trim();
+    throw new Error(`the coding task did not finish (${line}): take it again`);
+  }
   await sleep(1200);
   await shoot(page, '14-coding-done');
   await page.click('[data-testid="work-steps-toggle"]');

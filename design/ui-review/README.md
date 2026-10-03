@@ -219,6 +219,19 @@ what the request asks for.
 Before or alongside A, fix the page-grows bug (finding 5), make tool poses hold long enough to be seen (finding 2), and
 add the runtime summaries the work view needs.
 
+## As built: where the stop button and the runaway notice go
+
+Direction A is built (`jig/web/app.js`, `work.js`, `style.css`). Two pieces of work land in it separately, and the layout
+leaves them their place:
+
+- **Stopping a reply.** While Jig works in the conversation, the corner's work line holds the Stop button (at the end of
+  the line, so it stays next to what it stops), and the status row under Jig holds "Stop the reply" for a reply with no
+  steps yet. On a narrow window the band hides the status row while the work line is showing, unless a background job
+  can be stopped, so there is still exactly one Stop in reach.
+- **"Jig stopped this reply because it was repeating itself".** This belongs to the reply, so it sits under the reply in
+  the conversation with Continue anyway and Try again, like any other note on a reply. The corner's work line ends as
+  stopped (the work view has a `stopped` status for it); no second Jig and no pop-up.
+
 ## Files
 
 All PNGs are in `C:\Users\you\.cursor\projects\c-Users-robyn-VideoAvatar\assets\jig-ui-review\`.
@@ -238,6 +251,9 @@ The sources are under `design/ui-review/`:
 - `mockups/`: `mock.html`, `mock.js`, `mock.css` and `sheet.html`.
 - `scripts/`:
   - `capture-current.mjs`: shoots the live UI from a spare Jig.
+  - `capture-built.mjs`: shoots the built UI from a spare Jig into `assets\jig-ui-built\`, checking each shot (the page
+    never scrolls as a whole, one Jig on screen and never under 112px, WCAG AA for every visible text).
+  - `testids.py`: lists the test ids the tests and demos use and any the UI no longer has.
   - `render.mjs`: a static server plus Playwright. It runs as `avatar-test`, `mockups [a|b|c]` or `sheets`.
   - `contrast.mjs`: measures the new text pairings.
 

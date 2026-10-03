@@ -759,6 +759,8 @@ html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { 
   .doing-actions > * { white-space: nowrap; }
   .doing-text { font-size: 14px; }
   .doing[data-busy="false"] .doing-text { display: none; }
+  /* the work line already says what Jig is doing in the conversation, and holds its Stop */
+  .corner[data-holding="work"] .doing:not(:has(#doing-stop:not([hidden]))) { display: none; }
   .doing[data-busy="false"] { border-top: 0; padding-top: 0; }
   /* A finished run: Jig grows a little for its celebration, then settles back. */
   html[data-jig-state="success"] .corner:not(.is-sheet) { grid-template-columns: 152px minmax(0, 1fr); }
