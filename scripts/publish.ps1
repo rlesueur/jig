@@ -86,7 +86,7 @@ $AttackPaths = @(
 )
 # Distinctive, benign identifiers (a function name from the D1 experiment and the D2 injection-variant
 # label) that only ever appeared inside the removed files. After the rewrite none of them may remain in
-# any blob; these are plain source identifiers, not attack text.
+# any blob except this file, which has to name them. These are plain source identifiers, not attack text.
 $AttackMarkers = @('tool_mimic', 'decision_of', 'items_for')
 
 function Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
@@ -248,7 +248,8 @@ function Assert-NoAttackContent([string]$RepoPath) {
 
     $revs = @(Run git -C $RepoPath rev-list --all)
     foreach ($m in $script:AttackMarkers) {
-        $grep = Try-Run git -C $RepoPath grep -I -l -F $m @revs
+        # Quoted so PowerShell keeps the separator. This file names the markers, so it is not a hit.
+        $grep = Try-Run git -C $RepoPath grep -I -l -F $m @revs '--' . ':(exclude)scripts/publish.ps1'
         if ($grep.Code -gt 1) { Fail "git grep for marker '$m' failed (exit code $($grep.Code)): $($grep.Output)" }
         if ($grep.Code -eq 0 -and $grep.Output.Trim()) { Fail "attack marker '$m' still appears in history:`n      $($grep.Output -replace "`n", "`n      ")" }
     }
