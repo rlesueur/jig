@@ -1,0 +1,10 @@
+# Fixture strings in tests. They are stand-ins, not credentials. The scan covers every
+# commit, including tests/test_connector_slack.py, which is no longer in the tree.
+[allowlist]
+description = "Test fixtures that look like tokens"
+regexTarget = "secret"
+regexes = [
+  '''jig-mcp-test-secret-9f3c''',
+  '''xoxb-[0-9]+-[0-9]+-jig(web)?test''',
+  '''sk-abcdefgh1234567890wxyz''',
+]
