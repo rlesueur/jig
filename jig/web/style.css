@@ -313,6 +313,7 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
   background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
 }
 .work-line { margin: 0; display: flex; gap: 10px; align-items: baseline; font-weight: 800; font-size: 16.5px; line-height: 1.35; }
+.work-line .work-stop { margin-left: auto; }
 .pulse { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dot-ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot-ok) 22%, transparent); transform: translateY(-1px); animation: breathe 2s ease-in-out infinite; }
 .work-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; font-weight: 900; transform: translateY(2px); }
 .work-mark.ok { background: var(--ok); color: var(--surface); }
@@ -435,6 +436,9 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 .msg.error { border-color: var(--bad); border-width: 2px; }
 .msg .error-text { margin-top: 6px; }
 .reply-problem { margin: 8px 0 0; color: var(--bad); font-weight: 700; font-size: 14px; }
+.reply-stopped { margin: 10px 0 0; }
+.reply-stopped p { margin: 0 0 6px; }
+.reply-stopped-text { margin: 8px 0 0; font-weight: 700; font-size: 14px; }
 .typing::after { content: "\2026"; display: inline-block; animation: blink 1.2s steps(2) infinite; color: var(--muted); font-weight: 900; }
 @keyframes blink { 50% { opacity: 0.2; } }
 

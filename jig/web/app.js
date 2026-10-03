@@ -18,6 +18,7 @@ import { initWork, Work } from './work.js';
 const $ = (id) => document.getElementById(id);
 const TERMINAL_TASK = new Set(['done', 'failed', 'cancelled', 'blocked']);
 const TERMINAL_GOAL = new Set(['done', 'failed', 'cancelled']);
+const TASK_STOPPED = 'Jig stopped this task because'; // jig.runtime.TASK_STOPPED: the model was repeating itself
 
 /* ---------- small DOM helpers ---------- */
 
@@ -923,6 +924,7 @@ function renderDoing() {
   const background = active.length + queued.length + planning.length > 0;
   $('doing').dataset.busy = String(background || chatBusy);
   $('doing-stop').hidden = !background && !live.length;
+  $('chat-stop').hidden = !chatBusy;
   renderDoingList(live, planning);
 }
 
@@ -932,6 +934,8 @@ function stoppable() {
     .map((g) => [g.id, g]));
   return { goals: [...goals.values()], tasks: live.filter((t) => !t.goal_id) };
 }
+
+$('chat-stop').addEventListener('click', stopReply);
 
 $('doing-stop').addEventListener('click', () => act($('doing-stop'), async () => {
   const { goals, tasks } = stoppable();
@@ -957,6 +961,15 @@ function doingItem(t) {
   if (t.status === 'paused') {
     actions.append(el('button', { type: 'button', class: 'btn btn-small btn-approve', text: 'Resume', 'aria-label': `Resume ${label}`,
       onclick: (e) => act(e.currentTarget, async () => { await api(`/tasks/${t.id}/resume`, { method: 'POST' }); await loadActivity(); }) }));
+  }
+  if (t.status === 'failed' && (t.error || '').startsWith(TASK_STOPPED)) {
+    const retry = (continueAnyway) => (e) => act(e.currentTarget, async () => {
+      await api(`/tasks/${t.id}/retry`, { method: 'POST', body: { continue_anyway: continueAnyway } });
+      await loadActivity();
+    });
+    actions.append(
+      el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'task-continue', text: 'Continue anyway', 'aria-label': `Continue ${label} anyway`, onclick: retry(true) }),
+      el('button', { type: 'button', class: 'btn btn-small btn-approve', 'data-testid': 'task-try-again', text: 'Try again', 'aria-label': `Try ${label} again`, onclick: retry(false) }));
   }
   if (!TERMINAL_TASK.has(t.status)) {
     actions.append(el('button', { type: 'button', class: 'btn btn-small btn-danger', text: 'Stop', 'aria-label': `Stop ${label}`,
@@ -1045,19 +1058,51 @@ function describeWorking(ev) {
 
 const WORK_EVENTS = new Set(['approval.requested', 'approval.resolved', 'tool.start', 'tool.summary', 'tool.end']);
 
-async function sendChat(message) {
+let chatAbort = null; // stops the reply being written: closing its stream cancels the run in Jig
+let liveWork = null; // the work view of that reply
+const replyTexts = new WeakMap(); // a reply's text so far, so a stopped reply can be continued in place
+
+function stopReply() {
+  if (chatAbort) chatAbort.abort();
+}
+
+/** Under a reply Jig stopped because it was repeating itself: say so, and offer to continue it or try again. */
+function stoppedNote(msg, item) {
+  const box = el('div', { class: 'reply-stopped', role: 'status', 'data-testid': 'chat-stopped' },
+    el('p', { class: 'reply-stopped-text', text: item.message }),
+    el('p', { class: 'hint-quiet', text: item.relaxed ? 'It was still repeating itself after you asked it to carry on. What it wrote is kept above.' : 'What it wrote so far is kept above.' }));
+  const go = (action) => {
+    if (chatBusy) return;
+    box.replaceChildren(el('p', { class: 'hint-quiet', text: action === 'continue' ? 'You asked Jig to carry on.' : 'You asked Jig to try again: the new reply is below.' }));
+    sendChat('', { action, from: msg });
+  };
+  box.append(el('div', { class: 'item-actions' },
+    el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'chat-continue', text: 'Continue anyway', onclick: () => go('continue') }),
+    el('button', { type: 'button', class: 'btn btn-small btn-approve', 'data-testid': 'chat-try-again', text: 'Try again', onclick: () => go('retry') })));
+  msg.append(box);
+}
+
+/** Send `message`, or, after a reply was stopped (`from`), continue it in place or try it again. */
+async function sendChat(message, { action = 'send', from = null } = {}) {
   chatBusy = true;
   $('chat-send').disabled = true;
-  addMessage('user', message);
-  const { msg, content } = addMessage('jig');
+  const ask = action === 'send' ? message : (from && from.dataset.ask) || '';
+  if (action === 'send') addMessage('user', message);
+  const { msg, content } = action === 'continue' ? { msg: from, content: from.querySelector('.content') } : addMessage('jig');
+  msg.dataset.ask = ask;
   content.classList.add('typing', 'md');
-  let replyText = '';
-  const showReply = () => content.replaceChildren(...renderMarkdown(replyText));
+  let replyText = action === 'continue' ? replyTexts.get(msg) || '' : '';
+  const showReply = () => {
+    replyTexts.set(msg, replyText);
+    content.replaceChildren(...renderMarkdown(replyText));
+  };
   let thinking = null;
   let working = null;
   let finished = false;
+  let stopped = false;
   let runId = null;
   let work = null; // what Jig did for this reply, once it uses a tool
+  chatAbort = new AbortController();
   if (view.work && view.work.status !== 'running') showWork(null);
   renderDoing();
 
@@ -1065,7 +1110,8 @@ async function sendChat(message) {
     if (!WORK_EVENTS.has(ev.type)) return;
     if (!work) {
       if (ev.type !== 'tool.start' && ev.type !== 'approval.requested') return;
-      work = new Work({ runId, ask: message });
+      work = new Work({ runId, ask });
+      liveWork = work;
       stepsLink(work, msg);
       showWork(work);
     }
@@ -1130,6 +1176,11 @@ async function sendChat(message) {
         replyText = item.final;
         showReply();
       }
+    } else if (item.type === 'stopped') {
+      finished = true;
+      stopped = true;
+      sessionId = item.session_id;
+      stoppedNote(msg, item);
     } else if (item.type === 'error') {
       finished = true;
       sessionId = item.session_id;
@@ -1145,9 +1196,11 @@ async function sendChat(message) {
     try {
       r = await fetch('/chat', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, session_id: sessionId, mode: prefs.readOnly ? 'research' : 'action' }),
+        body: JSON.stringify({ message, session_id: sessionId, mode: prefs.readOnly ? 'research' : 'action', action }),
+        signal: chatAbort.signal,
       });
     } catch (err) {
+      if (err.name === 'AbortError') throw err;
       fail(`cannot reach Jig: ${err.message}`);
       return;
     }
@@ -1179,14 +1232,21 @@ async function sendChat(message) {
     if (buf.trim()) handle(JSON.parse(buf));
     if (!finished) fail('the reply stream ended before Jig finished');
   } catch (err) {
-    fail(err.message);
+    if (err.name === 'AbortError') {
+      stopped = true;
+      msg.append(el('p', { class: 'reply-stopped-text', 'data-testid': 'chat-stopped-by-you', text: 'You stopped this reply. What it wrote so far is kept.' }));
+    } else {
+      fail(err.message);
+    }
   } finally {
     content.classList.remove('typing');
     if (runId) liveChatRuns.delete(runId);
     chatBusy = false;
+    chatAbort = null;
+    liveWork = null;
     $('chat-send').disabled = false;
     if (work) {
-      work.finish(msg.classList.contains('error') ? 'failed' : 'done');
+      work.finish(msg.classList.contains('error') ? 'failed' : stopped ? 'stopped' : 'done');
       workChanged(work);
     }
     renderDoing();
@@ -1340,7 +1400,8 @@ function renderCorner() {
   const box = $('corner-work');
   box.hidden = !w || (asking && small);
   if (w) {
-    box.replaceChildren(...w.summaryNode({ stepsOpen: view.stepsOpen, onToggle: () => openSteps(!view.stepsOpen) }));
+    box.replaceChildren(...w.summaryNode({ stepsOpen: view.stepsOpen, onToggle: () => openSteps(!view.stepsOpen),
+      onStop: w === liveWork ? stopReply : null }));
     box.dataset.status = w.status;
   }
 
@@ -2023,7 +2084,8 @@ function conversationItem(c) {
       const { transcript } = await api(`/sessions/${encodeURIComponent(c.id)}/transcript`);
       read.append(...transcript.map((m) => el('div', { class: `said ${m.role}`, 'data-testid': 'conversation-said' },
         el('p', { class: 'said-who', text: m.role === 'user' ? 'You' : 'Jig' }),
-        m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)))));
+        m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)),
+        m.stopped ? el('p', { class: 'hint-quiet', text: m.stopped === 'repetition' ? 'Jig stopped this reply because it was repeating itself.' : 'You stopped this reply.' }) : null)));
     } catch (err) {
       read.append(el('p', { class: 'error-text', text: err.message }));
     }

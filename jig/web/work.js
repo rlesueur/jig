@@ -139,13 +139,15 @@ export class Work {
 
   /* ---------- the corner: one line, a meter, and the way in ---------- */
 
-  summaryNode({ stepsOpen, onToggle }) {
+  /** `onStop`, while the work is still going: stop it (the reply it belongs to). */
+  summaryNode({ stepsOpen, onToggle, onStop = null }) {
     const { el } = h;
     const t = this.tests;
     const running = this.status === 'running';
     const parts = [el('p', { class: 'work-line', 'data-testid': 'work-line' },
       running ? el('span', { class: 'pulse', 'aria-hidden': 'true' }) : el('span', { class: `work-mark ${this.status === 'done' && !(t && t.failed + t.errors) ? 'ok' : 'bad'}`, 'aria-hidden': 'true', text: this.status === 'done' && !(t && t.failed + t.errors) ? '\u2713' : '!' }),
-      el('span', { text: this.line() }))];
+      el('span', { text: this.line() }),
+      running && onStop ? el('button', { type: 'button', class: 'btn btn-small btn-danger work-stop', 'data-testid': 'work-stop', text: 'Stop', 'aria-label': 'Stop this reply', onclick: onStop }) : null)];
     if (t) parts.push(meter(t));
     if (this.steps.length) {
       parts.push(el('button', {
