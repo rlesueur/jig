@@ -14,7 +14,7 @@ from ..errors import NotFound, ToolArgumentError, ToolError
 from ..recurrence import Recurrence
 from .paging import FIND_ARG, OFFSET_ARG, text_page
 from .registry import ToolContext, ToolRegistry
-from .web import ensure_public, extract_readable
+from .web import ensure_public, extract_readable, page_status_error
 
 # The most of a workspace file one read_file result holds; a longer file is read in parts.
 READ_FILE_CHARS = 20_000
@@ -72,8 +72,8 @@ def build_registry() -> ToolRegistry:
             break
         else:
             raise ToolError(f"too many redirects (>{cfg.max_redirects}) starting from {url}")
-        if status >= 400:
-            raise ToolError(f"{current} returned HTTP {status}")
+        if problem := page_status_error(current, status):
+            raise ToolError(problem)
         text_raw = body.decode(encoding, errors="replace")
         if ctype in ("text/html", "application/xhtml+xml") or (not ctype and "<html" in text_raw[:2000].lower()):
             title, text, links = extract_readable(text_raw, current)

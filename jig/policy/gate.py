@@ -266,8 +266,12 @@ class ToolExecutor:
                 # For the live work view only: on the event bus, never in the logs or the audit history.
                 self.bus.publish(EventType.TOOL_SUMMARY, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
                                  call_id=call.id, ok=ok, summary=summary)
-            self.bus.publish(EventType.TOOL_END, run_id=ctx.run_id, task_id=ctx.task_id, tool=spec.name,
-                             call_id=call.id, ok=ok)
+            end: dict[str, Any] = {"run_id": ctx.run_id, "task_id": ctx.task_id, "tool": spec.name,
+                                   "call_id": call.id, "ok": ok}
+            if not ok and error:
+                # The page shows this. It stays on the event bus, like a tool summary, and is not logged.
+                end["error"] = error if len(error) <= work.ERROR_CHARS else f"{error[:work.ERROR_CHARS - 1]}\u2026"
+            self.bus.publish(EventType.TOOL_END, **end)
 
     @staticmethod
     async def _run(spec: Any, tool_ctx: ToolContext, real_args: dict[str, Any], redact: dict[str, str],

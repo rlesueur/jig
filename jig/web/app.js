@@ -1177,8 +1177,9 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
         if (text) note(text);
       } else if (ev.type === 'tool.end') {
         if (!ev.data.ok) {
+          const detail = ev.data.error ? `: ${ev.data.error}` : '';
           msg.append(el('p', { class: 'reply-problem', 'data-testid': 'chat-problem',
-            text: `Something went wrong while ${TOOL_DOING[ev.data.tool] || `using ${ev.data.tool}`} (${ev.data.tool}), so Jig carried on without it.` }));
+            text: `Something went wrong while ${TOOL_DOING[ev.data.tool] || `using ${ev.data.tool}`} (${ev.data.tool})${detail}, so Jig carried on without it.` }));
         }
       } else if (ev.type === 'tool.summary') {
         /* shown in the work view */

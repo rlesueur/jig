@@ -92,6 +92,7 @@ export class Work {
     }
     if (ev.type === 'tool.end') {
       step.state = d.ok ? 'done' : 'failed';
+      if (!d.ok && d.error) step.error = d.error;
       return true;
     }
     return false;
@@ -228,7 +229,7 @@ function title(step) {
 function sub(step) {
   const { el, plural } = h;
   const s = step.summary;
-  if (!s) return null;
+  if (!s) return step.error ? el('p', { class: 'step-sub error-text', text: step.error }) : null;
   if (s.error) return el('p', { class: 'step-sub error-text', text: s.error });
   if (s.kind === 'read') return el('p', { class: 'step-sub', text: `${plural(s.chars, 'character')}${s.truncated ? ', the first part of it' : ''}` });
   if (s.kind === 'list') return el('p', { class: 'step-sub', text: s.count ? `${plural(s.count, 'thing')} in it` : 'Nothing in it yet' });

@@ -44,6 +44,19 @@ async def ensure_public(url: str) -> None:
         raise PolicyBlocked(f"core rule no-local-network: {problem}")
 
 
+def page_status_error(url: str, status: int) -> str | None:
+    """Why ``status`` is not a page of content, or ``None`` when it is HTTP 200.
+
+    Redirects are followed before this is asked. 200 is the page. 202 is not:
+    some search engines answer a blocked fetch with 202 and a challenge page,
+    which is not a set of results. Other codes (403, 404, and the rest) are
+    ordinary failures. The caller raises this text; nothing is invented in its place.
+    """
+    if status == 200:
+        return None
+    return f"{url} returned HTTP {status}"
+
+
 _SKIP = {"script", "style", "noscript", "svg", "template", "iframe", "head", "nav", "footer", "aside", "form"}
 _BLOCK = {"p", "div", "section", "article", "main", "br", "li", "ul", "ol", "tr", "table",
           "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "header", "dd", "dt"}
