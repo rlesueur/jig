@@ -79,3 +79,9 @@ From a terminal (Anthropic shown; use `openai`, `openrouter` or `gemini` the sam
 Chat from Jig's window. **Settings** is where you change the model, connect accounts, turn on search, and add schedules. The other guides are listed in [docs/README.md](README.md).
 
 On Windows, **Start when I sign in** is off unless you turn it on under **Settings > Starting with Windows**. The Mac and Linux start-at-login files are generated, and have not been run on a real Mac or Linux machine in this beta.
+
+## Attaching files
+
+In the message box, use **Attach a file**, or drop a file onto the box, or paste an image. Jig accepts PNG, JPEG, Word (`.docx`), plain text (`.txt`) and Markdown (`.md`). It checks the file itself, not only the name, and it tells you if a file is the wrong kind, too large, or not valid text.
+
+A picture is shown to the model only when vision is on (**[vision] enabled = true**, and a model that can see images). If vision is off, or the model cannot see images, Jig says so and does not pretend it looked. A Word, text or Markdown file is read as text. Jig tells the model the file name and type, and treats the contents as information, not as instructions. A long document is taken in parts. Files stay with that conversation, so you can ask about one again later. Deleting the conversation deletes them.

@@ -28,7 +28,7 @@ Jig is an open-source, always-on personal AI agent, **built for local models**. 
 
 Jig is an open, local alternative to hosted always-on agents such as Meta's Muse and OpenAI's Dots. Its safety model is an isolated safety checker, a credential vault, read-only background research, per-action rules and approvals. Because it runs on your machine, its memory is yours to see, edit and wipe, and its audit trail is yours too.
 
-> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision, a payment and booking checkpoint for the browser, connectors for Gmail, Google Calendar, Google Drive, Outlook calendar and OneDrive, GitHub, Discord and WhatsApp, and MCP servers you add yourself are in place. Voice is on the roadmap; see [Connectors](#connectors) for exactly what is built and tested.
+> Status: foundations. The runtime, safety model, API, tests, an optional container sandbox with a headless browser, vision, chat file attachments (PNG, JPEG, Word, text and Markdown), a payment and booking checkpoint for the browser, connectors for Gmail, Google Calendar, Google Drive, Outlook calendar and OneDrive, GitHub, Discord and WhatsApp, and MCP servers you add yourself are in place. Voice is on the roadmap; see [Connectors](#connectors) for exactly what is built and tested.
 
 ## Get started
 
@@ -163,6 +163,8 @@ enabled = true
 
 With vision enabled, the start-up check (and `jig health`) also sends a **real test image**: a square in a randomly chosen colour. The model has to name the colour, or the agent stays off. Tools that need vision, such as `browser_screenshot` with a question, raise `VisionUnavailable` with a clear message if vision is off; they never quietly carry on without the image. Without vision, use `browser_read` for the page text.
 
+In chat you can attach a PNG or JPEG. Jig sends it as image input when vision is on. If vision is off, or this model cannot see images, Jig says so and does not answer as if it had seen the picture. Word (`.docx`), plain text and Markdown can be attached either way: Jig reads the text, labels it untrusted (instructions inside the file are not followed), and gives a long document one part at a time. The files are kept with that conversation. See [Attaching files](docs/getting-started.md#attaching-files).
+
 How to serve a vision model:
 
 - **llama.cpp** (and forks): download the model's vision projector (`mmproj-*.gguf`) and add `--mmproj <file>` to `llama-server`. For the test model that is `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (about 0.63 GB) from `prism-ml/Ternary-Bonsai-2-27B-gguf`:
@@ -189,7 +191,7 @@ How to serve a vision model:
  │                           │ 6 approval queue (pause / resume)            ││    (separate call,
  │                           │ 7 vault refs resolved, tool runs, redaction  ││     no tools)
  │                           └──────────────────────────────────────────────┘│
- │  Tools: web_fetch · read_file · list_files · write_file · notes · memory · time
+ │  Tools: web_fetch · read_file · list_files · write_file · read_attachment · notes · memory · time
  │         (container backend) run_command · run_python · browser_*         │
  │  Sandbox: per-agent folder, or a hardened Docker container ──► egress proxy (lease + core rules)
  │  Vision (optional image input)  Vault (DPAPI / keyring / keyfile)         │
@@ -694,7 +696,7 @@ Each tool category maps to a variant: web to `browsing`, files and email to `wri
 | Auth | `POST /auth/login-code`, `GET/POST /auth/session`, `POST /auth/logout`, `POST /auth/pair` `{code, name}` (public, a pairing code is the credential), `POST /auth/token/rotate` `{confirm: true}` (host only; revokes every device) |
 | Agent | `GET /agent`, `POST /agent/pause`, `POST /agent/resume` |
 | Events | `WS /events`, `GET /events/sse`, `GET /events/recent?after=` |
-| Chat | `POST /chat` `{message, session_id, mode, action}` (NDJSON stream: `start`, `reasoning`, `content`, `event`, then `done`, `stopped` or `error`; after `stopped`, `action: "continue"` or `"retry"` with the same `session_id`; closing the stream stops the reply), `GET /sessions?limit=`, `GET /sessions/{id}`, `GET /sessions/{id}/transcript`, `DELETE /sessions/{id}`, `POST /sessions/wipe` `{confirm: true}` |
+| Chat | `POST /chat` `{message, session_id, mode, action, attachment_ids}` (NDJSON stream: `start`, `reasoning`, `content`, `event`, then `done`, `stopped` or `error`; after `stopped`, `action: "continue"` or `"retry"` with the same `session_id`; closing the stream stops the reply), `POST /attachments` (one file: PNG, JPEG, Word, text or Markdown), `GET /attachments/{session_id}/{id}`, `DELETE /attachments/{session_id}/{id}` (only before it is sent), `GET /sessions?limit=`, `GET /sessions/{id}`, `GET /sessions/{id}/transcript`, `DELETE /sessions/{id}`, `POST /sessions/wipe` `{confirm: true}` |
 | Goals | `POST /goals`, `GET /goals`, `GET /goals/{id}`, `POST /goals/{id}/cancel`, `DELETE /goals/{id}` (finished only) |
 | Tasks | `POST /tasks`, `GET /tasks?newest_first=&limit=`, `GET /tasks/{id}`, `POST /tasks/{id}/cancel`, `POST /tasks/{id}/pause`, `POST /tasks/{id}/resume`, `POST /tasks/{id}/retry` `{continue_anyway}` (a task Jig stopped for repeating itself), `DELETE /tasks/{id}` (finished only), `POST /jobs/wipe` `{confirm: true}`, `GET /runs?task_id=&kind=`, `GET /runs/{id}` |
 | Forget everything | `POST /forget` `{confirm: true}` (memories, notes, conversations and finished jobs) |
