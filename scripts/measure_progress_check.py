@@ -96,27 +96,80 @@ def captured(runs: Path) -> Iterator[dict[str, Any]]:
                 continue
             rec = json.loads(line)
             for http in rec.get("http") or []:
-                text = http.get("response_text") or ""
-                if text in seen or http.get("status") != 200:
+                if http.get("status") != 200:
                     continue
-                seen.add(text)
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                choice = (data.get("choices") or [{}])[0]
-                msg = choice.get("message") or {}
-                parts = []
-                if reasoning := msg.get("reasoning_content") or msg.get("reasoning"):
-                    parts.append(("reasoning", reasoning))
-                if msg.get("content"):
-                    parts.append(("content", msg["content"]))
-                for i, call in enumerate(msg.get("tool_calls") or []):
-                    args = (call.get("function") or {}).get("arguments") or ""
-                    parts.append((f"tool_arguments:{i}", args if isinstance(args, str) else json.dumps(args)))
-                yield {"run": Path(name).parent.name, "file": Path(name).name, "parts": parts,
-                       "request": http.get("request") or {}, "usage": data.get("usage") or {},
-                       "finish_reason": choice.get("finish_reason")}
+                if "sse" in http:
+                    text = "\n".join(raw for _, raw in http["sse"])
+                    if text in seen:
+                        continue
+                    seen.add(text)
+                    out = from_stream(http["sse"])
+                else:
+                    text = http.get("response_text") or ""
+                    if text in seen:
+                        continue
+                    seen.add(text)
+                    try:
+                        out = from_message(json.loads(text))
+                    except json.JSONDecodeError:
+                        continue
+                yield {"run": Path(name).parent.name, "file": Path(name).name,
+                       "request": http.get("request") or {}, **out}
+
+
+def from_message(data: dict[str, Any]) -> dict[str, Any]:
+    """A whole (non-streamed) reply, as the harness recorded them before every request streamed."""
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    parts = []
+    if reasoning := msg.get("reasoning_content") or msg.get("reasoning"):
+        parts.append(("reasoning", reasoning))
+    if msg.get("content"):
+        parts.append(("content", msg["content"]))
+    for i, call in enumerate(msg.get("tool_calls") or []):
+        args = (call.get("function") or {}).get("arguments") or ""
+        parts.append((f"tool_arguments:{i}", args if isinstance(args, str) else json.dumps(args)))
+    return {"parts": parts, "usage": data.get("usage") or {}, "finish_reason": choice.get("finish_reason")}
+
+
+def from_stream(sse: list[list[Any]]) -> dict[str, Any]:
+    """A streamed reply from its raw SSE lines ([seconds, line] as the harness recorded them). One Jig stopped
+    has no finish_reason and no error from the server (``stopped_by_jig``); its token count is then the number
+    of chunks."""
+    reasoning: list[str] = []
+    content: list[str] = []
+    calls: dict[int, list[str]] = {}
+    usage: dict[str, Any] = {}
+    finish = None
+    chunks = 0
+    errored = False
+    for _, raw in sse:
+        if not raw.startswith("data:") or raw[5:].strip() == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(raw[5:])
+        except json.JSONDecodeError:
+            continue
+        errored = errored or "error" in chunk
+        usage = chunk.get("usage") or usage
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            chunks += bool(delta)
+            if text := delta.get("reasoning_content") or delta.get("reasoning"):
+                reasoning.append(text)
+            if delta.get("content"):
+                content.append(delta["content"])
+            for pos, tc in enumerate(delta.get("tool_calls") or []):
+                args = (tc.get("function") or {}).get("arguments")
+                calls.setdefault(tc.get("index", pos), []).append(args if isinstance(args, str) else
+                                                                  json.dumps(args) if args else "")
+            finish = choice.get("finish_reason") or finish
+    parts = [("reasoning", "".join(reasoning))] if reasoning else []
+    if content:
+        parts.append(("content", "".join(content)))
+    parts += [(f"tool_arguments:{i}", "".join(a)) for i, a in sorted(calls.items())]
+    return {"parts": parts, "usage": usage or ({"completion_tokens": chunks} if finish is None else {}),
+            "finish_reason": finish, "stopped_by_jig": finish is None and not errored}
 
 
 def answer_part(request: dict[str, Any]) -> str | None:
@@ -147,7 +200,12 @@ def measure_captured(runs: Path) -> dict[str, Any]:
                      "longest_part": len(longest), "seen": seen,
                      "end_ratio": round(last_window_ratio(longest), 4) if len(longest) >= progress.WINDOW else None,
                      "stop": stop.record() if stop else None,
-                     "repetition_only": bare.record() if bare else None})
+                     "repetition_only": bare.record() if bare else None,
+                     "stopped_live": out.get("stopped_by_jig", False)})
+    # A reply Jig stopped as it streamed ended where the check fired, so it cannot be judged a loop by how it
+    # ended: these are listed on their own, to be judged by reading them.
+    live = [r for r in rows if r["stopped_live"]]
+    rows = [r for r in rows if not r["stopped_live"]]
     loops = [r for r in rows if r["looped"]]
     normal = [r for r in rows if not r["looped"]]
     long_normal = [r for r in normal if r["longest_part"] >= progress.WINDOW]
@@ -156,7 +214,8 @@ def measure_captured(runs: Path) -> dict[str, Any]:
         seen.add(r["seen"])
     worst = round(seen.lowest, 4) if seen.lowest < 1 else None
     return {
-        "outputs": len(rows),
+        "outputs": len(rows) + len(live),
+        "stopped_live": [{k: r[k] for k in ("run", "file", "mode", "chars", "tokens", "stop")} for r in live],
         "loops": [{k: r[k] for k in ("run", "file", "mode", "chars", "tokens", "chars_per_token", "end_ratio", "stop",
                                      "repetition_only")} for r in loops],
         "normal_outputs": len(normal),
