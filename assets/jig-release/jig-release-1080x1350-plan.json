@@ -1,0 +1,336 @@
+{
+  "fps": 30,
+  "layout": {
+    "w": 1080,
+    "h": 1350,
+    "suffix": "1080x1350",
+    "ps": 940,
+    "px": 70,
+    "py": 232,
+    "align": "center",
+    "hx": 40,
+    "hy": 50,
+    "hw": 1000,
+    "kicker": 24,
+    "headline": 62,
+    "cx": 60,
+    "cy": 1196,
+    "cw": 960,
+    "caption": 42,
+    "badge": 22,
+    "avs": 660,
+    "avx": 210,
+    "avy": 120,
+    "kx": 60,
+    "ky": 800,
+    "kw": 960,
+    "hero": 124
+  },
+  "vars": {
+    "--w": "1080px",
+    "--h": "1350px",
+    "--ps": "940px",
+    "--px": "70px",
+    "--py": "232px",
+    "--hx": "40px",
+    "--hy": "50px",
+    "--hw": "1000px",
+    "--halign": "center",
+    "--talign": "center",
+    "--kicker": "24px",
+    "--headline": "62px",
+    "--hero": "124px",
+    "--caption": "42px",
+    "--badge": "22px",
+    "--cx": "60px",
+    "--cy": "1196px",
+    "--cw": "960px",
+    "--avx": "210px",
+    "--avy": "120px",
+    "--avs": "660px",
+    "--kx": "60px",
+    "--ky": "800px",
+    "--kw": "960px",
+    "--kalign": "center",
+    "--ktalign": "center"
+  },
+  "scenes": [
+    {
+      "type": "card",
+      "outDur": 2.6,
+      "avatar": "idle",
+      "card": {
+        "kicker": "A real run",
+        "title": "Find me a *free hour*",
+        "lines": [
+          "One calendar, one question, and a booking."
+        ]
+      },
+      "outStart": 0
+    },
+    {
+      "type": "screen",
+      "from": 1791064797723,
+      "to": 1791064808685,
+      "speed": 3,
+      "veil": [
+        {
+          "from": 1791064797683,
+          "to": 1791064801223,
+          "y0": 588,
+          "y1": 828
+        },
+        {
+          "from": 1791064801223,
+          "to": 1791064803743,
+          "y0": 567,
+          "y1": 807
+        },
+        {
+          "from": 1791064803743,
+          "to": 1791064807085,
+          "y0": 549,
+          "y1": 789
+        }
+      ],
+      "header": {
+        "kicker": "You ask",
+        "headline": "In *plain words*"
+      },
+      "crops": [
+        {
+          "at": 0,
+          "box": {
+            "x": 461.5,
+            "y": 510.0625,
+            "s": 929.9375
+          }
+        },
+        {
+          "at": 3.1206666666666667,
+          "box": {
+            "x": 461.5,
+            "y": 510.0625,
+            "s": 929.9375
+          }
+        },
+        {
+          "at": 3.654,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 900
+          }
+        }
+      ],
+      "captions": [
+        {
+          "from": 0,
+          "to": 3.654,
+          "text": "Find an hour that’s free, then book it."
+        }
+      ],
+      "srcFrom": 1791064797723,
+      "outDur": 3.654,
+      "outStart": 2.6
+    },
+    {
+      "type": "screen",
+      "from": 1791064808685,
+      "to": 1791064838551,
+      "speed": 8,
+      "header": {
+        "kicker": "Jig works",
+        "headline": "It checks the *calendar*"
+      },
+      "crops": [
+        {
+          "at": 0,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 900
+          }
+        },
+        {
+          "at": 3.73325,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 900
+          }
+        }
+      ],
+      "captions": [
+        {
+          "from": 0,
+          "to": 3.73325,
+          "text": "Jig reads the calendar and looks for a gap."
+        }
+      ],
+      "srcFrom": 1791064808685,
+      "outDur": 3.73325,
+      "outStart": 6.254
+    },
+    {
+      "type": "screen",
+      "from": 1791064838551,
+      "to": 1791064844831,
+      "speed": 1,
+      "header": {
+        "kicker": "Safety by design",
+        "headline": "It asks *before* it books"
+      },
+      "crops": [
+        {
+          "at": 0,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 900
+          }
+        },
+        {
+          "at": 0.7,
+          "box": {
+            "x": 0,
+            "y": 68,
+            "s": 1173.0546875
+          }
+        },
+        {
+          "at": 6.28,
+          "box": {
+            "x": 0,
+            "y": 68,
+            "s": 1173.0546875
+          }
+        }
+      ],
+      "captions": [
+        {
+          "from": 0,
+          "to": 3.68,
+          "text": "Nothing goes in your calendar until you say yes."
+        },
+        {
+          "from": 3.68,
+          "to": 6.28,
+          "text": "You say *yes*."
+        }
+      ],
+      "srcFrom": 1791064838551,
+      "outDur": 6.28,
+      "outStart": 9.98725
+    },
+    {
+      "type": "screen",
+      "from": 1791064844831,
+      "to": 1791064852646,
+      "speed": 4,
+      "header": {
+        "kicker": "Done",
+        "headline": "*Booked*"
+      },
+      "crops": [
+        {
+          "at": 0,
+          "box": {
+            "x": 0,
+            "y": 68,
+            "s": 1173.0546875
+          }
+        },
+        {
+          "at": 1.95375,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 1440
+          }
+        }
+      ],
+      "captions": [
+        {
+          "from": 0,
+          "to": 1.95375,
+          "text": "Jig adds it to your calendar."
+        }
+      ],
+      "srcFrom": 1791064844831,
+      "outDur": 1.95375,
+      "outStart": 16.26725
+    },
+    {
+      "type": "screen",
+      "from": 1791064852646,
+      "to": 1791064858680,
+      "speed": 1,
+      "header": {
+        "kicker": "Done",
+        "headline": "*Booked*"
+      },
+      "crops": [
+        {
+          "at": 0,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 1440
+          }
+        },
+        {
+          "at": 2.6,
+          "box": {
+            "x": 0,
+            "y": 0,
+            "s": 1440
+          }
+        },
+        {
+          "at": 4.2,
+          "box": {
+            "x": 431.578125,
+            "y": 315.59765625,
+            "s": 900
+          }
+        },
+        {
+          "at": 6.034,
+          "box": {
+            "x": 431.578125,
+            "y": 315.59765625,
+            "s": 900
+          }
+        }
+      ],
+      "captions": [
+        {
+          "from": 0,
+          "to": 6.034,
+          "text": "Booked, in an hour that’s free."
+        }
+      ],
+      "srcFrom": 1791064852646,
+      "outDur": 6.034,
+      "outStart": 18.221
+    },
+    {
+      "type": "card",
+      "outDur": 4.4,
+      "avatar": "dance",
+      "card": {
+        "kicker": "Beta",
+        "title": "*Jig*",
+        "lines": [
+          "Version 0.1.0b1",
+          "github.com/rlesueur/Jig",
+          "git clone https://github.com/rlesueur/jig.git"
+        ]
+      },
+      "outStart": 24.255
+    }
+  ],
+  "duration": 28.655,
+  "totalFrames": 860
+}
