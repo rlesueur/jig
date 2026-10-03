@@ -44,6 +44,33 @@ async def ensure_public(url: str) -> None:
         raise PolicyBlocked(f"core rule no-local-network: {problem}")
 
 
+_SCRAPE_REFUSAL = (
+    "This is a search engine's results page. Jig searches only through SearXNG, with the web_search tool. "
+    "If that says SearXNG isn't installed or won't start, tell the user. Don't scrape this page, and don't invent results."
+)
+
+
+def search_scrape_refusal(url: str) -> str | None:
+    """Why ``url`` must not be fetched as a stand-in for search, or None when it is an ordinary page.
+
+    web_search is the only search. Fetching a search engine's results page is not a fallback.
+    """
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    path = parts.path.lower()
+    query = parts.query.lower()
+    duck = host in {"duckduckgo.com", "html.duckduckgo.com"} and (
+        path in {"", "/"} or path.startswith("/html") or path.startswith("/lite") or "q=" in query)
+    others = host in {"google.com", "google.co.uk", "bing.com", "search.brave.com", "search.yahoo.com",
+                      "startpage.com", "swisscows.com", "mojeek.com", "kagi.com"} and (
+        path.startswith("/search") or "q=" in query or "query=" in query)
+    if duck or others:
+        return _SCRAPE_REFUSAL
+    return None
+
+
 def page_status_error(url: str, status: int) -> str | None:
     """Why ``status`` is not a page of content, or ``None`` when it is HTTP 200.
 

@@ -11,10 +11,11 @@ import httpx
 
 from ..constants import Effect, Mode, TaskVariant, ToolCategory
 from ..errors import NotFound, ToolArgumentError, ToolError
+from ..searxng import ABSENT, SearxngUnavailable
 from ..recurrence import Recurrence
 from .paging import FIND_ARG, OFFSET_ARG, text_page
 from .registry import ToolContext, ToolRegistry
-from .web import ensure_public, extract_readable, page_status_error
+from .web import ensure_public, extract_readable, page_status_error, search_scrape_refusal
 
 # The most of a workspace file one read_file result holds; a longer file is read in parts.
 READ_FILE_CHARS = 20_000
@@ -30,6 +31,7 @@ def build_registry() -> ToolRegistry:
         description="Fetch a public web page over HTTP(S) and return its readable text, title and links. "
         "A long page comes back one part at a time: the result then says how long the whole text is and where the "
         "next part starts, so read on with offset, or use find to get just the passages that mention a word. "
+        "This is not a search. To look something up, use web_search. Do not fetch a search engine's results page. "
         "Header values may reference vault secrets as {{secret:NAME}}.",
         effect=Effect.READ,
         category=ToolCategory.WEB,
@@ -45,6 +47,8 @@ def build_registry() -> ToolRegistry:
     )
     async def web_fetch(ctx: ToolContext, url: str, headers: dict | None = None, max_chars: int = 0,
                         offset: int = 0, find: str = "") -> dict[str, Any]:
+        if refusal := search_scrape_refusal(url):
+            raise ToolError(refusal)
         cfg = ctx.config.web_fetch
         limit = min(max_chars or cfg.max_chars, cfg.max_chars)
         if offset < 0:
@@ -84,6 +88,28 @@ def build_registry() -> ToolRegistry:
         page = {"url": url, "final_url": current, "status": status, "title": title}
         part = text_page(text, tool="web_fetch", limit=limit, offset=offset, find=find)
         return {**page, **part} if "find" in part else {**page, **part, "links": links[:25]}
+
+    @tool(
+        description="Search the web through SearXNG on this computer and return titles, addresses and short extracts. "
+        "This is the only way to search. If SearXNG is not installed or will not start, tell the user that in plain "
+        "British English. Do not fetch DuckDuckGo or any other search engine with web_fetch, and do not invent results.",
+        effect=Effect.READ,
+        category=ToolCategory.WEB,
+        outbound=True,
+        args={"query": "What to look up.", "limit": "How many results to return, at most 10."},
+    )
+    async def web_search(ctx: ToolContext, query: str, limit: int = 5) -> dict[str, Any]:
+        if not isinstance(query, str) or not query.strip():
+            raise ToolArgumentError("web_search: query is empty")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ToolArgumentError("web_search: limit must be a whole number")
+        searxng = getattr(ctx, "searxng", None)
+        if searxng is None:
+            raise ToolError(ABSENT)
+        try:
+            return await searxng.search(query, limit=limit)
+        except SearxngUnavailable as exc:
+            raise ToolError(str(exc)) from None
 
     @tool(
         description="List files and folders in the agent's sandboxed workspace.",

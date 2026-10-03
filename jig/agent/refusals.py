@@ -16,7 +16,8 @@ REFUSED_ACTION_LIMIT = 3
 
 # What Jig was trying to do, as "it kept trying to ...".
 TOOL_AIMS = {
-    "web_fetch": "fetch web pages", "browser_open": "open web pages", "browser_read": "read web pages",
+    "web_fetch": "fetch web pages", "web_search": "search the web", "browser_open": "open web pages",
+    "browser_read": "read web pages",
     "browser_screenshot": "look at web pages", "browser_click": "click on web pages", "browser_type": "type into web pages",
     "browser_fill": "fill in forms", "browser_submit": "submit forms", "browser_login": "sign in to a website",
     "list_files": "look through files", "read_file": "read files", "write_file": "save files",

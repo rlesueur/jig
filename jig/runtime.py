@@ -26,6 +26,7 @@ from .errors import CannotDelete, JigError, ModelCapabilityError, ModelStopped, 
 from .events import Event, EventBus, AvatarStateTracker
 from .mcp import McpService
 from .memory import MemoryStore
+from .searxng import Searxng
 from .instance import InstanceLock
 from .logs import describe_exception
 from .model import ModelClient
@@ -186,6 +187,7 @@ class Jig:
         self.connectors = Connectors(self.connections, self.http, self.redactions)
         register_connector_tools(self.registry, self.connectors)
         self.mcp = McpService(self.db, self.vault, self.audit, self.registry, self.redactions)
+        self.searxng = Searxng(config.data_dir, audit=self.audit)
         self.vision = VisionService(self.model, config.vision)
         self.rules = RuleStore(self.db)
         self.container = self._container_backend()
@@ -231,7 +233,8 @@ class Jig:
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
                            http=self.http, mode=ctx.mode, run_id=ctx.run_id, task_id=ctx.task_id,
-                           vision=self.vision, container=self.container, connectors=self.connectors)
+                           vision=self.vision, container=self.container, connectors=self.connectors,
+                           searxng=self.searxng)
 
     def _container_backend(self) -> Any:
         """With ``[sandbox] backend = "container"`` (per-agent Docker) or ``"compose"`` (sandbox services next
@@ -351,6 +354,9 @@ class Jig:
             mcp = getattr(self, "mcp", None)
             if mcp is not None:
                 await mcp.close()
+            searxng = getattr(self, "searxng", None)
+            if searxng is not None:
+                await searxng.stop()
             await self.model_server.stop()
             await self.http.aclose()
             await self.model.aclose()

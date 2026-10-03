@@ -42,6 +42,8 @@ class ToolContext:
     # Connected accounts (jig.connectors.Connectors). It sends authorised requests for a tool and never
     # hands a token to the tool or the model.
     connectors: Any = None
+    # Optional local SearXNG (jig.searxng). web_search uses it and never scrapes another engine.
+    searxng: Any = None
 
 
 ToolFn = Callable[..., Awaitable[Any]]

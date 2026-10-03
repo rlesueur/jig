@@ -423,7 +423,7 @@ function refreshAll() {
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'connections', 'mcp', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'search', 'mcp', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?(?:\/[a-z-]+)?$/);
@@ -445,6 +445,7 @@ function route(moveFocus = true) {
   $('settings').hidden = !section;
   $('main').hidden = Boolean(section);
   if (section !== 'devices') stopPairing();
+  if (section !== 'search') stopSearchPoll();
   if (section) {
     for (const s of document.querySelectorAll('.set-section')) s.hidden = s.dataset.section !== section;
     for (const a of document.querySelectorAll('.settings-nav a')) {
@@ -458,6 +459,7 @@ function route(moveFocus = true) {
     if (section === 'history') loadAudit(true);
     if (section === 'conversations') loadConversations();
     if (section === 'connections') loadConnections();
+    if (section === 'search') loadSearch();
     if (section === 'mcp') loadMcp();
     if (section === 'schedules') loadSchedules();
     if (section === 'devices') loadRemote();
@@ -829,7 +831,7 @@ let goalsCache = [];
 const currentTool = new Map(); // task id -> the tool it is using now (from live tool.start events)
 
 const TOOL_DOING = {
-  web_fetch: 'reading a web page', read_file: 'reading a file', list_files: 'looking through files', write_file: 'writing a file',
+  web_fetch: 'reading a web page', web_search: 'searching the web', read_file: 'reading a file', list_files: 'looking through files', write_file: 'writing a file',
   note_write: 'writing a note', note_list: 'looking at its notes', memory_search: 'checking what it remembers',
   memory_add: 'remembering something', memory_forget: 'forgetting something', current_time: 'checking the time',
   browser_open: 'opening a web page', browser_read: 'reading a web page', browser_screenshot: 'looking at a web page',
@@ -1473,6 +1475,7 @@ const QUESTION = {
   memory_add: () => 'Can I remember this about you?',
   memory_forget: (x) => `Can I forget memory #${x.memory_id}?`,
   web_fetch: (x) => `Can I open a page on ${host(x.url)}?`,
+  web_search: () => 'Can I look this up?',
   browser_open: (x) => `Can I open ${host(x.url)} in my browser?`,
   browser_click: (x, r) => checkoutQuestion(r) || 'Can I click something on this web page?',
   browser_type: () => 'Can I type into this web page?',
@@ -1517,6 +1520,7 @@ const WILL = {
   memory_add: (x) => `Jig will remember: ${q(x.content)}.`,
   note_write: (x) => `Jig will save a private note titled ${q(x.title)}.`,
   web_fetch: (x) => `Jig will fetch ${x.url}${x.headers && Object.keys(x.headers).length ? ' with extra request headers (see Why am I asking?)' : ''}.`,
+  web_search: () => 'Jig will ask the search program on this computer, and will not invent results if it cannot.',
   browser_open: (x) => `Jig will open ${x.url} in its sandboxed browser.`,
   browser_click: (x, r) => checkoutWill(r) || `Jig will click the element ${q(x.selector)} on the current page.`,
   browser_type: (x) => `Jig will type ${q(x.text)} into ${q(x.selector)}${x.press_enter ? ' and then press Enter' : ''}.`,
@@ -2366,7 +2370,7 @@ $('schedule-form').addEventListener('submit', (e) => {
 /* ---------- what Jig can do on its own (rules) ---------- */
 
 const CAN = {
-  web_fetch: 'Read web pages', list_files: 'See which files are in its workspace', read_file: 'Read files in its workspace',
+  web_fetch: 'Read web pages', web_search: 'Search the web', list_files: 'See which files are in its workspace', read_file: 'Read files in its workspace',
   write_file: 'Save files in its workspace', note_write: 'Write private notes', note_list: 'Look through its notes',
   memory_search: 'Look up what it remembers', memory_add: 'Remember things about you', memory_forget: 'Forget memories',
   current_time: 'Check the time', browser_open: 'Open web pages in its browser', browser_read: 'Read pages in its browser',
@@ -3370,6 +3374,73 @@ $('mcp-add').addEventListener('submit', (ev) => {
       ? `${saved.label} was added, but the program did not start. ${saved.last_error}`
       : `${saved.label} added.`;
     await loadMcp();
+  });
+});
+
+let searchTimer = null;
+
+function stopSearchPoll() {
+  if (searchTimer) {
+    clearInterval(searchTimer);
+    searchTimer = null;
+  }
+}
+
+function renderSearch(body) {
+  $('search-summary').textContent = body.summary || '';
+  $('search-use').checked = Boolean(body.enabled);
+  const installing = body.install && body.install.status === 'running';
+  $('search-install').hidden = Boolean(body.installed || body.existing || installing);
+  $('search-remove').hidden = !body.installed;
+  $('search-install').disabled = Boolean(installing);
+  if (body.install && body.install.status === 'failed' && body.install.error) {
+    $('search-saved').textContent = body.install.error;
+  } else if (body.install && body.install.status === 'done' && body.install.summary) {
+    $('search-saved').textContent = body.install.summary;
+  } else if (!installing && $('search-saved').textContent.startsWith('Installing')) {
+    $('search-saved').textContent = '';
+  }
+  if (installing) {
+    $('search-saved').textContent = body.install.step || 'Installing search…';
+    if (!searchTimer) searchTimer = setInterval(loadSearch, 1000);
+  } else {
+    stopSearchPoll();
+  }
+}
+
+async function loadSearch() {
+  let body;
+  try {
+    body = await api('/search');
+  } catch (err) {
+    $('search-summary').textContent = err.message;
+    return;
+  }
+  renderSearch(body);
+}
+
+$('search-install').addEventListener('click', () => {
+  act($('search-install'), async () => {
+    $('search-saved').textContent = 'Installing search…';
+    await api('/search/install', { method: 'POST', body: { confirm: true } });
+    await loadSearch();
+  });
+});
+
+$('search-remove').addEventListener('click', () => {
+  const button = $('search-remove');
+  act(button, async () => {
+    const body = await api('/search/remove', { method: 'POST', body: { confirm: true } });
+    $('search-saved').textContent = body.summary || 'Removed.';
+    await loadSearch();
+  });
+});
+
+$('search-use').addEventListener('change', () => {
+  const box = $('search-use');
+  act(box, async () => {
+    await api('/search/use', { method: 'POST', body: { confirm: true, enabled: box.checked } });
+    await loadSearch();
   });
 });
 

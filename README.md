@@ -574,6 +574,16 @@ Inside the browser, a click or the Enter key cannot submit a form. Every non-GET
 - File tools (`read_file`, `write_file`, ...) still use the directory jail on the host, on the same folder that is mounted at `/workspace`.
 - On Linux Docker Engine (not Desktop), `host.docker.internal` resolves to the bridge gateway, so set `egress_bind` to an address on that bridge (for example `172.17.0.1`). Start-up runs an end-to-end check of the relay path and refuses to start if it fails.
 
+## Search (optional)
+
+Jig can look things up on the web through [SearXNG](https://docs.searxng.org/), a separate program. SearXNG is **not part of Jig** and is not in the installer. It is free software under the GNU Affero General Public License (AGPL-3.0-or-later); Jig itself is Apache-2.0. Jig downloads a pinned upstream release only when you ask it to, into its own folder and its own Python environment, never into this repository.
+
+In **Settings > Search**, **Install search** downloads that release. Jig starts SearXNG when a search needs it and stops it when Jig stops. It listens on this computer only (`127.0.0.1`, port 8090, or another free local port if 8090 is taken) and does not start when you sign in to Windows. If SearXNG is already running on this computer, Jig uses that one and does not install a second copy or stop it. **Remove search** deletes only the copy Jig installed.
+
+Nothing leaves this machine except the searches SearXNG itself sends to the search engines it uses. Search reads SearXNG's JSON results. If SearXNG is not installed or will not start, Jig says so. It does not scrape DuckDuckGo or any other engine, and it does not invent results.
+
+The same actions are on the command line: `jig search status`, `jig search install`, `jig search use on` or `off`, and `jig search remove`.
+
 ## Connectors
 
 Connectors let Jig work with your own accounts. Microsoft and GitHub sign in with Jig's own public apps (no setup, no secret; an organisation can use its own app instead); Google needs your own small Google app for now; Discord and WhatsApp use your own bot or Meta Cloud API token. Each talks straight from your computer to the provider, and keeps its tokens only in the vault. Everything can be connected from Settings > Connections, with plain step-by-step instructions. Setup for each provider, with the scopes and why, is in [docs/connectors-setup.md](docs/connectors-setup.md).
@@ -695,6 +705,7 @@ Each tool category maps to a variant: web to `browsing`, files and email to `wri
 | Connections | `GET /connections`, `POST /connections/{provider}/connect` `{confirm: true, access}` (host only), `POST /connections/{provider}/disconnect` `{confirm: true}` |
 | MCP servers | `GET /mcp/servers`, `POST /mcp/servers` `{confirm: true, label, command, args, access}` (host only), `POST /mcp/servers/{id}/refresh` `{confirm: true}`, `POST /mcp/servers/{id}/remove` `{confirm: true}`, `POST /mcp/servers/{id}/env` `{confirm: true, name, value}` and `POST /mcp/servers/{id}/env/remove` `{confirm: true, name}` (host only; the value is stored in the vault and never returned) |
 | Autostart | `GET /autostart`, `POST /autostart/enable` `{confirm: true, start_now}`, `POST /autostart/disable` |
+| Search | `GET /search`, `POST /search/install` `{confirm: true}`, `POST /search/remove` `{confirm: true}`, `POST /search/use` `{confirm: true, enabled}` (install, remove and the switch are host only) |
 | Power | `GET /power`, `POST /power/stop` `{scope: "jig" \| "jig_and_model", confirm: true}` (202, then a graceful shutdown) |
 | Model server | `GET /model`, `POST /model/stop` `{confirm: true}`, `POST /model/start` (only a server Jig launched) |
 | Remote access | `GET /remote`, `POST /remote/enable` `{confirm: true}` (host only), `POST /remote/disable` `{confirm: true}` |
@@ -726,3 +737,5 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 ## Licence
 
 Apache License 2.0. See `LICENSE`.
+
+SearXNG, the optional search program, is not part of Jig. It is AGPL-3.0-or-later, a separate program, and Jig downloads a pinned release only when you choose Install search.

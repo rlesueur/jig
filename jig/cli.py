@@ -15,6 +15,8 @@ import httpx
 from .autostart import cli as autostart_cli
 from .config import load_config
 from .connectors import cli as connectors_cli
+from .searxng import add_parsers as add_search_parsers
+from .searxng import run as run_search
 from .errors import JigError
 from .model import ModelClient
 from .vision import probe_vision
@@ -707,6 +709,7 @@ MENU = """Jig, your always-on personal AI agent.
   jig stop        Turn Jig off.
   jig health      Check your model works with Jig.
   jig chat        Chat with Jig here in the terminal.
+  jig search      Install search (SearXNG) or turn it on. Same as Settings, Search.
 
 More: jig --help"""
 
@@ -770,6 +773,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--port", type=int, help="Jig's port (default: [server] port)")
     r.add_argument("--data-dir", help="data directory (default: from the config)")
     connectors_cli.add_parsers(sub)
+    add_search_parsers(sub)
     args = parser.parse_args(argv)
     if args.command is None:
         print(MENU)
@@ -779,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args)
         if args.command in ("connect", "connections", "disconnect"):
             return connectors_cli.run(args)
+        if args.command == "search":
+            return run_search(args)
         if args.command == "model":
             return _model(args)
         if args.command == "remote":

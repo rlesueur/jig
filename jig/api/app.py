@@ -341,6 +341,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
 
     app.include_router(autostart_router(config))
     app.include_router(setup_router(controller, _who))
+    from ..searxng import search_router
+    app.include_router(search_router(J, _require_local, _require_confirm))
 
     # Web UI (public static files; every API call it makes is authenticated) ------------------
     @app.get("/", include_in_schema=False)

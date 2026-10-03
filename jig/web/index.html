@@ -105,6 +105,7 @@
             <li><a href="#settings/model" data-section="model" data-testid="settings-nav-model">Model and connection</a></li>
             <li><a href="#settings/rules" data-section="rules" data-testid="settings-nav-rules">What Jig can do on its own</a></li>
             <li><a href="#settings/connections" data-section="connections" data-testid="settings-nav-connections">Connections</a></li>
+            <li><a href="#settings/search" data-section="search" data-testid="settings-nav-search">Search</a></li>
             <li><a href="#settings/mcp" data-section="mcp" data-testid="settings-nav-mcp">MCP servers</a></li>
             <li><a href="#settings/memory" data-section="memory" data-testid="settings-nav-memory">Memory and notes</a></li>
             <li><a href="#settings/conversations" data-section="conversations" data-testid="settings-nav-conversations">Conversations and jobs</a></li>
@@ -380,6 +381,27 @@
               <p class="hint-quiet">Read only hides tools that are not reads. Read and act can use them, and still asks you before anything that could send, change or delete.</p>
               <button type="submit" class="btn btn-primary" data-testid="mcp-add">Add server</button>
             </form>
+          </section>
+
+          <!-- Search -->
+          <section class="set-section" id="set-search" data-section="search" aria-labelledby="search-heading" data-testid="settings-search" hidden>
+            <h3 id="search-heading">Search</h3>
+            <p class="hint" data-testid="search-intro">Jig can look things up on the web. That needs a separate search program, SearXNG, which is optional.</p>
+            <p class="hint" data-testid="search-what">Install search downloads SearXNG onto this computer and keeps it in its own folder. Jig starts it when you ask it to look something up, and stops it when Jig stops. It does not start when you sign in to Windows.</p>
+            <p class="hint" data-testid="search-privacy">Nothing leaves this machine except the searches SearXNG itself sends to the search engines it uses.</p>
+            <p class="hint-quiet" data-testid="search-licence">SearXNG is free software under a different licence (AGPL). Jig does not include it. It is only downloaded when you choose Install search.</p>
+            <p class="hint-quiet" data-testid="search-remove-how">To remove it, choose Remove search. That deletes the copy Jig installed. If SearXNG was already running on this computer, Jig uses that one and does not delete it or stop it.</p>
+            <p class="hint" id="search-summary" data-testid="search-summary">Checking search…</p>
+            <div class="switch-row" id="search-use-row">
+              <input type="checkbox" role="switch" id="search-use" aria-describedby="search-use-hint" data-testid="search-use">
+              <div><label for="search-use">Use search</label>
+                <p class="hint-quiet" id="search-use-hint">When this is on, Jig uses SearXNG to look things up. When it is off, Jig says search is turned off and does not look elsewhere.</p></div>
+            </div>
+            <div class="row wrap">
+              <button type="button" class="btn btn-primary" id="search-install" data-testid="search-install">Install search</button>
+              <button type="button" class="btn" id="search-remove" data-testid="search-remove" hidden>Remove search</button>
+            </div>
+            <p class="saved" id="search-saved" aria-live="polite" data-testid="search-saved"></p>
           </section>
 
           <!-- Starting with Windows -->
