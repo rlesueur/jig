@@ -53,6 +53,11 @@ def test_config_json_is_recognised_as_searxng() -> None:
 def test_settings_explains_install_search_in_plain_words() -> None:
     html = (REPO / "jig" / "web" / "index.html").read_text(encoding="utf-8")
     assert 'data-testid="search-install">Install search<' in html
+    assert 'class="conn-steps"' in html
+    assert 'data-testid="search-steps"' in html
+    assert "<strong>Install search.</strong>" in html
+    assert "<strong>Turn on Use search.</strong>" in html
+    assert "<strong>Check it works.</strong>" in html
     assert "Nothing leaves this machine except the searches SearXNG itself sends to the search engines it uses." in html
     assert "It does not start when you sign in to Windows." in html
     assert "does not delete it or stop it." in html

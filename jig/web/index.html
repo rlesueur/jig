@@ -389,11 +389,15 @@
           <!-- Search -->
           <section class="set-section" id="set-search" data-section="search" aria-labelledby="search-heading" data-testid="settings-search" hidden>
             <h3 id="search-heading">Search</h3>
-            <p class="hint" data-testid="search-intro">Jig can look things up on the web. That needs a separate search program, SearXNG, which is optional.</p>
-            <p class="hint" data-testid="search-what">Install search downloads SearXNG onto this computer and keeps it in its own folder. Jig starts it when you ask it to look something up, and stops it when Jig stops. It does not start when you sign in to Windows.</p>
+            <p class="hint" data-testid="search-intro">Jig can look things up on the web. That needs a separate search program, SearXNG, which is optional. SearXNG is not part of Jig.</p>
             <p class="hint" data-testid="search-privacy">Nothing leaves this machine except the searches SearXNG itself sends to the search engines it uses.</p>
             <p class="hint-quiet" data-testid="search-licence">SearXNG is free software under a different licence (AGPL). Jig does not include it. It is only downloaded when you choose Install search.</p>
-            <p class="hint-quiet" data-testid="search-remove-how">To remove it, choose Remove search. That deletes the copy Jig installed. If SearXNG was already running on this computer, Jig uses that one and does not delete it or stop it.</p>
+            <h4>Set up search</h4>
+            <ol class="conn-steps" data-testid="search-steps">
+              <li data-testid="search-step-install"><strong>Install search.</strong> Choose Install search below. Jig downloads a pinned copy of SearXNG into its own folder and its own Python environment. Jig starts it when you ask it to look something up, and stops it when Jig stops. It does not start when you sign in to Windows. If SearXNG is already running on this computer, Jig uses that one and does not install a second copy.</li>
+              <li data-testid="search-step-use"><strong>Turn on Use search.</strong> The switch is on unless you have turned it off, and Install search turns it on. Leave Use search on so Jig looks things up through SearXNG. When it is off, Jig says search is turned off and does not look elsewhere.</li>
+              <li data-testid="search-step-check"><strong>Check it works.</strong> The status line below says whether search is ready, and the folder and address when one is installed. Ask Jig to look something up. If SearXNG is not installed or will not start, Jig says so. It does not scrape DuckDuckGo or any other engine, and it does not invent results.</li>
+            </ol>
             <p class="hint" id="search-summary" data-testid="search-summary">Checking search…</p>
             <div class="switch-row" id="search-use-row">
               <input type="checkbox" role="switch" id="search-use" aria-describedby="search-use-hint" data-testid="search-use">
@@ -404,6 +408,9 @@
               <button type="button" class="btn btn-primary" id="search-install" data-testid="search-install">Install search</button>
               <button type="button" class="btn" id="search-remove" data-testid="search-remove" hidden>Remove search</button>
             </div>
+            <h4>Remove search</h4>
+            <p class="hint-quiet" data-testid="search-remove-how">Choose Remove search. That deletes the copy Jig installed. If SearXNG was already running on this computer, Jig uses that one and does not delete it or stop it.</p>
+            <p class="hint-quiet">The same steps are <code>jig search install</code>, <code>jig search use on</code> or <code>off</code>, and <code>jig search remove</code>. The full guide is docs/search.md in Jig's folder.</p>
             <p class="saved" id="search-saved" aria-live="polite" data-testid="search-saved"></p>
           </section>
 

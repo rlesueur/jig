@@ -18,6 +18,7 @@
   <a href="https://rlesueur.github.io/jig/"><strong>Website and live avatar</strong></a> ·
   <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 28-second video</a> ·
   <a href="#get-started">Get started</a> ·
+  <a href="docs/README.md">Guides</a> ·
   <a href="#run-with-docker">Docker</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -584,7 +585,7 @@ In **Settings > Search**, **Install search** downloads that release. Jig starts 
 
 Nothing leaves this machine except the searches SearXNG itself sends to the search engines it uses. Search reads SearXNG's JSON results. If SearXNG is not installed or will not start, Jig says so. It does not scrape DuckDuckGo or any other engine, and it does not invent results.
 
-The same actions are on the command line: `jig search status`, `jig search install`, `jig search use on` or `off`, and `jig search remove`.
+The same actions are on the command line: `jig search status`, `jig search install`, `jig search use on` or `off`, and `jig search remove`. Step by step: [docs/search.md](docs/search.md). The other guides are in [docs/README.md](docs/README.md).
 
 ## Connectors
 

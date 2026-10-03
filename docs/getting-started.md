@@ -1,0 +1,81 @@
+# Getting started
+
+This release is a **beta** (version 0.1.0b1). Voice is on the roadmap and is not in this version.
+
+Jig needs two things: Jig itself, and a model that can call tools through an OpenAI-compatible endpoint. The model can run on your computer (llama.cpp, including forks, Ollama, LM Studio or vLLM) or you can bring a cloud model. Jig checks the model for real before the agent starts, and it never falls back to another one.
+
+The installer clicks, the SmartScreen warning, the measured model and the long troubleshooting list are in the README under [Get started](../README.md#get-started). This page is the short path.
+
+## 1. Install Jig
+
+**Do not run `pip install jig`.** That name on PyPI is an unrelated project. Use the installer, or install from this repository.
+
+**Windows installer.** Download `JigSetup-<version>.exe` from the [latest release](https://github.com/rlesueur/jig/releases/latest) and open it. It needs no administrator rights and no Python. The exact clicks when Windows warns you, because the installer is not code-signed, are in the README under [On Windows: the installer](../README.md#on-windows-the-installer). Only do that for a file from this repository's releases page. At the end, Jig opens on its set-up page.
+
+Jig keeps its settings, memories and notes in `%LOCALAPPDATA%\Jig`. Closing the window leaves Jig running. To turn it off, use **Turn Jig off** on the icon by the clock. To remove it: **Settings > Apps > Installed apps > Jig > Uninstall**.
+
+**Mac, Linux, or Windows without the installer.** You need Python 3.11 or newer and Git.
+
+```powershell
+git clone https://github.com/rlesueur/jig.git
+cd jig
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\jig serve
+```
+
+On Mac and Linux, use `.venv/bin/` instead of `.\.venv\Scripts\`. Leave that terminal open: closing it stops Jig. Stop Jig with Ctrl+C, or `jig stop` in another window. Open it again with `jig ui`.
+
+## 2. First run
+
+`jig serve` opens Jig, already signed in: in its own window on Windows, and in your browser on Mac and Linux (add `--browser` on Windows to use the browser). A fresh checkout's `jig.toml` points at llama.cpp on `http://127.0.0.1:8080/v1`. If that model passes Jig's checks, the agent starts. Otherwise Jig opens on its set-up page and the agent stays off until a model passes.
+
+What you choose on the set-up page is saved in the data folder's `settings.toml`. `jig.toml` itself is not rewritten.
+
+Check the same things any time with `jig health`.
+
+## 3. Point Jig at a local model
+
+On the set-up page, Jig looks for a server it already knows:
+
+| App | Address it looks for |
+| --- | --- |
+| llama.cpp (`llama-server`) | `http://127.0.0.1:8080/v1` |
+| LM Studio | `http://127.0.0.1:1234/v1` |
+| Ollama | `http://127.0.0.1:11434/v1` |
+
+You can type another address. The model must support tool calling, and a context of 32K tokens is advisable (Jig warns if the server reports less, and still runs). How to load a model in each app, and the one setup Jig has measured, are in the README under [Get a model running](../README.md#get-a-model-running).
+
+From a terminal, start Jig with a profile instead of editing `jig.toml`:
+
+```powershell
+.\.venv\Scripts\jig --config profiles/lmstudio.toml serve
+.\.venv\Scripts\jig --config profiles/ollama.toml serve
+.\.venv\Scripts\jig --config profiles/vllm.toml serve
+```
+
+`profiles/llamacpp-bonsai.toml` is the llama.cpp setup Jig was tested with. It is an example, not a requirement. vLLM needs its tool-calling flags; see that profile and [Choosing a model server](../README.md#choosing-a-model-server).
+
+Common set-up messages, in Jig's own words, are listed in the README under [If something goes wrong](../README.md#if-something-goes-wrong). If port 8766 is taken, start with `jig serve --port 8767`. If Jig is already running for this data folder, open it with `jig ui`.
+
+## 4. Or bring a cloud model
+
+Jig supports OpenAI, OpenRouter, Anthropic and Google Gemini. You need an API key, and the provider charges you. Your conversation, the memories added to a message, tool results and any images you share are sent to the provider. Memories, notes, the audit log, rules and the vault stay on your machine.
+
+On the set-up page, or in **Settings > Model and connection**, choose **Change model…**, then **Use a cloud model instead**. Pick the provider, paste the key, read what will be sent, and agree. Jig checks the key and the model before it switches.
+
+From a terminal (Anthropic shown; use `openai`, `openrouter` or `gemini` the same way):
+
+```powershell
+.\.venv\Scripts\jig --config profiles/anthropic.toml model key set anthropic
+.\.venv\Scripts\jig --config profiles/anthropic.toml model cloud confirm
+.\.venv\Scripts\jig --config profiles/anthropic.toml serve
+```
+
+`jig model cloud status` shows whether you have agreed. `jig model cloud revoke` withdraws that. `jig model key status` and `jig model key delete <provider>` manage the key in the vault. The full rules (HTTPS only, what is sent, the safety checker on the same model) are in the README under [Using a cloud model](../README.md#using-a-cloud-model).
+
+## 5. Once Jig is running
+
+Chat from Jig's window. **Settings** is where you change the model, connect accounts, turn on search, and add schedules. The other guides are listed in [docs/README.md](README.md).
+
+On Windows, **Start when I sign in** is off unless you turn it on under **Settings > Starting with Windows**. The Mac and Linux start-at-login files are generated, and have not been run on a real Mac or Linux machine in this beta.
