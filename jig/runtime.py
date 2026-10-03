@@ -50,6 +50,8 @@ DEPENDENCY_RESULT_CHARS = 4000
 # (jig.progress). The web UI recognises a stopped task by its error starting with TASK_STOPPED.
 CHAT_STOPPED = "Jig stopped this reply because it was repeating itself."
 CHAT_CIRCLING = "Jig stopped this reply because it was going round in circles."
+# A continuation that the model finished without adding text. The stopped reply stays as it was.
+NOTHING_MORE = "Nothing more came back. What was written is kept."
 TASK_STOPPED = "Jig stopped this task because"
 
 _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_SUMMARY, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
@@ -587,6 +589,11 @@ class Jig:
             log.exception("task %s crashed", task_id)
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"internal error: {type(exc).__name__}: {exc}")
             return
+        if result.nothing_more:
+            self.set_task_status(task_id, TaskStatus.FAILED, result=result.final,
+                                 error=f"{TASK_STOPPED} it was repeating itself. Nothing more came back. "
+                                       "You can try it again, or continue it anyway.")
+            return
         outcome = await self._task_outcome(task_id, result)
         limit = f"It stopped at the step limit of {self.agent.max_steps} model calls."
         if outcome and result.limit_reached:
@@ -682,9 +689,11 @@ class Jig:
         (Jig stopped the reply because it was repeating itself; what had arrived is kept) or ``error``.
 
         After a stopped reply, ``action`` "retry" asks the same message again from the start, and "continue"
-        carries the reply on from where it stopped, with the progress check relaxed for it (CONTINUE_PROMPT).
-        Neither happens unless the user asks. If the turn is cancelled (the user's Stop), what was said and done
-        so far is kept, with the part of the reply that had arrived."""
+        carries the reply on from where it stopped, with the progress check relaxed for it. The model is asked
+        to continue that reply (``ModelClient._carry_on``). If that continuation is stopped again, the note
+        (CONTINUE_PROMPT) stays in the conversation. If nothing new comes back, the stopped reply is kept and
+        the turn says so (``NOTHING_MORE``). Neither happens unless the user asks. If the turn is cancelled
+        (the user's Stop), what was said and done so far is kept, with the part of the reply that had arrived."""
         if action not in ("send", "retry", "continue"):
             raise ValueError(f"action must be 'send', 'retry' or 'continue', not {action!r}")
         if action == "send" and not message.strip():
@@ -793,6 +802,12 @@ class Jig:
                 self.store.save_session(session_id, answered_only(saved()))
                 await queue.put({"type": "error", "error": f"{type(exc).__name__}: {exc}", "run_id": run_id,
                                  "session_id": session_id})
+                return
+            if result.nothing_more:
+                # The reply that had already arrived stays the stopped reply. An empty answer does not replace it.
+                self.store.save_session(session_id, history)
+                await queue.put({"type": "stopped", "reason": "nothing_more", "message": NOTHING_MORE,
+                                 "run_id": run_id, "session_id": session_id})
                 return
             self.store.save_session(session_id, finished())
             done = {"limit_reached": True} if result.limit_reached else {}

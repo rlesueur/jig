@@ -55,6 +55,8 @@ class RunResult:
     limit_reached: bool = False
     # What ``final`` claims Jig did, compared with the run's tool records (jig.claims.check).
     claim_check: dict[str, Any] | None = None
+    # A continuation came back empty. ``final`` is the reply that was already written; it is not replaced.
+    nothing_more: bool = False
 
 
 def _steps_taken(messages: list[dict[str, Any]]) -> int:
@@ -84,6 +86,18 @@ def _continuing(messages: list[dict[str, Any]]) -> bool:
     anyway"), so the progress check is relaxed for it."""
     last_user = next((m for m in reversed(messages) if m["role"] == "user"), None)
     return bool(last_user and last_user.get(CONTINUE_KEY))
+
+
+def _reply_so_far(messages: list[dict[str, Any]]) -> str:
+    """Text of the stopped reply a continuation is carrying on, when that reply already has some."""
+    last_user = next((i for i in range(len(messages) - 1, -1, -1) if messages[i]["role"] == "user"), None)
+    if last_user is None or not messages[last_user].get(CONTINUE_KEY) or last_user == 0:
+        return ""
+    prev = messages[last_user - 1]
+    if prev.get("role") != "assistant":
+        return ""
+    text = prev.get("content") or ""
+    return text if isinstance(text, str) and text.strip() else ""
 
 
 def _action_key(call: ToolCall, result: str) -> str:
@@ -123,6 +137,7 @@ class Agent:
         steps = _steps_taken(messages)
         limit_reached = False
         relaxed = _continuing(messages)
+        nothing_more = False
         actions: dict[str, int] = {}
         try:
             if pending := _pending_tool_calls(messages):
@@ -140,11 +155,22 @@ class Agent:
                 result = await until_paused(self._model_step(messages, spec, run_id, steps + 1, relaxed=relaxed),
                                             spec.pause, f"model call {steps + 1}")
                 steps += 1
+                if not result.tool_calls and not result.content.strip():
+                    # A continuation that adds nothing must not replace the reply already written, or be reported
+                    # as a bare model error. The continue note is dropped so the stopped reply stays last.
+                    if kept := _reply_so_far(messages):
+                        if messages[-1].get("role") == "user" and messages[-1].get(CONTINUE_KEY):
+                            messages.pop()
+                        self.store.checkpoint_run(run_id, messages, steps)
+                        final = kept
+                        nothing_more = True
+                        break
+                    messages.append(result.assistant_message())
+                    self.store.checkpoint_run(run_id, messages, steps)
+                    raise ModelError("model returned an empty final answer")
                 messages.append(result.assistant_message())
                 self.store.checkpoint_run(run_id, messages, steps)
                 if not result.tool_calls:
-                    if not result.content.strip():
-                        raise ModelError("model returned an empty final answer")
                     final = result.content
                     break
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
@@ -200,7 +226,7 @@ class Agent:
             self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_chars=len(final))
             self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
         return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages,
-                         limit_reached=limit_reached, claim_check=claim_check)
+                         limit_reached=limit_reached, claim_check=claim_check, nothing_more=nothing_more)
 
     def _check_claims(self, final: str, spec: RunSpec, run_id: str, idx: int, ids: dict[str, Any]) -> dict[str, Any]:
         """Compare what the reply says Jig did with the run's tool records; kept as a run step, and in the audit

@@ -303,6 +303,23 @@ class ModelClient:
                 }
         return body
 
+    def _carry_on(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Continue the stopped assistant reply from its last word, when it already has text.
+
+        Continue anyway keeps that reply and relaxes the progress check. A new turn would open a fresh answer:
+        on a reasoning model that answer starts inside its thinking, and it can finish with nothing, which would
+        throw away a reply that had already arrived. The continue note stays in the conversation Jig saves. This
+        request continues the assistant message (llama.cpp's ``continue_final_message``). A server that refuses
+        those fields is asked again with the note as its own turn."""
+        messages = body.get("messages") or []
+        if len(messages) < 2 or messages[-1].get("role") != "user" or messages[-2].get("role") != "assistant":
+            return body
+        content = messages[-2].get("content")
+        if not isinstance(content, str) or not content.strip():
+            return body
+        return {**body, "messages": messages[:-1], "continue_final_message": "content",
+                "add_generation_prompt": False}
+
     def _refusal(self, body: dict[str, Any], result: ChatResult, schema: dict[str, Any]) -> _Refusal | None:
         """Why a structured answer cannot be accepted, or None. In tool_call mode the answer is the arguments of
         exactly one ``respond`` call."""
@@ -379,14 +396,28 @@ class ModelClient:
         With ``response_schema``, the answer (``content``) is JSON checked against the schema. An answer that is
         not, that was cut off, that the server could not read, or that Jig stopped for repeating itself is sent
         back once saying what was wrong (``STRUCTURED_RETRIES``) and recorded in ``structured_retries``; if the
-        next answer is not valid either, ``ModelError`` is raised."""
+        next answer is not valid either, ``ModelError`` is raised.
+
+        ``relaxed`` continues the stopped assistant reply (``_carry_on``) instead of opening a new turn."""
         body = self._body(messages, tools=tools, stream=True, model=model, max_tokens=max_tokens,
                           response_schema=response_schema)
-        requested = requested_repeats(messages)
+        sent = self._carry_on(body) if relaxed else body
+        requested = requested_repeats(sent["messages"])
         if response_schema is None:
-            result = await self._send(body, on_delta, ProgressCheck(relaxed=relaxed, requested=requested))
+            try:
+                result = await self._send(sent, on_delta, ProgressCheck(relaxed=relaxed, requested=requested))
+            except ModelError as exc:
+                if sent is not body and exc.status in (400, 422) and (
+                        "continue_final_message" in (exc.body or "") or "add_generation_prompt" in (exc.body or "")):
+                    log.warning("%s: the server refused continuing the stopped reply (HTTP %s); asking again as a "
+                                "new turn", self.label, exc.status)
+                    sent = body
+                    requested = requested_repeats(body["messages"])
+                    result = await self._send(body, on_delta, ProgressCheck(relaxed=relaxed, requested=requested))
+                else:
+                    raise
             if result.finish_reason == "length":
-                raise ModelError(self._cut_off_message(body, result))
+                raise ModelError(self._cut_off_message(sent, result))
             return result
         first = await self._attempt(body, on_delta, self._check(requested))
         return await self._settle(body, response_schema, first, on_delta, requested=requested)

@@ -25,7 +25,7 @@ from jig.errors import ConfigError, ModelStalled, RepeatedActions
 from jig.model import ModelClient, ToolCall, _Refusal
 from jig.policy.sentinel import VERDICT_SCHEMA
 from jig.progress import Stop, requested_repeats
-from jig.runtime import CHAT_STOPPED, TASK_STOPPED, Jig
+from jig.runtime import CHAT_STOPPED, NOTHING_MORE, TASK_STOPPED, Jig
 from jig.schema import problems
 
 from .conftest import audit_kinds, wait_for
@@ -89,6 +89,33 @@ def test_a_fresh_retry_changes_the_seed_and_temperature_only_where_the_provider_
     extras, note = anthropic._fresh_sampling(body, attempt=2)
     assert "seed" not in extras and "does not document it" in note["not_sent"]["seed"]
     assert extras.get("temperature", 1.0) <= 1.0
+
+
+def test_continuing_a_stopped_reply_asks_the_model_to_carry_that_reply_on(tmp_path):
+    """Continue anyway keeps the stopped reply and asks the model for its next words, not a new turn.
+
+    A new turn is how a reasoning model finished with an empty answer. A reply with nothing written yet is
+    still asked with the note, because there is no text to carry on."""
+    client = _client(tmp_path, 'base_url = "http://127.0.0.1:8080/v1"')
+    partial = "banana\n" * 8
+    messages = [
+        {"role": "system", "content": "You are Jig."},
+        {"role": "user", "content": LOOP},
+        {"role": "assistant", "content": partial, "jig_stopped": {"kind": "repetition"}},
+        {"role": "user", "content": CONTINUE_PROMPT, "jig_continue": True},
+    ]
+    body = client._body(messages, tools=None, stream=True, model="m", max_tokens=None, response_schema=None)
+    carried = client._carry_on(body)
+    assert [m["role"] for m in carried["messages"]] == ["system", "user", "assistant"]
+    assert carried["messages"][-1]["content"] == partial and "jig_stopped" not in carried["messages"][-1]
+    assert carried["continue_final_message"] == "content" and carried["add_generation_prompt"] is False
+    assert CONTINUE_PROMPT not in json.dumps(carried["messages"])
+    empty = client._body([
+        {"role": "user", "content": LOOP},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": CONTINUE_PROMPT},
+    ], tools=None, stream=True, model="m", max_tokens=None, response_schema=None)
+    assert client._carry_on(empty) is empty
 
 
 def test_the_correction_after_a_repeat_does_not_quote_it(tmp_path):
@@ -231,12 +258,19 @@ async def test_a_chat_reply_that_repeats_itself_is_stopped_and_can_be_continued_
         more = [item async for item in jig.chat(session_id=sid, action="continue")]
         assert more[0]["action"] == "continue" and more[-1]["type"] in ("done", "stopped")
         after = jig.store.get_session(sid)
-        if more[-1]["type"] == "stopped":
+        last = more[-1]
+        if last.get("reason") == "nothing_more":
+            # The model added nothing. The stopped reply stays, and Jig says so instead of a bare model error.
+            assert last["message"] == NOTHING_MORE and after == before
+            assert after[-1][STOPPED_KEY]["kind"] == "repetition" and after[-1]["content"]
+        elif last["type"] == "stopped":
             # Relaxed: only a very long exact repeat stops a reply the user chose to continue.
-            assert more[-1]["relaxed"] is True and more[-1]["stop"]["repeat_chars"] >= 20_000
+            assert last["relaxed"] is True and last["stop"]["repeat_chars"] >= 20_000
             assert after[-2].get(CONTINUE_KEY) and after[-1][STOPPED_KEY]["kind"] == "repetition"
-        else:  # carried on and finished: saved as one reply
+            assert after[-1]["content"]
+        else:  # carried on and finished: saved as one reply, longer than the part that was kept
             assert len(after) == len(before) and after[-1]["content"].startswith(before[-1]["content"])
+            assert len(after[-1]["content"]) > len(before[-1]["content"])
     finally:
         await jig.stop()
 

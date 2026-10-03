@@ -25,11 +25,12 @@ from ..model import JIG_ONLY_KEYS
 CONTEXT_KEY = "jig_context"
 # A reply Jig stopped as it streamed, for repeating itself, is kept with STOPPED_KEY (what jig.progress recorded,
 # never text). The user's "Continue anyway" adds CONTINUE_PROMPT as a user message marked with CONTINUE_KEY, which
-# relaxes the progress check for that turn. Neither key is sent to the model (jig.model.JIG_ONLY_KEYS).
+# relaxes the progress check for that turn. Neither key is sent to the model (jig.model.JIG_ONLY_KEYS). The model
+# is asked to carry on the stopped reply itself (jig.model.ModelClient._carry_on). This note stays in the
+# conversation, and it is sent as its own turn only when a server cannot continue a message.
 STOPPED_KEY, CONTINUE_KEY = JIG_ONLY_KEYS
 CONTINUE_PROMPT = ("[Jig] Your previous reply was stopped part-way because it seemed to be repeating itself. The "
-                   "user has asked you to continue anyway. Carry on from exactly where it stopped, without repeating "
-                   "what you have already written.")
+                   "user has asked you to continue anyway. Carry on from exactly where that reply stopped.")
 
 _MODE_TEXT = {
     Mode.RESEARCH: (
