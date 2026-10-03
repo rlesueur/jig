@@ -250,9 +250,12 @@ async def test_a_task_that_keeps_being_refused_stops_with_a_plain_explanation(ji
     jig.rules.create(tool="web_fetch", decision="block", note="test: no web pages")
     t = None
     for _ in range(3):
-        task = jig.create_task(title="London weather", description="Find today's weather forecast for London: try "
-                               "bbc.co.uk/weather, then metoffice.gov.uk, then any other weather site, until one works, "
-                               "and summarise it.", mode=Mode.ACTION)
+        task = jig.create_task(
+            title="London weather",
+            description="Find today's weather forecast for London. Try https://www.bbc.co.uk/weather, then "
+            "https://www.metoffice.gov.uk, then any other weather site, until one of them works, and summarise it. "
+            "If a site is refused, try a different address. Do not give up after one or two.",
+            mode=Mode.ACTION)
         await jig.run_task(task["id"])
         t = jig.store.get_task(task["id"])
         if t["status"] == TaskStatus.FAILED and (t.get("outcome") or {}).get("refused"):
