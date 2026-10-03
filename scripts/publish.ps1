@@ -210,9 +210,14 @@ fr.RepoFilter(args, commit_callback=fix_identity).run()
     [IO.File]::WriteAllText($attackPaths, (($script:AttackPaths) -join "`n") + "`n")
     # Order matters: the repository path first, then any other profile path. The profile path is read at
     # run time so that this script never contains it (filter-repo would otherwise rewrite its own rules).
+    # One backslash (C:\Users\you a forward slash (C:/Users/you and the doubled
+    # backslash written inside source strings (C:\Users\you A bare single-backslash
+    # rule does not match the other two, so local paths were surviving the rewrite.
     [IO.File]::WriteAllText($replacements, (@(
         "$(Join-Path $env:USERPROFILE 'Jig')==>jig"
         'regex:[A-Za-z]:\\Users\\[^\\/\s"''<>]+==>C:\Users\you'
+        'regex:[A-Za-z]:/Users/[^/\s"''<>]+==>C:/Users/you'
+        'regex:[A-Za-z]:\\\\Users\\\\[^\\\\/\s"''<>]+==>C:\Users\you'
     ) -join "`n") + "`n")
     Push-Location $RepoPath
     try {
@@ -273,7 +278,8 @@ function Invoke-Scan([string]$RepoPath) {
 
     $forbidden = '(^|/)(\.env(\..*)?|api-token|[^/]*\.token|[^/]*\.(db|db-wal|db-shm|sqlite3?|pem|key|gguf|safetensors|onnx|pt|pth|ckpt))$|(^|/)(data|sandbox|demo-output|promo|\.venv|venv|models|workspace)/'
     $paths = Run git -C $RepoPath log --all --name-only --format= | Where-Object { $_ } | Sort-Object -Unique
-    $bad = $paths | Where-Object { $_ -match $forbidden }
+    # research/models is the model catalogue (a script, a toml and a lock file), not a directory of weights.
+    $bad = $paths | Where-Object { $_ -match $forbidden -and $_ -notmatch '^research/models/' }
     if ($bad) { $problems += "sensitive paths in history: $($bad -join ', ')" } else { Ok "no data, token, database, env, vault, sandbox, promo or model files in $($paths.Count) paths ever committed" }
 
     $revs = Run git -C $RepoPath rev-list --all
