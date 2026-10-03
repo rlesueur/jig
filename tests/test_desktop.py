@@ -117,7 +117,9 @@ def test_jigs_window_for_real(tmp_path):
             # Signed in with a one-time code: no token asked for.
             page.wait_for_selector("#app:not([hidden])", timeout=60_000)
             assert page.url == f"http://127.0.0.1:{port}/?app=desktop", "the code was dropped from the address"
-            assert page.evaluate("Boolean(window.__jigWindowLinks)")
+            # The handler is installed as the document is created. Wait, rather than assuming the load event
+            # has already finished evaluating it.
+            page.wait_for_function("() => window.__jigWindowLinks === true", timeout=15_000)
             assert page.locator("#open-browser").is_visible()
             assert page.locator("#logout").is_hidden(), "signing out would only sign the window back in"
             assert page.locator("#login").evaluate("d => d.open") is False

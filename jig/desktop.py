@@ -311,19 +311,41 @@ def run_window(jig: Jig, state_path: Path, *, activate: bool = True, debug_port:
         if not current.get("maximized"):
             current.update(width=width, height=height)
 
+    links_ready = False
+
     def on_shown() -> None:
         hwnd = int(window.native.Handle.ToInt64())
         save_state(state_path, pid=os.getpid(), hwnd=hwnd)
         log.info("window open (pid %s)", os.getpid())
+        _install_window_links()
 
-    def on_loaded() -> None:
-        # pywebview turns the right-click menu (copy, paste) off outside its debug mode; people need it.
+    def _install_window_links() -> None:
+        """Put the link handler on every later document before the page's own scripts run.
+
+        The page can show itself as soon as it loads. Installing only from the loaded event races that, so a
+        click in the gap would open inside the window.
+        """
+        nonlocal links_ready
         from System import Func, Type  # pythonnet, loaded by pywebview
 
         def menus() -> None:
-            window.native.browser.webview.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
+            nonlocal links_ready
+            core = window.native.browser.webview.CoreWebView2
+            if core is None:
+                return
+            # pywebview turns the right-click menu (copy, paste) off outside its debug mode; people need it.
+            core.Settings.AreDefaultContextMenusEnabled = True
+            if not links_ready:
+                core.AddScriptToExecuteOnDocumentCreatedAsync(LINKS_JS)
+                links_ready = True
 
-        window.native.Invoke(Func[Type](menus))
+        try:
+            window.native.Invoke(Func[Type](menus))
+        except Exception:
+            log.exception("could not install the window link handler yet")
+
+    def on_loaded() -> None:
+        _install_window_links()
         window.evaluate_js(LINKS_JS)
 
     def on_closing() -> None:
