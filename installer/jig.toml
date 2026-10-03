@@ -10,7 +10,8 @@
 base_url = ""
 name = ""
 connect_timeout_s = 5.0
-read_timeout_s = 600.0
+first_token_timeout_s = 600.0
+liveness_timeout_s = 120.0
 
 [sentinel]
 

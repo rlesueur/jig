@@ -99,7 +99,7 @@ async def test_an_invalid_answer_is_sent_back_once_and_the_next_is_accepted(conf
     client = ModelClient(replace(config.model, structured_output=mode), label="agent model")
     try:
         await client.health()
-        body = client._body(QUESTION, tools=None, stream=False, model=None, max_tokens=None,
+        body = client._body(QUESTION, tools=None, stream=True, model=None, max_tokens=None,
                             response_schema=VERDICT_SCHEMA)
         prose = await client._send({k: v for k, v in body.items() if k not in unconstrained}, None)
         assert prose.content.strip() and not prose.tool_calls

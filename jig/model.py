@@ -12,12 +12,14 @@ The API key is never logged and is redacted from every error message.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import re
 import ssl
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +27,9 @@ import httpx
 
 from . import schema as json_schema
 from .config import EndpointConfig
-from .errors import ConfigError, ModelCapabilityError, ModelError, ModelServerUnavailable
+from .errors import (ConfigError, ModelCapabilityError, ModelError, ModelServerUnavailable, ModelStalled,
+                     ModelStopped)
+from .progress import ProgressCheck, Stop, requested_repeats
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +40,11 @@ _RESPOND_INSTRUCTION = (f"Give your answer only by calling the {RESPOND_TOOL} to
                         "answer. Do not reply with text.")
 # A structured answer that is not valid is sent back once, saying what was wrong. A second invalid answer fails.
 STRUCTURED_RETRIES = 1
+# After an answer stopped for repeating itself, the fresh request asks for a new seed and this much more
+# temperature (standard OpenAI-compatible fields; not sent where the provider does not take them).
+RETRY_TEMPERATURE_STEP = 0.2
+# Keys Jig keeps on saved messages for itself; they are never sent to a model.
+JIG_ONLY_KEYS = ("jig_stopped", "jig_continue")
 # llama.cpp's server answers HTTP 500 with one of these when its chat parser cannot read the model's output as
 # the tool call it was asked for ("Failed to parse input at pos" up to about b8700; the PEG parser after that).
 _UNPARSED = re.compile(r"The model produced output that does not match the expected|Failed to parse input at pos")
@@ -46,10 +55,12 @@ class _Refusal:
     """Why a structured answer was not accepted. ``kind`` is content-free and may be logged and recorded;
     ``detail`` is told to the model and put in the final error, and may name properties from the answer."""
 
-    kind: str  # "cut_off", "unparsed", "no_call", "wrong_calls", "invalid_json" or "schema"
+    kind: str  # "cut_off", "unparsed", "no_call", "wrong_calls", "invalid_json", "schema" or "repetition"
     detail: str
     # For the user, if the last attempt fails this way too (how to stop answers being cut off).
     explanation: str = ""
+    # For "repetition": where Jig stopped the stream, and why (content-free).
+    stop: Stop | None = None
 
 
 def _reasoning(obj: dict[str, Any]) -> str:
@@ -107,6 +118,10 @@ class ChatResult:
     extra_content: dict[str, Any] = field(default_factory=dict)
     # For a structured answer: why each earlier answer was sent back (_Refusal.kind), oldest first.
     structured_retries: list[str] = field(default_factory=list)
+    # Each attempt Jig stopped as it streamed (jig.progress.Stop.record, with its attempt number), and the seed
+    # and temperature each fresh retry asked for, with any it could not send and why. Content-free.
+    stops: list[dict[str, Any]] = field(default_factory=list)
+    retry_sampling: list[dict[str, Any]] = field(default_factory=list)
 
     def assistant_message(self) -> dict[str, Any]:
         """The message to append to history, in the standard OpenAI shape.
@@ -129,6 +144,8 @@ class ChatResult:
             "usage": self.usage,
             "elapsed_s": round(self.elapsed_s, 3),
             **({"structured_retries": self.structured_retries} if self.structured_retries else {}),
+            **({"stops": self.stops} if self.stops else {}),
+            **({"retry_sampling": self.retry_sampling} if self.retry_sampling else {}),
         }
 
 
@@ -154,17 +171,20 @@ class ModelClient:
         self._key = api_key or ""
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        # Reading has no timeout of its own: _stream gives up only on a server that has gone silent.
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             headers=headers,
             verify=ssl.create_default_context(cafile=config.ca_file) if config.ca_file else True,
             timeout=httpx.Timeout(
                 connect=config.connect_timeout_s,
-                read=config.read_timeout_s,
+                read=None,
                 write=30.0,
-                pool=config.read_timeout_s,
+                pool=config.first_token_timeout_s,
             ),
         )
+        # Request fields this server refused on a retry (field -> why), so they are not sent again.
+        self._refused_fields: dict[str, str] = {}
 
     def redact(self, text: str) -> str:
         """Remove the API key, and any masked form of it a provider echoes back (``sk-abcd****wxyz``)."""
@@ -245,6 +265,8 @@ class ModelClient:
         response_schema: dict[str, Any] | None,
     ) -> dict[str, Any]:
         provider = self.config.provider_info
+        messages = [{k: v for k, v in m.items() if k not in JIG_ONLY_KEYS} if any(k in m for k in JIG_ONLY_KEYS)
+                    else m for m in messages]
         body: dict[str, Any] = {
             **self.config.sampling,
             "model": self._require_name(model),
@@ -308,6 +330,11 @@ class ModelClient:
         tool_call = self.config.structured_output_mode == "tool_call"
         again = (f" Call the {RESPOND_TOOL} tool once, with arguments that match its schema." if tool_call
                  else " Answer again with only the JSON object, matching the schema.")
+        if refusal.kind == "repetition":
+            why = ("you kept writing after the answer was complete" if refusal.stop
+                   and refusal.stop.reason == "answer_complete" else "you were repeating yourself")
+            return [{"role": "user", "content": f"Your previous answer to this was stopped because {why}. "
+                                                f"Answer once, then stop.{again}"}]
         if result is None or refusal.kind == "cut_off":
             return [{"role": "user", "content": f"Your previous answer to this was not accepted: {refusal.detail}. "
                                                 f"Keep your thinking short.{again}"}]
@@ -326,30 +353,47 @@ class ModelClient:
         max_tokens: int | None = None,
         response_schema: dict[str, Any] | None = None,
         on_delta: DeltaCallback | None = None,
+        relaxed: bool = False,
     ) -> ChatResult:
-        """One chat completion. Streams internally when ``on_delta`` is given.
+        """One chat completion. Every request streams; ``on_delta`` is given each piece as it arrives.
 
         Message content may be a list of OpenAI content parts, including ``image_url`` parts
         (see ``jig.vision.image_message``) for vision-capable models.
 
+        Jig's progress check (``jig.progress``) watches the stream. A reply that is repeating itself is stopped
+        (the request is cancelled) and ``ModelStopped`` raised; ``relaxed`` (the user chose to continue such a
+        reply) stops only a very long exact repeat. A server that goes silent raises ``ModelStalled``.
+
         With ``response_schema``, the answer (``content``) is JSON checked against the schema. An answer that is
-        not, that was cut off, or that the server could not read is sent back once saying what was wrong
-        (``STRUCTURED_RETRIES``) and recorded in ``structured_retries``; if the next answer is not valid either,
-        ``ModelError`` is raised."""
-        body = self._body(messages, tools=tools, stream=on_delta is not None, model=model,
-                          max_tokens=max_tokens, response_schema=response_schema)
+        not, that was cut off, that the server could not read, or that Jig stopped for repeating itself is sent
+        back once saying what was wrong (``STRUCTURED_RETRIES``) and recorded in ``structured_retries``; if the
+        next answer is not valid either, ``ModelError`` is raised."""
+        body = self._body(messages, tools=tools, stream=True, model=model, max_tokens=max_tokens,
+                          response_schema=response_schema)
+        requested = requested_repeats(messages)
         if response_schema is None:
-            result = await self._send(body, on_delta)
+            result = await self._send(body, on_delta, ProgressCheck(relaxed=relaxed, requested=requested))
             if result.finish_reason == "length":
                 raise ModelError(self._cut_off_message(body, result))
             return result
-        return await self._settle(body, response_schema, await self._attempt(body, on_delta), on_delta)
+        first = await self._attempt(body, on_delta, self._check(requested))
+        return await self._settle(body, response_schema, first, on_delta, requested=requested)
 
-    async def _attempt(self, body: dict[str, Any], on_delta: DeltaCallback | None) -> ChatResult | _Refusal:
+    def _check(self, requested: int | None) -> ProgressCheck:
+        """The progress check for one structured request, which knows where the answer is: the respond call's
+        arguments, or the text."""
+        answer = "tool_arguments" if self.config.structured_output_mode == "tool_call" else "content"
+        return ProgressCheck(answer=answer, requested=requested)
+
+    async def _attempt(self, body: dict[str, Any], on_delta: DeltaCallback | None,
+                       check: ProgressCheck | None = None) -> ChatResult | _Refusal:
         """One structured request. A server that could not read the output as the tool call it was asked for
-        (llama.cpp's HTTP 500) has received an invalid answer, like any other."""
+        (llama.cpp's HTTP 500) has received an invalid answer, like any other; so has an answer Jig stopped for
+        repeating itself."""
         try:
-            return await self._send(body, on_delta)
+            return await self._send(body, on_delta, check)
+        except ModelStopped as exc:
+            return _Refusal("repetition", exc.stop.describe(), stop=exc.stop)
         except ModelError as exc:
             if (self.config.structured_output_mode == "tool_call" and exc.status == 500
                     and _UNPARSED.search(exc.body or "")):
@@ -358,9 +402,14 @@ class ModelClient:
             raise
 
     async def _settle(self, body: dict[str, Any], schema: dict[str, Any], result: ChatResult | _Refusal,
-                      on_delta: DeltaCallback | None = None) -> ChatResult:
-        """Accept a structured answer, or send it back once (``STRUCTURED_RETRIES``) and accept the next one."""
+                      on_delta: DeltaCallback | None = None, *, requested: int | None = None) -> ChatResult:
+        """Accept a structured answer, or send it back once (``STRUCTURED_RETRIES``) and accept the next one.
+        An answer stopped for repeating itself is not sent back: the request is made afresh with a correction that
+        does not quote it, a new seed and a little more temperature (``_fresh_sampling``)."""
         refusals: list[_Refusal] = []
+        stops: list[dict[str, Any]] = []
+        sampling: list[dict[str, Any]] = []
+        first_messages = body["messages"]
         elapsed = 0.0
         while True:
             answer = result if isinstance(result, ChatResult) else None
@@ -373,27 +422,89 @@ class ModelClient:
                         answer.content, answer.tool_calls = answer.tool_calls[0].arguments_raw, []
                     answer.elapsed_s = elapsed
                     answer.structured_retries = [r.kind for r in refusals]
+                    answer.stops, answer.retry_sampling = stops, sampling
                     return answer
             refusals.append(refusal)
+            if refusal.stop is not None:
+                stops.append({"attempt": len(refusals), **refusal.stop.record()})
             if len(refusals) > STRUCTURED_RETRIES:
                 raise ModelError(
                     f"{self.label} gave no valid structured answer in {len(refusals)} attempts; Jig sent each one "
                     "before the last back, saying what was wrong. "
                     + " ".join(f"Attempt {i}: {r.detail}." for i, r in enumerate(refusals, 1))
                     + (f" {refusal.explanation}" if refusal.explanation else ""),
-                    body=self.redact(answer.content) if answer is not None else None)
+                    body=self.redact(answer.content) if answer is not None else None,
+                    record={"structured_retries": [r.kind for r in refusals], "stops": stops,
+                            "retry_sampling": sampling})
             log.warning("%s: structured answer not accepted (%s); sending it back, retry %d of %d", self.label,
                         refusal.kind, len(refusals), STRUCTURED_RETRIES)
-            body = {**body, "messages": [*body["messages"], *self._correction(answer, refusal)]}
-            result = await self._attempt(body, on_delta)
+            if refusal.kind == "repetition":
+                extras, note = self._fresh_sampling(body, attempt=len(refusals) + 1)
+                sampling.append(note)
+                body = {**body, "messages": [*first_messages, *self._correction(None, refusal)]}
+                result = await self._attempt_with(body, extras, note, on_delta, requested)
+            else:
+                body = {**body, "messages": [*body["messages"], *self._correction(answer, refusal)]}
+                result = await self._attempt(body, on_delta, self._check(requested))
 
-    async def _send(self, body: dict[str, Any], on_delta: DeltaCallback | None) -> ChatResult:
+    def _fresh_sampling(self, body: dict[str, Any], *, attempt: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The request fields for a fresh retry, a new ``seed`` and ``temperature`` raised by
+        RETRY_TEMPERATURE_STEP, and a record of them with any field not sent and why."""
+        provider = self.config.provider_info
+        note: dict[str, Any] = {"attempt": attempt, "not_sent": {}}
+        extras: dict[str, Any] = {}
+
+        def allowed(key: str) -> bool:
+            if key in self._refused_fields:
+                note["not_sent"][key] = self._refused_fields[key]
+                return False
+            if provider and provider.sampling_keys is not None and key not in provider.sampling_keys:
+                note["not_sent"][key] = f"{provider.label} does not document it"
+                return False
+            return True
+
+        if allowed("seed"):
+            extras["seed"] = note["seed"] = random.SystemRandom().randrange(1, 2**31)
+        base = body.get("temperature")
+        if not isinstance(base, (int, float)) or isinstance(base, bool):
+            note["not_sent"]["temperature"] = "no temperature is configured, so the server's own default is not known"
+        else:
+            top = provider.temperature_max if provider and provider.temperature_max is not None else 2.0
+            raised = round(min(base + RETRY_TEMPERATURE_STEP, top), 2)
+            if raised <= base:
+                note["not_sent"]["temperature"] = f"already at the highest allowed ({top})"
+            elif allowed("temperature"):
+                extras["temperature"] = note["temperature"] = raised
+                note["temperature_was"] = base
+        if not note["not_sent"]:
+            del note["not_sent"]
+        return extras, note
+
+    async def _attempt_with(self, body: dict[str, Any], extras: dict[str, Any], note: dict[str, Any],
+                            on_delta: DeltaCallback | None, requested: int | None) -> ChatResult | _Refusal:
+        """A fresh attempt with the retry's sampling fields. A server that refuses the request because of them
+        (HTTP 400 or 422) is asked once more without them, and that is recorded."""
+        try:
+            return await self._attempt({**body, **extras}, on_delta, self._check(requested))
+        except ModelError as exc:
+            if not extras or exc.status not in (400, 422):
+                raise
+            named = [k for k in extras if k in (exc.body or "")] or list(extras)
+            for key in named:
+                self._refused_fields[key] = f"the server refused it (HTTP {exc.status})"
+                note.setdefault("not_sent", {})[key] = self._refused_fields[key]
+                note.pop(key, None)
+                note.pop(f"{key}_was", None)
+            log.warning("%s: the server refused %s on a retry (HTTP %s); asking again without", self.label,
+                        ", ".join(named), exc.status)
+            return await self._attempt({**body, **{k: v for k, v in extras.items() if k not in named}}, on_delta,
+                                       self._check(requested))
+
+    async def _send(self, body: dict[str, Any], on_delta: DeltaCallback | None,
+                    check: ProgressCheck | None = None) -> ChatResult:
         started = time.perf_counter()
         try:
-            if on_delta is None:
-                result = await self._complete(body)
-            else:
-                result = await self._stream(body, on_delta)
+            result = await self._stream(body, on_delta, check or ProgressCheck(), started)
         except httpx.TimeoutException as exc:
             raise ModelError(self.redact(f"{self.label} request timed out: {exc!r}")) from exc
         except httpx.HTTPError as exc:
@@ -427,37 +538,10 @@ class ModelClient:
                               status=status, body=text)
         return ModelError(f"{self.label} server returned HTTP {status}{hint}: {text[:500]}", status=status, body=text)
 
-    async def _complete(self, body: dict[str, Any]) -> ChatResult:
-        r = await self._client.post("/chat/completions", json=body)
-        if r.status_code != 200:
-            raise self._http_error(r.status_code, r.text)
-        data = r.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise ModelError(f"{self.label} response has no choices", body=self.redact(r.text))
-        msg = choices[0].get("message") or {}
-        calls = [
-            ToolCall(
-                id=tc.get("id") or f"call_{i}",
-                name=(tc.get("function") or {}).get("name", ""),
-                arguments_raw=_arguments_text((tc.get("function") or {}).get("arguments")),
-                extra={k: v for k, v in tc.items() if k not in _TOOL_CALL_KEYS},
-            )
-            for i, tc in enumerate(msg.get("tool_calls") or [])
-        ]
-        details = msg.get("reasoning_details")
-        return ChatResult(
-            content=msg.get("content") or "",
-            reasoning=_reasoning(msg),
-            tool_calls=calls,
-            finish_reason=choices[0].get("finish_reason"),
-            usage=data.get("usage") or {},
-            timings=data.get("timings") or {},
-            reasoning_details=details if isinstance(details, list) else [],
-            extra_content=msg["extra_content"] if isinstance(msg.get("extra_content"), dict) else {},
-        )
-
-    async def _stream(self, body: dict[str, Any], on_delta: DeltaCallback) -> ChatResult:
+    async def _stream(self, body: dict[str, Any], on_delta: DeltaCallback | None, check: ProgressCheck,
+                      started: float) -> ChatResult:
+        """Read one streamed reply, piece by piece, through the progress check. Stopping closes the response,
+        which cancels the request at the server."""
         content: list[str] = []
         reasoning: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
@@ -466,45 +550,88 @@ class ModelClient:
         finish_reason: str | None = None
         usage: dict[str, Any] = {}
         timings: dict[str, Any] = {}
+
+        def partial() -> ChatResult:
+            return ChatResult(content="".join(content), reasoning="".join(reasoning), tool_calls=[],
+                              finish_reason=None, usage=usage, timings=timings,
+                              elapsed_s=time.perf_counter() - started)
+
         async with self._client.stream("POST", "/chat/completions", json=body) as r:
-            if r.status_code != 200:
-                raise self._http_error(r.status_code, (await r.aread()).decode("utf-8", "replace"))
-            async for line in self._sse_lines(r):
-                if line == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ModelError(f"Malformed stream chunk: {exc}", body=self.redact(line)) from exc
-                if "error" in chunk:
-                    raise ModelError(self.redact(f"{self.label} stream error: {chunk['error']}"),
-                                     body=self.redact(line))
-                usage = chunk.get("usage") or usage
-                timings = chunk.get("timings") or timings
-                for choice in chunk.get("choices") or []:
-                    delta = choice.get("delta") or {}
-                    if text := _reasoning(delta):
-                        reasoning.append(text)
-                        await on_delta("reasoning", text)
-                    if text := delta.get("content"):
-                        content.append(text)
-                        await on_delta("content", text)
-                    if isinstance(delta.get("reasoning_details"), list):
-                        _merge_details(details, delta["reasoning_details"])
-                    if isinstance(delta.get("extra_content"), dict):
-                        extra_content.update(delta["extra_content"])
-                    for pos, tc in enumerate(delta.get("tool_calls") or []):
-                        slot = calls.setdefault(tc.get("index", pos), {"id": "", "name": "", "args": [], "extra": {}})
-                        if tc.get("id"):
-                            slot["id"] = tc["id"]
-                        fn = tc.get("function") or {}
-                        if fn.get("name"):
-                            slot["name"] += fn["name"]
-                        if fn.get("arguments"):
-                            slot["args"].append(_arguments_text(fn["arguments"]))
-                        slot["extra"].update({k: v for k, v in tc.items() if k not in _TOOL_CALL_KEYS})
-                    if choice.get("finish_reason"):
-                        finish_reason = choice["finish_reason"]
+            lines = r.aiter_lines()
+            heard = False
+            try:
+                if r.status_code != 200:
+                    async with asyncio.timeout(self.config.first_token_timeout_s):
+                        text = (await r.aread()).decode("utf-8", "replace")
+                    raise self._http_error(r.status_code, text)
+                while True:
+                    wait = self.config.liveness_timeout_s if heard else self.config.first_token_timeout_s
+                    try:
+                        async with asyncio.timeout(wait):
+                            raw = await anext(lines)
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError:
+                        raise ModelStalled(self._stalled_message(heard, wait, check.tokens)) from None
+                    heard = True
+                    if not raw.startswith("data:"):
+                        continue
+                    line = raw[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ModelError(f"Malformed stream chunk: {exc}", body=self.redact(line)) from exc
+                    if "error" in chunk:
+                        raise ModelError(self.redact(f"{self.label} stream error: {chunk['error']}"),
+                                         body=self.redact(line))
+                    usage = chunk.get("usage") or usage
+                    timings = chunk.get("timings") or timings
+                    for choice in chunk.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        stop = None
+                        if delta:
+                            check.chunk()
+                        if text := _reasoning(delta):
+                            reasoning.append(text)
+                            if on_delta:
+                                await on_delta("reasoning", text)
+                            stop = check.feed("reasoning", text)
+                        if text := delta.get("content"):
+                            content.append(text)
+                            if on_delta:
+                                await on_delta("content", text)
+                            stop = stop or check.feed("content", text)
+                        if isinstance(delta.get("reasoning_details"), list):
+                            _merge_details(details, delta["reasoning_details"])
+                        if isinstance(delta.get("extra_content"), dict):
+                            extra_content.update(delta["extra_content"])
+                        for pos, tc in enumerate(delta.get("tool_calls") or []):
+                            index = tc.get("index", pos)
+                            if index not in calls:
+                                calls[index] = {"id": "", "name": "", "args": [], "extra": {}}
+                                stop = stop or check.tool_call(len(calls) - 1)
+                            slot = calls[index]
+                            if tc.get("id"):
+                                slot["id"] = tc["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                slot["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                args = _arguments_text(fn["arguments"])
+                                slot["args"].append(args)
+                                stop = stop or check.feed(f"tool_arguments:{index}", args)
+                            slot["extra"].update({k: v for k, v in tc.items() if k not in _TOOL_CALL_KEYS})
+                        if choice.get("finish_reason"):
+                            finish_reason = choice["finish_reason"]
+                        if stop:
+                            log.warning("%s: Jig stopped the reply as it streamed: %s", self.label,
+                                        json.dumps(stop.record()))
+                            raise ModelStopped(f"{self.label} stopped: {stop.describe()}", stop=stop,
+                                               partial=partial())
+            finally:
+                await lines.aclose()
         tool_calls = [
             ToolCall(id=s["id"] or f"call_{i}", name=s["name"], arguments_raw="".join(s["args"]), extra=s["extra"])
             for i, s in sorted(calls.items())
@@ -520,11 +647,13 @@ class ModelClient:
             extra_content=extra_content,
         )
 
-    @staticmethod
-    async def _sse_lines(r: httpx.Response) -> AsyncIterator[str]:
-        async for raw in r.aiter_lines():
-            if raw.startswith("data:"):
-                yield raw[5:].strip()
+    def _stalled_message(self, heard: bool, wait: float, tokens: int) -> str:
+        when = (f"for {wait:g} seconds in the middle of its reply, after about {tokens:,} tokens" if heard
+                else f"for {wait:g} seconds after Jig asked it for a reply")
+        setting = "liveness_timeout_s" if heard else "first_token_timeout_s"
+        return (f"{self.label} server at {self.config.base_url} sent nothing {when}, so Jig stopped waiting: the "
+                f"server looks stuck. Check that it is still running. If it is just slow, raise {setting} in the "
+                "config.")
 
     # Capability checks ------------------------------------------------------
     async def probe_tool_calling(self) -> dict[str, Any]:

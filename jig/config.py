@@ -57,7 +57,11 @@ class EndpointConfig:
     # Extra HTTP headers sent with every request (for example anthropic-workspace-id). Not for the API key.
     headers: dict[str, str] = field(default_factory=dict)
     connect_timeout_s: float = 5.0
-    read_timeout_s: float = 600.0
+    # Every reply streams, and there is no limit on how long it may take. Jig only gives up on a server that has
+    # gone silent: nothing at all for first_token_timeout_s after asking (time to read a long prompt, or to wait
+    # for a busy server), or for liveness_timeout_s between one piece of the reply and the next.
+    first_token_timeout_s: float = 600.0
+    liveness_timeout_s: float = 120.0
     # Output limit per request (reasoning counts towards it). Unset: Jig sends none, so the server's context
     # window is the only bound. Required only where the provider's API requires it (Anthropic).
     max_tokens: int | None = None
@@ -282,6 +286,17 @@ def _build(cls: type, values: dict[str, Any], section: str) -> Any:
         raise ConfigError(f"[{section}]: {exc}") from exc
 
 
+def _renamed_timeout(values: dict[str, Any]) -> dict[str, Any]:
+    """``read_timeout_s`` (a limit on the whole reply, before every reply streamed) is now the wait for the first
+    piece of it, ``first_token_timeout_s``. Older config files keep working."""
+    if "read_timeout_s" not in values:
+        return values
+    values = dict(values)
+    old = values.pop("read_timeout_s")
+    values.setdefault("first_token_timeout_s", old)
+    return values
+
+
 def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) -> Config:
     """Load configuration. ``overrides`` may set ``data_dir``, ``sandbox_dir``, ``sandbox_backend`` and
     ``settings`` (used instead of the data folder's settings.toml)."""
@@ -343,14 +358,14 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         model_raw["name"] = v
     if "base_url" not in model_raw:
         raise ConfigError("[model] base_url is required")
-    model = _check_endpoint(_build(EndpointConfig, model_raw, "model"), "model", base)
+    model = _check_endpoint(_build(EndpointConfig, _renamed_timeout(model_raw), "model"), "model", base)
     if model_launch.command and model.location.is_cloud:
         raise ConfigError(f"[model.launch] starts a local model server, but [model] base_url ({model.base_url}) is a "
                           "cloud endpoint; remove [model.launch] or point base_url at the local server")
 
     # The Sentinel inherits every unset key from [model], so by default it uses the same
     # endpoint and model, but it can point at a different (for example smaller, local) model.
-    sentinel_raw = dict(_section(raw, "sentinel"))
+    sentinel_raw = _renamed_timeout(dict(_section(raw, "sentinel")))
     inherited = {k: getattr(model, k) for k in EndpointConfig.__dataclass_fields__}
     inherited["allow_cloud"] = False  # consent to a cloud endpoint is per role, never inherited
     if "base_url" in sentinel_raw:
@@ -507,6 +522,8 @@ def _check_endpoint(ep: EndpointConfig, section: str, base: Path) -> EndpointCon
     if ep.structured_output not in ("", "json_schema", "tool_call"):
         raise ConfigError(f"[{section}] structured_output must be 'json_schema' or 'tool_call', not "
                           f"{ep.structured_output!r}")
+    if not (ep.first_token_timeout_s > 0 and ep.liveness_timeout_s > 0):
+        raise ConfigError(f"[{section}] first_token_timeout_s and liveness_timeout_s must be more than 0 seconds")
     if reserved := sorted(RESERVED_REQUEST_KEYS & set(ep.sampling)):
         raise ConfigError(f"[{section}.sampling] must not set {reserved}: Jig sets these itself (the output limit is "
                           f"[{section}] max_tokens)")

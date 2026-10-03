@@ -23,7 +23,12 @@ api_key_env = ""
 # provider = "openai" | "openrouter" | "anthropic" | "gemini" tells Jig that
 # provider's documented differences; anything it doesn't support is an error.
 connect_timeout_s = 5.0
-read_timeout_s = 600.0
+# Replies stream, with no limit on how long they take or how many tokens they use. Jig gives up
+# only on a server that goes silent: nothing for first_token_timeout_s after asking (reading a
+# long prompt, or waiting for a busy server), or for liveness_timeout_s in the middle of a reply.
+# (Older configs' read_timeout_s still works, as first_token_timeout_s.)
+first_token_timeout_s = 600.0
+liveness_timeout_s = 120.0
 # No output limit is sent unless you set one: local servers are bounded by their
 # context window, and a reasoning model's thinking would count towards a limit.
 # Set max_tokens = <tokens> only if you want a cap.

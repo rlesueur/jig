@@ -68,7 +68,7 @@ async def main() -> None:
     out = Path(a.out)
     done = {(r["question_id"], r["ask"]) for r in map(json.loads, out.read_text(encoding="utf-8").splitlines())
             } if out.exists() else set()
-    judge = ModelClient(EndpointConfig(base_url=a.base_url, max_tokens=4096, read_timeout_s=600,
+    judge = ModelClient(EndpointConfig(base_url=a.base_url, max_tokens=4096,
                                        sampling={"temperature": 0.0, "seed": 0}), label="judge model")
     await judge.health()
     for ask in a.asks.split(","):

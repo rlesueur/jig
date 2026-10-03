@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class JigError(Exception):
     """Base class for all Jig errors."""
@@ -42,12 +44,34 @@ class ModelCapabilityError(JigError):
 
 
 class ModelError(JigError):
-    """The model server returned an error or an unusable response."""
+    """The model server returned an error or an unusable response. ``record`` holds content-free details for the
+    run step (for a structured answer: why each attempt was refused, and the stops and retries)."""
 
-    def __init__(self, message: str, *, status: int | None = None, body: str | None = None):
+    def __init__(self, message: str, *, status: int | None = None, body: str | None = None,
+                 record: dict[str, Any] | None = None):
         super().__init__(message)
         self.status = status
         self.body = body
+        self.record = record or {}
+
+
+class ModelStopped(ModelError):
+    """Jig stopped a reply as it streamed because it was not making progress (``jig.progress``): it was
+    repeating itself. ``stop`` is the content-free ``jig.progress.Stop``; ``partial`` the ``ChatResult`` of what
+    had arrived, without any tool call that was cut off."""
+
+    def __init__(self, message: str, *, stop: Any, partial: Any):
+        super().__init__(message, record={"stop": stop.record()})
+        self.stop = stop
+        self.partial = partial
+
+
+class ModelStalled(ModelError):
+    """The model server sent nothing for longer than the liveness timeout, so Jig stopped waiting."""
+
+
+class RepeatedActions(JigError):
+    """A run made the same tool call and got the same result several times, so it was stopped."""
 
 
 class ToolError(JigError):

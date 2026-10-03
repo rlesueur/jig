@@ -18,7 +18,8 @@ base_url = "http://host.docker.internal:8080/v1"
 name = ""
 api_key_env = ""
 connect_timeout_s = 5.0
-read_timeout_s = 600.0
+first_token_timeout_s = 600.0
+liveness_timeout_s = 120.0
 
 # Sent as-is with every request; include only keys your server accepts.
 [model.sampling]
