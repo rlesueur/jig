@@ -362,8 +362,9 @@ class Store:
         else:
             messages = next((json.loads(r["messages_json"]) for r in reversed(runs) if r["messages_json"]), [])
         stopped_key, continue_key = JIG_ONLY_KEYS
-        said = [{"role": m["role"], "text": m["content"], **({"stopped": m[stopped_key]["kind"]} if m.get(stopped_key)
-                                                             else {})}
+        said = [{"role": m["role"], "text": m["content"],
+                 **({"stopped": m[stopped_key]["kind"], "stopped_reason": m[stopped_key].get("reason")}
+                    if m.get(stopped_key) else {})}
                 for m in messages if m.get("role") in ("user", "assistant") and not m.get(continue_key)
                 and isinstance(m.get("content"), str) and m["content"].strip()]
         first = next((m["text"] for m in said if m["role"] == "user"), "")

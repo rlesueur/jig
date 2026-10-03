@@ -1070,7 +1070,7 @@ function stopReply() {
   if (chatAbort) chatAbort.abort();
 }
 
-/** Under a reply Jig stopped because it was repeating itself: say so, and offer to continue it or try again. */
+/** Under a reply Jig stopped (repeating itself, or going round in circles): say so, and offer to continue it or try again. */
 function stoppedNote(msg, item) {
   const box = el('div', { class: 'reply-stopped', role: 'status', 'data-testid': 'chat-stopped' },
     el('p', { class: 'reply-stopped-text', text: item.message }),
@@ -2092,7 +2092,8 @@ function conversationItem(c) {
       read.append(...transcript.map((m) => el('div', { class: `said ${m.role}`, 'data-testid': 'conversation-said' },
         el('p', { class: 'said-who', text: m.role === 'user' ? 'You' : 'Jig' }),
         m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)),
-        m.stopped ? el('p', { class: 'hint-quiet', text: m.stopped === 'repetition' ? 'Jig stopped this reply because it was repeating itself.' : 'You stopped this reply.' }) : null)));
+        m.stopped ? el('p', { class: 'hint-quiet', text: m.stopped !== 'repetition' ? 'You stopped this reply.'
+          : `Jig stopped this reply because it was ${m.stopped_reason === 'circling' ? 'going round in circles' : 'repeating itself'}.` }) : null)));
     } catch (err) {
       read.append(el('p', { class: 'error-text', text: err.message }));
     }

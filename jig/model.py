@@ -338,8 +338,13 @@ class ModelClient:
         again = (f" Call the {RESPOND_TOOL} tool once, with arguments that match its schema." if tool_call
                  else " Answer again with only the JSON object, matching the schema.")
         if refusal.kind == "repetition":
-            why = ("you kept writing after the answer was complete" if refusal.stop
-                   and refusal.stop.reason == "answer_complete" else "you were repeating yourself")
+            reason = refusal.stop.reason if refusal.stop else None
+            if reason == "circling":
+                return [{"role": "user", "content": "Your previous answer to this was stopped because you were going "
+                                                    "round in circles in your thinking. Give your best answer now, "
+                                                    f"once, then stop.{again}"}]
+            why = ("you kept writing after the answer was complete" if reason == "answer_complete"
+                   else "you were repeating yourself")
             return [{"role": "user", "content": f"Your previous answer to this was stopped because {why}. "
                                                 f"Answer once, then stop.{again}"}]
         if result is None or refusal.kind == "cut_off":

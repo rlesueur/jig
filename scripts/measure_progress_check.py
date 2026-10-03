@@ -6,6 +6,9 @@
 - Legitimately repetitive text, from real documents and real model outputs: code (Jig's own and Python's standard
   library, in a fence as a model writes it), Markdown tables, CSV files, JSON lists, LongMemEval's real assistant
   replies (``--longmemeval``), and a real sentence written N times when the user asked for it N times.
+- Going round in circles: the captured circling runs (tests/captured/circling-*.json) against genuine text fed as
+  reasoning: real reasoning (the harness's, and Jig's own with ``--reasoning``), LongMemEval's replies, Jig's
+  documents, and real code and plans redrafted. Reports the highest share each set holds against the threshold.
 
 Reports, for each set, the false alarms with Jig's guards and with the bare ratio rule, the lowest ratio seen and
 the margin to the threshold. Text is never printed: only counts, ratios and positions.
@@ -382,20 +385,126 @@ def measure_legit(longmemeval: Path | None) -> dict[str, Any]:
     return results
 
 
+# Going round in circles ----------------------------------------------------------------------------------------
+
+def circling_trace(text: str, piece: int = 16) -> list[tuple[int, float, bool]]:
+    """At each look of the circling check over ``text`` as reasoning: the position, the share of recent phrases
+    written CIRCLE_TIMES times or more, and whether the text there is guarded. Watches jig.progress's own state."""
+    check = ProgressCheck()
+    check._repetition = lambda state: None  # type: ignore[method-assign]
+    out: list[tuple[int, float, bool]] = []
+    saved = progress.CIRCLE_REUSED, progress.CIRCLE_LOOKS, progress.guarded
+    unguarded = progress.guarded
+
+    def watch(state: Any) -> bool:
+        g = unguarded(state)
+        if state.unlooked == 0:
+            out.append((state.chars, sum(state.recent_again) / progress.CIRCLE_WINDOW, g))
+        return g
+
+    progress.CIRCLE_REUSED, progress.CIRCLE_LOOKS, progress.guarded = -1.0, 10**9, watch
+    try:
+        for i in range(0, len(text), piece):
+            check.chunk()
+            check.feed("reasoning", text[i:i + piece])
+    finally:
+        progress.CIRCLE_REUSED, progress.CIRCLE_LOOKS, progress.guarded = saved
+    return out
+
+
+def held(trace: list[tuple[int, float, bool]], looks: int) -> float:
+    """The highest share held, unguarded, for ``looks`` looks in a row: what the check compares with
+    CIRCLE_REUSED."""
+    best, run = 0.0, []
+    for _, reused, guarded in trace:
+        run = [] if guarded else (run + [reused])[-looks:]
+        if len(run) == looks:
+            best = max(best, min(run))
+    return best
+
+
+def circling_sets(runs: Path, longmemeval: Path | None, reasoning: Path | None) -> dict[str, list[str]]:
+    """Genuine text, fed as reasoning: real reasoning, real replies and documents, and real code and plans
+    redrafted the way reasoning redrafts them."""
+    sets: dict[str, list[str]] = {}
+    if reasoning:
+        for line in reasoning.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            sets.setdefault(f"Jig's stored reasoning ({row.get('kind')})", []).append(row["text"])
+    harness, plans = [], []
+    for out in captured(runs):
+        for part, text in out["parts"]:
+            if part == "reasoning" and len(text) >= 2000 and not out.get("stopped_by_jig") and not (
+                    out["finish_reason"] == "length" and last_window_ratio(text) < 0.05):
+                harness.append(text)
+            if part.startswith("tool_arguments") and len(text) >= 800 and '"tasks"' in text:
+                plans.append(f"Plan:\n{text}\n\nLet me check each task. Final:\n{text.replace('research', 'action', 1)}\n")
+    sets["the harness's reasoning (planner, Sentinel, probe)"] = harness
+    sets["a real plan drafted, then redrafted"] = plans
+    if longmemeval:
+        sets["LongMemEval assistant replies, as reasoning"] = longmemeval_replies(longmemeval)
+    sets["Jig's Markdown documents, as reasoning"] = [t for p in files([str(REPO / "**" / "*.md")], 400)
+                                                      if len(t := read(p, 120_000)) >= 4000]
+    rng = random.Random(7)
+    twice, thrice = [], []
+    for p in files([str(REPO / "jig" / "**" / "*.py")], 120):
+        lines = (t := read(p, 12_000)).splitlines()
+        if len(lines) < 40:
+            continue
+        i = rng.randrange(len(lines))
+        changed = "\n".join(lines[:i] + ["    # fixed: handle the empty case"] + lines[i:])
+        twice.append(f"Draft:\n{t}\n\nThat misses the empty case. Again:\n{changed}\n\nGood.")
+        thrice.append(f"{t}\n\nAgain:\n{changed}\n\nOnce more, cleaner:\n{t}\n")
+    sets["a real file drafted, then redrafted"] = twice
+    sets["a real file drafted three times"] = thrice
+    return sets
+
+
+def measure_circling(runs: Path, longmemeval: Path | None, reasoning: Path | None) -> dict[str, Any]:
+    """The captured circling runs (tests/captured/circling-*.json) must stop; genuine text as reasoning must not.
+    For each set: the false alarms, and the highest share held over CIRCLE_LOOKS looks, against CIRCLE_REUSED."""
+    looks = progress.CIRCLE_LOOKS
+    positives = {}
+    for path in sorted((REPO / "tests" / "captured").glob("circling-*.json")):
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        text = dict(rec["parts"])["reasoning"]
+        stop, _ = stream(ProgressCheck(answer=rec["answer"]), rec["parts"], rec["chars_per_token"])
+        positives[path.name] = {"source": rec.get("source"), "chars": len(text),
+                                "held": round(held(circling_trace(text), looks), 3),
+                                "stop": stop.record() if stop else None}
+    negatives = {}
+    for name, texts in circling_sets(runs, longmemeval, reasoning).items():
+        heights = [held(circling_trace(t), looks) for t in texts]
+        negatives[name] = {"cases": len(texts), "chars": sum(len(t) for t in texts),
+                           "false_alarms": sum(1 for h in heights if h >= progress.CIRCLE_REUSED),
+                           "highest_held": round(max(heights, default=0.0), 3)}
+    top = max((n["highest_held"] for n in negatives.values()), default=0.0)
+    low = min((p["held"] for p in positives.values()), default=None)
+    return {"positives": positives, "negatives": negatives, "highest_held_by_genuine_text": top,
+            "lowest_held_by_a_circling_run": low,
+            "gap": round(low - top, 3) if low is not None else None}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", type=Path, required=True)
     ap.add_argument("--longmemeval", type=Path, default=REPO / "research" / "data" / "longmemeval" /
                     "longmemeval_s_cleaned.json")
+    ap.add_argument("--reasoning", type=Path, help="a private JSONL of real reasoning ({kind, text} per line)")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
+    lme = a.longmemeval if a.longmemeval.is_file() else None
     report: dict[str, Any] = {
         "thresholds": {"window": progress.WINDOW, "check_every": progress.CHECK_EVERY,
                        "min_ratio": progress.MIN_RATIO, "block_chars": progress.BLOCK_CHARS,
                        "guarded_block_chars": progress.GUARDED_BLOCK_CHARS,
-                       "relaxed_block_chars": progress.RELAXED_BLOCK_CHARS},
+                       "relaxed_block_chars": progress.RELAXED_BLOCK_CHARS,
+                       "circle_phrase": progress.CIRCLE_PHRASE, "circle_times": progress.CIRCLE_TIMES,
+                       "circle_window": progress.CIRCLE_WINDOW, "circle_every": progress.CIRCLE_EVERY,
+                       "circle_reused": progress.CIRCLE_REUSED, "circle_looks": progress.CIRCLE_LOOKS},
         "captured": measure_captured(a.runs),
-        "legitimately_repetitive": measure_legit(a.longmemeval if a.longmemeval.is_file() else None)}
+        "legitimately_repetitive": measure_legit(lme),
+        "circling": measure_circling(a.runs, lme, a.reasoning)}
     report["cost"] = {"checks": TIMING["checks"],
                       "microseconds_per_check": round(1e6 * TIMING["seconds"] / max(1, TIMING["checks"]), 1)}
     text = json.dumps(report, indent=1)

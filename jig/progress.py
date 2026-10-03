@@ -10,7 +10,13 @@ tool call's arguments. A part has stopped making progress when:
   (after runs of one character, such as ``_____`` or spaces, are shortened to three), or it ends in one block
   repeated exactly, at least three times, over ``BLOCK_CHARS`` or more;
 - **the answer is already complete** (structured answers only, in the part that holds the answer): a whole JSON
-  object followed by more text, or a second tool call.
+  object followed by more text, or a second tool call;
+- **it is going round in circles** (the reasoning only): nearly every phrase in its last ``CIRCLE_WINDOW`` words
+  (``CIRCLE_REUSED``, phrases of ``CIRCLE_PHRASE`` words) is one it has now written ``CIRCLE_TIMES`` times or more,
+  at ``CIRCLE_LOOKS`` looks in a row, ``CIRCLE_EVERY`` words apart. A model that is stuck rewrites the same few
+  paragraphs with small changes, which no exact repeat and no 1,000-character window sees. Reasoning that is getting
+  somewhere keeps bringing new phrases, and a redraft (of a plan, or of code) writes its phrases a second or third
+  time, not a fourth and a tenth.
 
 Some output is repetitive by nature: code, Markdown tables, CSV, JSON lists of similar items, and tool-call
 arguments (file contents, code to run). There only an exact repeat of ``GUARDED_BLOCK_CHARS`` or more counts.
@@ -20,12 +26,13 @@ well past the number asked for. A reply the user chose to continue (``relaxed``)
 
 The thresholds were tuned against real captured runs and real documents: ``scripts/measure_progress_check.py``
 replays them and reports the margins. What a stop records (``Stop.record``) is content-free: the reason, the part,
-the length of the repeat, the ratio and the position, never the text."""
+the length of the repeat, the ratio, the share of phrases written before and the position, never the text."""
 
 from __future__ import annotations
 
 import re
 import zlib
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,8 +45,16 @@ GUARDED_BLOCK_CHARS = 4000
 RELAXED_BLOCK_CHARS = 20_000
 # A repeat the user asked for may run to this many times the count asked for (plus two) before it stops.
 REQUESTED_SLACK = 1.5
+CIRCLE_PHRASE = 5
+CIRCLE_TIMES = 4
+CIRCLE_WINDOW = 600
+CIRCLE_EVERY = 150
+CIRCLE_REUSED = 0.8
+CIRCLE_LOOKS = 4
 _KEEP = RELAXED_BLOCK_CHARS + 2 * MAX_PERIOD
 _RUN = re.compile(r"(.)\1{3,}", re.DOTALL)
+_WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+_LONGEST_WORD = 100
 
 _NUMBER_WORDS = {"three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
                  "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "hundred": 100,
@@ -52,13 +67,14 @@ _REPEAT = re.compile(r"\b(repeat|repeated|repeating|over and over|again and agai
 class Stop:
     """Why a reply was stopped. Content-free: it may be logged, audited and shown."""
 
-    reason: str  # "repeated_text", "repeated_block" or "answer_complete"
+    reason: str  # "repeated_text", "repeated_block", "circling" or "answer_complete"
     part: str  # "reasoning", "content" or "tool_arguments"
     token: int  # stream chunks received when it fired (about one token each)
     chars: int  # characters of that part so far
     ratio: float | None = None  # zlib ratio of the last WINDOW characters
     period: int | None = None  # length of the repeated block
     repeat_chars: int = 0  # characters the exact repeat covers (0 when there is none)
+    reused: float | None = None  # circling: the share of the last CIRCLE_WINDOW phrases written CIRCLE_TIMES times
 
     kind = "repetition"
 
@@ -69,6 +85,8 @@ class Stop:
             out["ratio"] = round(self.ratio, 4)
         if self.period is not None:
             out["period"] = self.period
+        if self.reused is not None:
+            out["reused"] = round(self.reused, 3)
         return out
 
     def describe(self, subject: str = "it") -> str:
@@ -78,6 +96,9 @@ class Stop:
         at = f"at about token {self.token:,}"
         if self.reason == "answer_complete":
             return f"{subject} kept writing after its answer was complete, in {where} ({at})"
+        if self.reason == "circling":
+            return (f"{subject} was going round in circles in {where}: {self.reused:.0%} of the phrases in its last "
+                    f"{CIRCLE_WINDOW} words were ones it had already written {CIRCLE_TIMES - 1} times or more ({at})")
         if self.period is not None and self.repeat_chars:
             return (f"{subject} was repeating itself in {where}: a {self.period:,}-character block repeated over "
                     f"{self.repeat_chars:,} characters ({at})")
@@ -118,6 +139,16 @@ class _Part:
     in_string: bool = False
     escaped: bool = False
     closed: bool = False
+    # The circling check (reasoning): how many times each phrase has been written (by a hash of it, never the
+    # words), whether each recent one was at least its CIRCLE_TIMES-th time, the last few words and a word still
+    # arriving, and the looks so far.
+    times: dict[int, int] = field(default_factory=dict)
+    recent_again: deque[bool] = field(default_factory=lambda: deque(maxlen=CIRCLE_WINDOW))
+    last_words: deque[str] = field(default_factory=lambda: deque(maxlen=CIRCLE_PHRASE))
+    word_tail: str = ""
+    phrases: int = 0
+    unlooked: int = 0
+    looks_over: int = 0
 
 
 @dataclass
@@ -158,10 +189,40 @@ class ProgressCheck:
             _track_fences(state, text)
         if state.name == self.answer and _completed(state, text):
             return Stop("answer_complete", state.name, self.tokens, state.chars)
+        if state.name == "reasoning" and not self.relaxed and (stop := self._circling(state, text)):
+            return stop
         if state.unchecked < CHECK_EVERY or len(state.buf) < WINDOW:
             return None
         state.unchecked = 0
         return self._repetition(state)
+
+    def _circling(self, state: _Part, text: str) -> Stop | None:
+        pending = state.word_tail + text
+        words = list(_WORD.finditer(pending))
+        state.word_tail = ""
+        if words and words[-1].end() == len(pending):  # the last word may go on in the next piece
+            state.word_tail = words.pop().group()[-_LONGEST_WORD:]
+        for word in words:
+            state.last_words.append(word.group().lower())
+            if len(state.last_words) < CIRCLE_PHRASE:
+                continue
+            key = hash(tuple(state.last_words))
+            state.times[key] = n = state.times.get(key, 0) + 1
+            state.recent_again.append(n >= CIRCLE_TIMES)
+            state.phrases += 1
+            state.unlooked += 1
+            if state.unlooked < CIRCLE_EVERY or state.phrases < CIRCLE_WINDOW:
+                continue
+            state.unlooked = 0
+            reused = sum(state.recent_again) / CIRCLE_WINDOW
+            # Code, tables, CSV and JSON lists are repetitive by nature, as for the exact repeats.
+            if reused < CIRCLE_REUSED or guarded(state):
+                state.looks_over = 0
+                continue
+            state.looks_over += 1
+            if state.looks_over >= CIRCLE_LOOKS:
+                return Stop("circling", state.name, self.tokens, state.chars, reused=reused)
+        return None
 
     def _repetition(self, state: _Part) -> Stop | None:
         period, covered = repeated_block(state.buf)

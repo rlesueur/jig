@@ -98,6 +98,11 @@ def test_the_correction_after_a_repeat_does_not_quote_it(tmp_path):
     assert sent == [{"role": "user", "content": "Your previous answer to this was stopped because you were "
                      "repeating yourself. Answer once, then stop. Answer again with only the JSON object, matching "
                      "the schema."}]
+    circling = Stop("circling", "reasoning", 7200, 22_600, reused=0.95)
+    sent = client._correction(None, _Refusal("repetition", circling.describe(), stop=circling))
+    assert sent == [{"role": "user", "content": "Your previous answer to this was stopped because you were going "
+                     "round in circles in your thinking. Give your best answer now, once, then stop. Answer again "
+                     "with only the JSON object, matching the schema."}]
 
 
 # Repeated actions -------------------------------------------------------------------------------------------------

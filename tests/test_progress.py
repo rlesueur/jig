@@ -87,6 +87,33 @@ def test_a_reply_the_user_chose_to_continue_stops_only_at_a_very_long_exact_repe
     assert stop is not None and stop.repeat_chars >= progress.RELAXED_BLOCK_CHARS
 
 
+def test_the_recorded_circling_reasoning_is_stopped_without_its_text():
+    rec = loop("circling-verdict.json")
+    text = dict(rec["parts"])["reasoning"]
+    stop = stream(ProgressCheck(answer=rec["answer"]), rec["parts"], rec["chars_per_token"])
+    assert stop is not None and (stop.kind, stop.reason, stop.part) == ("repetition", "circling", "reasoning")
+    assert stop.reused >= progress.CIRCLE_REUSED and stop.repeat_chars == 0
+    # It went round in circles, without an exact repeat or a dense window, for thousands of characters first.
+    assert 15_000 < stop.chars < len(text)
+    record = stop.record()
+    assert set(record) == {"kind", "reason", "part", "token", "chars", "repeat_chars", "reused"}
+    assert all(isinstance(v, (int, float)) for k, v in record.items() if k not in {"kind", "reason", "part"})
+    described = stop.describe()
+    assert not any(text[i:i + 24] in described for i in range(0, len(text) - 24, 7))
+    assert stop.describe("the model").startswith("the model was going round in circles in its reasoning: ")
+    # A reply the user chose to continue is not stopped for circling.
+    assert stream(ProgressCheck(relaxed=True), rec["parts"], rec["chars_per_token"]) is None
+
+
+def test_a_redraft_of_code_or_a_plan_is_not_circling():
+    for code in sources(12):
+        assert stream(ProgressCheck(), [("reasoning", f"First go:\n{code}\nBetter:\n{code}\nFinal:\n{code}")]) is None
+        fenced = f"```python\n{code}\n```\n"
+        assert stream(ProgressCheck(), [("reasoning", "Draft, then again:\n" + fenced * 5)]) is None
+    plan = json.dumps({"steps": [{"tool": "read_file", "path": f["path"]} for f in repo_files()[:40]]}, indent=1)
+    assert stream(ProgressCheck(), [("reasoning", f"Plan:\n{plan}\nRevised plan:\n{plan}\nFinal plan:\n{plan}")]) is None
+
+
 @pytest.mark.skipif(not RUNS.is_dir(), reason=f"the captured runs are not at {RUNS} (set JIG_SO_DEBUG_RUNS)")
 def test_every_captured_run_replayed_stops_only_the_loops():
     import sys
