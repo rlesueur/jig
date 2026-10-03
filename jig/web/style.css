@@ -479,12 +479,34 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 
 .chat-form { display: flex; flex-direction: column; gap: 4px; }
 .composer {
-  display: flex; gap: 8px; align-items: flex-end; background: var(--sunk); border: 1px solid var(--field-line);
-  border-radius: 26px; padding: 6px 6px 6px 16px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 4px; align-items: stretch; background: var(--sunk);
+  border: 1px solid var(--field-line); border-radius: 26px; padding: 6px 6px 6px 8px; box-shadow: var(--shadow);
 }
+.composer.is-drop { outline: 2px dashed var(--queued); outline-offset: 2px; }
 .composer:focus-within { outline: var(--focus-width) solid var(--focus); outline-offset: 2px; }
-.composer textarea { border: 0; background: transparent; padding: 8px 0; resize: none; min-height: 40px; max-height: 200px; outline: none; }
+.composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea { flex: 1; min-width: 0; width: auto; border: 0; background: transparent; padding: 8px 0; resize: none; min-height: 40px; max-height: 200px; outline: none; }
 .composer .btn { flex: none; }
+.attach-btn { flex: none; width: 40px; height: 40px; }
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 0 8px; }
+.attach-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg .attach-strip, .said .attach-strip { margin-bottom: 6px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 240px; min-height: 36px;
+  padding: 3px 6px 3px 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line);
+  font-size: 13.5px; font-weight: 700;
+}
+.chip-thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 50%; background: var(--sunk); }
+.chip-kind {
+  flex: none; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 999px; display: inline-flex;
+  align-items: center; justify-content: center; background: var(--sunk); color: var(--muted); font-size: 11px;
+}
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.chip-remove {
+  flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+  font: inherit; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.chip-remove:hover { background: var(--bad-soft); color: var(--bad); }
 .chat-under { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 8px; }
 .hint-quiet { color: var(--muted); font-size: 13.5px; font-weight: 600; margin: 0; }
 .readonly-note { margin: 0; padding: 6px 14px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); font-weight: 800; font-size: 14px; align-self: flex-start; }

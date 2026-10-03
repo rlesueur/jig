@@ -791,6 +791,7 @@ async function loadStatus() {
   $('st-endpoint').textContent = s.model_endpoint;
   $('st-model').textContent = s.model.model;
   $('st-context').textContent = s.model.context_tokens ? `${s.model.context_tokens.toLocaleString('en-GB')} tokens` : 'not reported';
+  visionReady = !!(s.capabilities && s.capabilities.agent && s.capabilities.agent.vision);
   $('st-caps').textContent = capsText(s.capabilities.agent);
   $('st-sentinel').textContent = `${s.sentinel_model.model}: ${capsText(s.capabilities.sentinel)}`;
   $('st-vault').textContent = VAULT_PLACES[s.vault_backend] || `an unrecognised store (${s.vault_backend})`;
@@ -1017,6 +1018,8 @@ $('activity').addEventListener('click', (e) => { if (e.target === $('activity'))
 
 let sessionId = null;
 let chatBusy = false;
+let visionReady = null; // null until /status; true only when the vision check passed
+let pending = []; // files chosen but not sent: {id, session_id, name, kind, bytes}
 const liveChatRuns = new Set(); // runs whose reply is streaming here; their approvals appear inside the reply
 const chatLog = $('chat-log');
 const chatInput = $('chat-input');
@@ -1042,11 +1045,88 @@ function welcome() {
       EXAMPLES.map((text) => el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'chat-example', text, onclick: () => tryIt(text) }))));
 }
 
-function addMessage(role, text = '') {
+const KIND_LABEL = { png: 'PNG', jpeg: 'JPEG', docx: 'Word', txt: 'Text', md: 'Markdown' };
+
+function attachmentUrl(a) {
+  return `/attachments/${encodeURIComponent(a.session_id)}/${encodeURIComponent(a.id)}`;
+}
+
+function attachmentChips(list, { removable }) {
+  return el('div', { class: 'attach-strip' }, ...list.map((a) => {
+    const visual = a.kind === 'png' || a.kind === 'jpeg'
+      ? el('img', { class: 'chip-thumb', alt: '', src: attachmentUrl(a) })
+      : el('span', { class: 'chip-kind', text: KIND_LABEL[a.kind] || a.kind });
+    return el('span', { class: 'attach-chip', 'data-testid': 'attach-chip', dataset: { kind: a.kind, id: a.id } },
+      visual,
+      el('span', { class: 'chip-name', text: a.name }),
+      removable ? el('button', { type: 'button', class: 'chip-remove', 'aria-label': `Remove ${a.name}`, text: '\u00d7',
+        onclick: () => removePending(a) }) : null);
+  }));
+}
+
+function renderPending() {
+  const row = $('attach-row');
+  row.replaceChildren(...(pending.length ? [attachmentChips(pending, { removable: true })] : []));
+  row.hidden = !pending.length;
+}
+
+async function removePending(a) {
+  pending = pending.filter((p) => p.id !== a.id);
+  renderPending();
+  try {
+    await api(`/attachments/${encodeURIComponent(a.session_id)}/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) showError(err.message);
+  }
+}
+
+async function addFiles(fileList) {
+  if (chatBusy) return;
+  for (const file of fileList) {
+    if (pending.length >= 8) {
+      showError('You can attach up to 8 files in one message.');
+      break;
+    }
+    const body = new FormData();
+    body.append('file', file, file.name);
+    if (sessionId) body.append('session_id', sessionId);
+    let r;
+    try {
+      r = await fetch('/attachments', { method: 'POST', credentials: 'same-origin', body });
+    } catch (err) {
+      showError(`Cannot reach Jig: ${err.message}`);
+      continue;
+    }
+    if (r.status === 401) {
+      signedOut('Your session has ended. Please sign in again.');
+      return;
+    }
+    const text = await r.text();
+    let data = null;
+    if (text) {
+      try { data = JSON.parse(text); } catch { /* not JSON */ }
+    }
+    if (!r.ok) {
+      showError(data ? errorText(data, r.status) : `HTTP ${r.status}`);
+      continue;
+    }
+    if (!sessionId) sessionId = data.session_id;
+    pending.push(data);
+    renderPending();
+    if ((data.kind === 'png' || data.kind === 'jpeg') && visionReady === false) {
+      showError(`Vision is turned off, so Jig can't look at ${data.name}. It will not pretend to. Remove the image, or turn pictures on, before you send.`);
+    }
+  }
+  $('chat-file').value = '';
+}
+
+function addMessage(role, text = '', attachments = []) {
   chatLog.querySelector('.welcome')?.remove();
   const content = el('div', { class: 'content', text });
   const msg = el('article', { class: `msg ${role}`, 'aria-label': role === 'user' ? 'You said' : 'Jig replied',
-    'data-testid': role === 'user' ? 'chat-user' : 'chat-jig' }, content);
+    'data-testid': role === 'user' ? 'chat-user' : 'chat-jig' },
+    role === 'user' && attachments.length ? attachmentChips(attachments, { removable: false }) : null,
+    content);
   chatLog.append(msg);
   chatLog.scrollTop = chatLog.scrollHeight;
   return { msg, content };
@@ -1104,11 +1184,12 @@ function claimNotes(notes) {
 }
 
 /** Send `message`, or, after a reply was stopped (`from`), continue it in place or try it again. */
-async function sendChat(message, { action = 'send', from = null } = {}) {
+async function sendChat(message, { action = 'send', from = null, attachments = [] } = {}) {
   chatBusy = true;
   $('chat-send').disabled = true;
+  $('chat-attach').disabled = true;
   const ask = action === 'send' ? message : (from && from.dataset.ask) || '';
-  if (action === 'send') addMessage('user', message);
+  const userMsg = action === 'send' ? addMessage('user', message, attachments).msg : null;
   const { msg, content } = action === 'continue' ? { msg: from, content: from.querySelector('.content') } : addMessage('jig');
   msg.dataset.ask = ask;
   content.classList.add('typing', 'md');
@@ -1219,7 +1300,10 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
     try {
       r = await fetch('/chat', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, session_id: sessionId, mode: prefs.readOnly ? 'research' : 'action', action }),
+        body: JSON.stringify({
+          message, session_id: sessionId, mode: prefs.readOnly ? 'research' : 'action', action,
+          attachment_ids: attachments.map((a) => a.id),
+        }),
         signal: chatAbort.signal,
       });
     } catch (err) {
@@ -1236,7 +1320,18 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
       const text = await r.text();
       let data = null;
       try { data = JSON.parse(text); } catch { /* not JSON */ }
-      fail(data ? errorText(data, r.status) : `HTTP ${r.status}`);
+      const why = data ? errorText(data, r.status) : `HTTP ${r.status}`;
+      if (action === 'send') {
+        userMsg?.remove();
+        msg.remove();
+        chatInput.value = message;
+        fitInput();
+        pending = attachments.slice();
+        renderPending();
+        showError(why);
+        return;
+      }
+      fail(why);
       return;
     }
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -1267,6 +1362,7 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
     chatBusy = false;
     chatAbort = null;
     $('chat-send').disabled = false;
+    $('chat-attach').disabled = false;
     if (work) {
       work.finish(msg.classList.contains('error') ? 'failed' : stopped ? 'stopped' : 'done');
       workChanged(work);
@@ -1279,10 +1375,39 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
 $('chat-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const message = chatInput.value.trim();
-  if (!message || chatBusy) return;
+  const attachments = pending.slice();
+  if ((!message && !attachments.length) || chatBusy) return;
   chatInput.value = '';
+  pending = [];
+  renderPending();
   fitInput();
-  sendChat(message);
+  sendChat(message, { attachments });
+});
+$('chat-attach').addEventListener('click', () => $('chat-file').click());
+$('chat-file').addEventListener('change', () => {
+  if ($('chat-file').files && $('chat-file').files.length) addFiles($('chat-file').files);
+});
+const composer = $('composer');
+for (const type of ['dragenter', 'dragover']) {
+  composer.addEventListener(type, (e) => {
+    if (![...(e.dataTransfer ? e.dataTransfer.types : [])].includes('Files')) return;
+    e.preventDefault();
+    composer.classList.add('is-drop');
+  });
+}
+composer.addEventListener('dragleave', (e) => {
+  if (!composer.contains(e.relatedTarget)) composer.classList.remove('is-drop');
+});
+composer.addEventListener('drop', (e) => {
+  e.preventDefault();
+  composer.classList.remove('is-drop');
+  if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+});
+chatInput.addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+  if (!files.length) return;
+  e.preventDefault();
+  addFiles(files);
 });
 function fitInput() {
   chatInput.style.height = 'auto';
@@ -1296,9 +1421,16 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 function clearChat() {
+  const drop = pending.splice(0);
+  renderPending();
   sessionId = null;
   chatLog.replaceChildren(welcome());
   if (!chatBusy) showWork(null);
+  for (const a of drop) {
+    api(`/attachments/${encodeURIComponent(a.session_id)}/${encodeURIComponent(a.id)}`, { method: 'DELETE' }).catch((err) => {
+      if (!(err instanceof ApiError && err.status === 401)) showError(err.message);
+    });
+  }
 }
 $('chat-new').addEventListener('click', () => {
   clearChat();
@@ -2107,7 +2239,9 @@ function conversationItem(c) {
       const { transcript } = await api(`/sessions/${encodeURIComponent(c.id)}/transcript`);
       read.append(...transcript.map((m) => el('div', { class: `said ${m.role}`, 'data-testid': 'conversation-said' },
         el('p', { class: 'said-who', text: m.role === 'user' ? 'You' : 'Jig' }),
-        m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)),
+        m.role === 'user' && m.attachments && m.attachments.length
+          ? attachmentChips(m.attachments.map((a) => ({ ...a, session_id: c.id })), { removable: false }) : null,
+        m.role === 'user' ? (m.text ? el('p', { class: 'said-text', text: m.text }) : null) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)),
         m.stopped && m.stopped !== 'refused' ? el('p', { class: 'hint-quiet', text: m.stopped !== 'repetition' ? 'You stopped this reply.'
           : `Jig stopped this reply because it was ${m.stopped_reason === 'circling' ? 'going round in circles' : 'repeating itself'}.` }) : null,
         claimNotes(m.claim_notes))));
