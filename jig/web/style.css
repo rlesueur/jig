@@ -296,6 +296,8 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 /* A finished job, and the steps of a set-up guide. */
 .done-card { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--ok-soft); border: 2px solid var(--ok); }
 .done-mark { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: var(--surface); font-weight: 900; }
+.done-card.is-partial { background: var(--warn-soft); border-color: var(--warn); }
+.done-card.is-partial .done-mark { background: var(--warn); }
 .done-t { margin: 0; font-weight: 900; overflow-wrap: anywhere; }
 .guide-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; counter-reset: s; }
 .guide-steps li { counter-increment: s; display: flex; gap: 10px; align-items: center; font-weight: 700; color: var(--muted); font-size: 14.5px; }
@@ -641,7 +643,7 @@ p.said-text { white-space: pre-wrap; }
 .status[data-s="done"], .status[data-s="approved"], .status[data-s="allow"] { color: var(--ok); background: var(--ok-soft); }
 .status[data-s="running"], .status[data-s="active"], .status[data-s="planning"] { color: var(--info); }
 .status[data-s="queued"], .status[data-s="mode"] { color: var(--queued); }
-.status[data-s="waiting_approval"], .status[data-s="pending"], .status[data-s="ask_user"], .status[data-s="ask"], .status[data-s="paused"] { color: var(--warn); background: var(--warn-soft); }
+.status[data-s="waiting_approval"], .status[data-s="pending"], .status[data-s="ask_user"], .status[data-s="ask"], .status[data-s="paused"], .status[data-s="partial"] { color: var(--warn); background: var(--warn-soft); }
 .status[data-s="failed"], .status[data-s="denied"], .status[data-s="deny"], .status[data-s="block"], .status[data-s="blocked"], .status[data-s="cancelled"] { color: var(--bad); background: var(--bad-soft); }
 .status[data-s="interrupted"] { color: var(--muted); }
 

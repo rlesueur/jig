@@ -875,6 +875,10 @@ $('agent-toggle').addEventListener('click', () => act($('agent-toggle'), async (
   setAgentPaused(status.paused);
 }));
 
+/* A finished task's own check of how it went: only some of it done, or cut short by the step limit. */
+const partlyDone = (t) => t.status === 'done' && t.outcome?.status === 'partial';
+const limitNote = (t) => (t.outcome?.step_limit ? `It stopped at its limit of ${t.outcome.step_limit} steps.` : '');
+
 function taskSentence(t) {
   if (t.status === 'waiting_approval') return 'Waiting for your answer';
   if (t.status === 'running') {
@@ -883,7 +887,7 @@ function taskSentence(t) {
   }
   if (t.status === 'queued') return t.not_before && new Date(t.not_before) > new Date() ? `Starts at ${clock(t.not_before)}` : 'Lined up to start';
   if (t.status === 'paused') return 'Paused';
-  if (t.status === 'done') return `Finished at ${clock(t.finished_at)}`;
+  if (t.status === 'done') return [`${partlyDone(t) ? 'Partly done' : 'Finished'} at ${clock(t.finished_at)}`, limitNote(t)].filter(Boolean).join('. ');
   if (t.status === 'cancelled') return 'Stopped';
   if (t.status === 'failed' || t.status === 'blocked') return `Couldn\u2019t finish: ${t.error || t.status}`;
   return t.status;
@@ -1369,9 +1373,10 @@ function noteNode() {
   if (f && Date.now() - f.at < 15 * 60 * 1000) {
     const t = tasksCache.find((x) => x.id === f.taskId);
     if (t && t.status === 'done') {
-      return [el('div', { class: 'done-card', 'data-testid': 'corner-done' },
-        el('span', { class: 'done-mark', 'aria-hidden': 'true', text: '\u2713' }),
-        el('div', {}, el('p', { class: 'done-t', text: `Finished ${q(t.title)}` }),
+      return [el('div', { class: `done-card${partlyDone(t) ? ' is-partial' : ''}`, 'data-testid': 'corner-done' },
+        el('span', { class: 'done-mark', 'aria-hidden': 'true', text: partlyDone(t) ? '\u2013' : '\u2713' }),
+        el('div', {}, el('p', { class: 'done-t', text: `${partlyDone(t) ? 'Partly done' : 'Finished'} ${q(t.title)}` }),
+          limitNote(t) ? el('p', { class: 'hint-quiet', 'data-testid': 'corner-done-note', text: limitNote(t) }) : null,
           el('button', { type: 'button', class: 'btn-link', text: 'See the result', onclick: () => $('activity').showModal() })))];
     }
   }
@@ -1775,10 +1780,12 @@ function resultBody(text, isError = false) {
 function taskItem(t) {
   const outcome = t.error || t.result;
   return el('div', { class: 'item', 'data-testid': 'task', dataset: { id: t.id, status: t.status } },
-    el('div', { class: 'item-head' }, statusBadge(t.status), el('span', { class: 'title', text: t.title }),
+    el('div', { class: 'item-head' }, partlyDone(t) ? el('span', { class: 'status', dataset: { s: 'partial' }, text: 'partly done' }) : statusBadge(t.status),
+      el('span', { class: 'title', text: t.title }),
       el('span', { class: 'status', dataset: { s: 'mode' }, text: t.mode }),
       !t.goal_id && TERMINAL_TASK.has(t.status) ? el('div', { class: 'item-actions' }, deleteJobButton('task', t)) : null),
     el('div', { class: 'meta', text: `${t.id} · created ${when(t.created_at)}${t.finished_at ? ` · finished ${when(t.finished_at)}` : ''}` }),
+    t.status === 'done' && limitNote(t) ? el('p', { class: 'hint-quiet', 'data-testid': 'task-note', text: limitNote(t) }) : null,
     outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'Error' : 'Result' }), resultBody(outcome, Boolean(t.error))) : null);
 }
 
@@ -2215,7 +2222,7 @@ function scheduleItem(s) {
     : agentPaused ? `Next: ${nextWhen(s.next_run_at)}, but Jig is paused, so nothing runs until you resume Jig.`
       : `Next: ${nextWhen(s.next_run_at)}`;
   const t = s.last_task;
-  const last = t ? `Last run: ${nextWhen(t.created_at)}, ${TASK_OUTCOME[t.status] || t.status.replace(/_/g, ' ')}.` : 'Hasn\u2019t run yet.';
+  const last = t ? `Last run: ${nextWhen(t.created_at)}, ${partlyDone(t) ? 'partly done' : TASK_OUTCOME[t.status] || t.status.replace(/_/g, ' ')}.${limitNote(t) ? ` ${limitNote(t)}` : ''}` : 'Hasn\u2019t run yet.';
   const outcome = t && (t.error || t.result);
   const toggle = el('button', { type: 'button', class: `btn btn-small${s.enabled ? '' : ' btn-approve'}`, 'data-testid': 'schedule-toggle',
     text: s.enabled ? 'Pause' : 'Resume', 'aria-label': `${s.enabled ? 'Pause' : 'Resume'} ${label}`,

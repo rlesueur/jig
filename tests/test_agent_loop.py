@@ -101,15 +101,23 @@ async def test_a_long_conversation_still_gets_the_whole_step_limit_each_turn(jig
     assert any(s["name"] == "current_time" for s in run["step_records"] if s["type"] == "tool_call")
 
 
-async def test_a_task_at_the_step_limit_fails_with_its_account_of_what_is_left(jig):
+async def test_a_task_at_the_step_limit_ends_as_its_checked_outcome_says(jig):
     (jig.sandbox.root / "notes.txt").write_text("Buy milk", encoding="utf-8")
     jig.agent.max_steps = 1
     task = jig.create_task(title="Read and time", mode=Mode.RESEARCH,
                            description="Call current_time and read_file on notes.txt, then report both.")
     await jig.run_task(task["id"])
     task = jig.store.get_task(task["id"])
-    assert task["status"] == "failed" and "step limit" in task["error"], task
     assert task["result"] and task["result"].strip()
+    outcome = task["outcome"]
+    if outcome is None:
+        assert task["status"] == "failed" and task["error"].startswith("StepLimitExceeded"), task
+    elif outcome["status"] == "could_not":
+        assert task["status"] == "failed" and "step limit of 1" in task["error"], task
+        assert outcome["step_limit"] == 1
+    else:
+        assert task["status"] == "done" and not task["error"], task
+        assert outcome["step_limit"] == 1, outcome
 
 
 async def test_the_prompt_starts_the_same_every_turn_and_ends_with_what_changes(jig):

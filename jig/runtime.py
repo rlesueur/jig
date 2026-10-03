@@ -49,6 +49,7 @@ DEPENDENCY_RESULT_CHARS = 4000
 # What the user is told when Jig stops a reply or a task because the model was repeating itself
 # (jig.progress). The web UI recognises a stopped task by its error starting with TASK_STOPPED.
 CHAT_STOPPED = "Jig stopped this reply because it was repeating itself."
+CHAT_CIRCLING = "Jig stopped this reply because it was going round in circles."
 TASK_STOPPED = "Jig stopped this task because"
 
 _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_SUMMARY, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
@@ -582,14 +583,19 @@ class Jig:
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"internal error: {type(exc).__name__}: {exc}")
             return
         outcome = await self._task_outcome(task_id, result)
+        limit = f"It stopped at the step limit of {self.agent.max_steps} model calls."
+        if outcome and result.limit_reached:
+            outcome["step_limit"] = self.agent.max_steps
         fields = {"result": result.final, "outcome_json": json.dumps(outcome) if outcome else None}
-        if result.limit_reached:
+        # At the step limit the checked outcome decides; without one there is nothing to show it got anywhere.
+        if outcome and outcome["status"] == "could_not":
+            self.set_task_status(task_id, TaskStatus.FAILED, **fields,
+                                 error=f"The task reports it could not be done: {outcome['summary']}"
+                                       + (f" {limit}" if result.limit_reached else ""))
+        elif result.limit_reached and not outcome:
             self.set_task_status(task_id, TaskStatus.FAILED, **fields,
                                  error=f"StepLimitExceeded: stopped at the step limit of {self.agent.max_steps} model "
                                        "calls before finishing; the result says what it did and what is left")
-        elif outcome and outcome["status"] == "could_not":
-            self.set_task_status(task_id, TaskStatus.FAILED, **fields,
-                                 error=f"The task reports it could not be done: {outcome['summary']}")
         else:
             self.set_task_status(task_id, TaskStatus.DONE, **fields)
 
@@ -757,7 +763,8 @@ class Jig:
                 result = await self.agent.run(messages, spec)
             except ModelStopped as exc:
                 self.store.save_session(session_id, answered_only(saved()))
-                await queue.put({"type": "stopped", "reason": exc.stop.kind, "message": CHAT_STOPPED,
+                await queue.put({"type": "stopped", "reason": exc.stop.kind,
+                                 "message": CHAT_CIRCLING if exc.stop.reason == "circling" else CHAT_STOPPED,
                                  "detail": exc.stop.describe(), "stop": exc.stop.record(), "relaxed": continuing,
                                  "run_id": run_id, "session_id": session_id})
                 return
