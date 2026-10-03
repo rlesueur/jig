@@ -3298,48 +3298,68 @@ function mcpEffect(tool) {
   return tool.outbound ? `${effect}, reviewed by the safety checker` : effect;
 }
 
+function mcpNote(text, problem) {
+  const node = $('mcp-saved');
+  node.textContent = text;
+  node.classList.toggle('error-text', Boolean(problem));
+}
+
+function mcpDetail(err) {
+  const data = err && err.data;
+  if (data && typeof data.detail === 'string') return data.detail;
+  if (data && typeof data.error === 'string') return data.error;
+  return (err && err.message) || 'That did not work.';
+}
+
 function mcpCard(row) {
   const env = (row.env || []).map((name) => el('li', {}, el('code', { text: name })));
-  const tools = (row.tools || []).map((tool) => el('li', {}, el('code', { text: tool.remote }), ` — ${mcpEffect(tool)}`));
-  const secretName = el('input', { type: 'text', required: true, autocomplete: 'off', placeholder: 'API_TOKEN', 'aria-label': 'Environment variable' });
-  const secretValue = el('input', { type: 'password', required: true, autocomplete: 'new-password', placeholder: 'Secret', 'aria-label': 'Secret' });
+  const tools = (row.tools || []).map((tool) => el('li', { 'data-testid': 'mcp-tool' }, el('code', { text: tool.remote }), `: ${mcpEffect(tool)}`));
+  const secretName = el('input', { type: 'text', required: true, autocomplete: 'off', placeholder: 'API_TOKEN', 'aria-label': 'Environment variable', 'data-testid': 'mcp-env-name' });
+  const secretValue = el('input', { type: 'password', required: true, autocomplete: 'new-password', placeholder: 'Secret', 'aria-label': 'Secret', 'data-testid': 'mcp-env-value' });
   const secretForm = el('form', { class: 'form' },
     el('label', {}, 'Environment variable ', secretName),
     el('label', {}, 'Secret ', secretValue),
-    el('button', { type: 'submit', class: 'btn btn-small' }, 'Store secret'));
+    el('button', { type: 'submit', class: 'btn btn-small', 'data-testid': 'mcp-store-secret' }, 'Store secret'));
   secretForm.addEventListener('submit', (ev) => {
     ev.preventDefault();
     act(secretForm.querySelector('button'), async () => {
-      const saved = await api(`/mcp/servers/${encodeURIComponent(row.id)}/env`, {
-        method: 'POST', body: { confirm: true, name: secretName.value, value: secretValue.value },
-      });
+      let saved;
+      try {
+        saved = await api(`/mcp/servers/${encodeURIComponent(row.id)}/env`, {
+          method: 'POST', body: { confirm: true, name: secretName.value, value: secretValue.value },
+        });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) throw err;
+        mcpNote(mcpDetail(err), true);
+        return;
+      }
       secretValue.value = '';
-      $('mcp-saved').textContent = saved.last_error
+      mcpNote(saved.last_error
         ? `${row.label}: the secret is stored, but the program did not start. ${saved.last_error}`
-        : `${row.label}: secret stored. The program was started again.`;
+        : `${row.label}: secret stored. The program was started again.`, Boolean(saved.last_error));
       await loadMcp();
     });
   });
-  const refresh = el('button', { type: 'button', class: 'btn btn-small', text: 'Refresh tools' });
+  const refresh = el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'mcp-refresh-server', text: 'Refresh tools' });
   refresh.addEventListener('click', () => act(refresh, async () => {
     const saved = await api(`/mcp/servers/${encodeURIComponent(row.id)}/refresh`, { method: 'POST', body: { confirm: true } });
-    $('mcp-saved').textContent = saved.last_error ? `${row.label}: ${saved.last_error}` : `${row.label}: tools refreshed.`;
+    mcpNote(saved.last_error ? `${row.label}: ${saved.last_error}` : `${row.label}: tools refreshed.`, Boolean(saved.last_error));
     await loadMcp();
   }));
-  const remove = el('button', { type: 'button', class: 'btn btn-small', text: 'Remove' });
+  const remove = el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'mcp-remove', text: 'Remove' });
   remove.addEventListener('click', () => {
     if (!confirm(`Remove ${row.label}? Its secrets are deleted from the vault on this computer.`)) return;
     act(remove, async () => {
       await api(`/mcp/servers/${encodeURIComponent(row.id)}/remove`, { method: 'POST', body: { confirm: true } });
-      $('mcp-saved').textContent = `${row.label}: removed.`;
+      mcpNote(`${row.label}: removed.`, false);
       await loadMcp();
     });
   });
-  return el('article', { class: 'card-soft' },
+  return el('article', { class: 'card-soft', 'data-testid': 'mcp-server', dataset: { id: row.id } },
     el('h4', { text: row.label }),
     el('p', { class: 'hint-quiet', text: `${MCP_ACCESS[row.access] || row.access}. ${plural(row.tool_count, 'tool')}.` }),
     el('ul', {}, [row.command, ...(row.args || [])].map((part) => el('li', {}, el('code', { text: part })))),
-    row.last_error ? el('p', { class: 'error-text', text: row.last_error }) : null,
+    row.last_error ? el('p', { class: 'error-text', 'data-testid': 'mcp-server-error', text: row.last_error }) : null,
     tools.length ? el('ul', {}, tools) : el('p', { class: 'hint-quiet', text: 'No tools listed yet.' }),
     env.length ? el('div', {}, el('p', { class: 'hint-quiet', text: 'Secrets stored for this server:' }), el('ul', {}, env)) : null,
     secretForm,
@@ -3362,17 +3382,25 @@ $('mcp-add').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const button = ev.target.querySelector('button');
   act(button, async () => {
+    $('mcp-form-error').textContent = '';
     const args = $('mcp-args').value.split(/\r?\n/).filter((line) => line.length);
-    const saved = await api('/mcp/servers', {
-      method: 'POST',
-      body: { confirm: true, label: $('mcp-label').value, command: $('mcp-command').value, args, access: $('mcp-access').value },
-    });
+    let saved;
+    try {
+      saved = await api('/mcp/servers', {
+        method: 'POST',
+        body: { confirm: true, label: $('mcp-label').value, command: $('mcp-command').value, args, access: $('mcp-access').value },
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) throw err;
+      $('mcp-form-error').textContent = mcpDetail(err);
+      return;
+    }
     $('mcp-label').value = '';
     $('mcp-command').value = '';
     $('mcp-args').value = '';
-    $('mcp-saved').textContent = saved.last_error
+    mcpNote(saved.last_error
       ? `${saved.label} was added, but the program did not start. ${saved.last_error}`
-      : `${saved.label} added.`;
+      : `${saved.label} added.`, Boolean(saved.last_error));
     await loadMcp();
   });
 });

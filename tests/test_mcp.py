@@ -7,6 +7,7 @@ server. An action it cannot review does not run. Nothing here is a stand-in for 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -206,3 +207,58 @@ async def test_naming_an_mcp_secret_in_a_tool_call_is_blocked(mcp: _Stack):
     assert not outcome.ok and outcome.error_type == "PolicyBlocked", outcome.error
     assert outcome.error is not None and SECRET not in outcome.error
     assert "label" not in mcp.called()
+
+
+def test_settings_walks_through_an_mcp_server() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    html = (repo / "jig" / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'class="conn-steps"' in html
+    assert 'data-testid="mcp-steps"' in html
+    assert 'data-testid="mcp-step-what"' in html
+    assert 'data-testid="mcp-step-program"' in html
+    assert 'data-testid="mcp-step-secrets"' in html
+    assert 'data-testid="mcp-step-check"' in html
+    assert 'data-testid="mcp-step-remove"' in html
+    assert "<strong>What an MCP server is.</strong>" in html
+    assert "<strong>Enter the program and its arguments.</strong>" in html
+    assert "<strong>Add any secrets in the vault.</strong>" in html
+    assert "<strong>Save and check the tools.</strong>" in html
+    assert "<strong>Remove a server.</strong>" in html
+    assert "does not say what it does, so Jig asks first" in html
+    assert "@modelcontextprotocol/server-filesystem" in html
+    assert "docs/mcp.md" in html
+    guide = (repo / "docs" / "mcp.md").read_text(encoding="utf-8")
+    assert "@modelcontextprotocol/server-filesystem" in guide
+    assert "does not say what it does, so Jig asks first" in guide
+    index = (repo / "docs" / "README.md").read_text(encoding="utf-8")
+    assert "mcp.md" in index
+
+
+async def test_a_missing_program_is_reported_on_the_server(mcp: _Stack) -> None:
+    row = mcp.mcp.add(label="Missing", command="jig-mcp-missing-program-9f3c", args=[], access="act", via="test")
+    with pytest.raises(McpError) as caught:
+        await mcp.mcp.refresh(row["id"])
+    assert caught.value.start_failed
+    message = str(caught.value)
+    assert message == "Jig couldn't find that program. Name it as you would run it, or give its full path."
+    assert "FileNotFoundError" not in message
+    saved = mcp.mcp.one(row["id"])
+    assert saved["last_error"] == message
+    assert saved["tools"] == []
+
+
+async def test_a_windows_script_is_refused_and_not_started(mcp: _Stack, tmp_path: Path) -> None:
+    if os.name != "nt":
+        pytest.skip("starting a .cmd file goes through cmd.exe on Windows")
+    marker = tmp_path / "script-ran.txt"
+    script = tmp_path / "not-a-program.cmd"
+    script.write_text(f'@echo off\r\necho ran>"{marker}"\r\n', encoding="ascii")
+    row = mcp.mcp.add(label="Script", command=str(script), args=[], access="act", via="test")
+    with pytest.raises(McpError) as caught:
+        await mcp.mcp.refresh(row["id"])
+    assert caught.value.start_failed
+    message = str(caught.value)
+    assert "does not use a shell" in message
+    assert str(script) in message
+    assert not marker.exists()
+    assert mcp.mcp.one(row["id"])["last_error"] == message

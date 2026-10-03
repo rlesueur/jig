@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from typing import Any
 
 from ..errors import JigError
@@ -19,6 +20,27 @@ from .protocol import CLIENT_PROTOCOL, PROTOCOL_VERSIONS
 
 _START_TIMEOUT_S = 20.0
 _CALL_TIMEOUT_S = 60.0
+# CreateProcess runs these through a shell. A quoted argument can break out of that command line,
+# so Jig refuses them instead of starting one.
+_SHELL_SCRIPTS = (".cmd", ".bat", ".ps1")
+
+
+def _windows_script(command: str) -> str | None:
+    """The script Windows would start through a shell, if ``command`` names one.
+
+    ``shutil.which`` is how ``npx`` becomes ``npx.CMD``. A full path to a ``.cmd``, ``.bat`` or
+    ``.ps1`` file is the same thing. Anything else is left for the process start to accept or refuse.
+    """
+    if os.name != "nt" or not command:
+        return None
+    candidate = command
+    if not (os.path.isabs(command) and os.path.exists(command)):
+        found = shutil.which(command)
+        if found:
+            candidate = found
+    if candidate.lower().endswith(_SHELL_SCRIPTS):
+        return candidate
+    return None
 
 
 class McpError(JigError):
@@ -43,13 +65,28 @@ class StdioSession:
                     redactions: dict[str, str]) -> StdioSession:
         session = cls()
         session._redactions = redactions
+        script = _windows_script(command)
+        if script is not None:
+            raise McpError(
+                "Jig couldn't start that program because it is a script, and Jig does not use a shell. "
+                "Set the program to node and put the server's JavaScript file on the first argument line. "
+                f"Found: {script}",
+                start_failed=True)
         merged = os.environ.copy()
         merged.update(env)
         try:
             session._proc = await asyncio.create_subprocess_exec(
                 command, *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, env=merged)
+        except FileNotFoundError:
+            raise McpError("Jig couldn't find that program. Name it as you would run it, or give its full path.",
+                           start_failed=True) from None
         except OSError as exc:
+            if getattr(exc, "winerror", None) == 193:
+                raise McpError(
+                    "Jig found that file, but it is not a program it can start, and Jig does not use a shell. "
+                    "Set the program to node and put the server's JavaScript file on the first argument line.",
+                    start_failed=True) from None
             raise McpError(session._safe(f"could not start the MCP server ({type(exc).__name__})"),
                            start_failed=True) from None
         assert session._proc.stdout is not None and session._proc.stderr is not None

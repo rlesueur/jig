@@ -626,7 +626,7 @@ Settings > Connections in the web UI shows the same, with each provider's steps 
 
 ### MCP servers
 
-MCP is how you add tools Jig does not ship. In Settings > MCP servers you name a program on this computer and, if it needs them, its arguments, one per line. Jig starts that program itself. It does not use a shell, and it does not connect to an MCP server over the internet: a host chosen by the model, a tool or the server would sit outside the allow-list every other outbound call uses.
+MCP is how you add tools Jig does not ship. In Settings > MCP servers you name a program on this computer and, if it needs them, its arguments, one per line. Jig starts that program itself. It does not use a shell, and it does not connect to an MCP server over the internet: a host chosen by the model, a tool or the server would sit outside the allow-list every other outbound call uses. The same steps are numbered on that page. The walk-through, including the official filesystem server, is in [docs/mcp.md](docs/mcp.md).
 
 A token goes in the vault, as an environment variable for that server, and is given to the program when it starts. It is never put in the chat, the logs or the audit log, and no tool can name it with `{{secret:...}}`. The generic `/vault` API will not write or delete it. Refresh tools starts the program again, so a new secret takes effect.
 

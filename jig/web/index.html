@@ -363,27 +363,37 @@
               <h3 id="mcp-heading">MCP servers</h3>
               <button type="button" class="btn btn-small" id="mcp-refresh" data-testid="mcp-refresh">Refresh</button>
             </div>
-            <p class="hint">Extra tools from a program on this computer that speaks MCP. Jig lists those tools and can call them. A tool that does not say what it does is treated as able to send, change or delete, so Jig asks you first and the safety checker reviews it.</p>
-            <p class="hint-quiet">Jig starts the program you name. It does not use a shell. Put a token in the secret box, never in the program or the arguments. A server on the internet is not connected, so every address Jig calls stays on the allow-list.</p>
+            <h4>Set up an MCP server</h4>
+            <ol class="conn-steps" data-testid="mcp-steps">
+              <li data-testid="mcp-step-what"><strong>What an MCP server is.</strong> An MCP server is a program on this computer that offers extra tools. Jig starts that program itself. It does not use a shell, and it does not connect to a server on the internet, so every address Jig calls stays on the allow-list. Local programs only. A tool that does not say what it does is treated as able to send, change or delete, so Jig asks you first and the safety checker reviews it. A rule that says allow cannot skip that.</li>
+              <li data-testid="mcp-step-program"><strong>Enter the program and its arguments.</strong> One argument on each line. On Windows, <code>npx</code> is a script, and Jig will not start a script. For the official filesystem server (<code>@modelcontextprotocol/server-filesystem</code>), install it with npm, set the program to <code>node</code>, and use these arguments. The last line is the only folder that server may use.
+                <pre class="mcp-example" data-testid="mcp-example">C:\Users\you\mcp-filesystem\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js
+C:\Users\you\Notes</pre>
+                <form class="form" id="mcp-add">
+                  <label for="mcp-label">Name</label>
+                  <input id="mcp-label" type="text" required maxlength="60" autocomplete="off" data-testid="mcp-label" placeholder="Files">
+                  <label for="mcp-command">Program</label>
+                  <input id="mcp-command" type="text" required autocomplete="off" data-testid="mcp-command" placeholder="node">
+                  <label for="mcp-args">Arguments, one per line</label>
+                  <textarea id="mcp-args" rows="4" data-testid="mcp-args" placeholder="C:\Users\you\mcp-filesystem\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js&#10;C:\Users\you\Notes"></textarea>
+                  <label>What Jig may do
+                    <select id="mcp-access" data-testid="mcp-access">
+                      <option value="read">Read only</option>
+                      <option value="act" selected>Read and act</option>
+                    </select>
+                  </label>
+                  <p class="hint-quiet">Read only hides tools that are not reads. Read and act can use them, and still asks you before anything that could send, change or delete.</p>
+                  <p class="error-text" id="mcp-form-error" data-testid="mcp-form-error" role="alert"></p>
+                  <button type="submit" class="btn btn-primary" data-testid="mcp-add">Add server</button>
+                </form>
+              </li>
+              <li data-testid="mcp-step-secrets"><strong>Add any secrets in the vault.</strong> If the program needs a token, do not put it in the program or the arguments. After the server is saved, it has a box for an environment variable and a secret. The value goes into the vault on this computer and is never shown again. Jig starts the program again so it can see the variable. The filesystem server above does not need one.</li>
+              <li data-testid="mcp-step-check"><strong>Save and check the tools.</strong> Choose Add server. Jig starts the program and lists its tools on the server below. A tool marked "does not say what it does, so Jig asks first" declared no effect, in <code>_meta.jig</code> or in <code>annotations</code>. Jig treats it as able to send, change or delete, asks you before it runs, and the safety checker reviews it. If Jig cannot find the program, or the server does not start, that message is shown on the server.</li>
+              <li data-testid="mcp-step-remove"><strong>Remove a server.</strong> Choose Remove on that server. Jig asks you to confirm, stops the program, and deletes the server. Its secrets are deleted from the vault. There is no separate switch to leave a server saved but turned off. Removing it is how you stop Jig using it. Refresh tools starts the program again and reads the tool list once more.</li>
+            </ol>
+            <p class="hint-quiet">The full guide is docs/mcp.md in Jig's folder. Adding a server, storing a secret, refreshing and removing only work on the computer Jig runs on.</p>
             <div id="mcp-list" class="list" data-testid="mcp-list"><p class="hint-quiet">Checking MCP servers…</p></div>
             <p class="saved" id="mcp-saved" aria-live="polite" data-testid="mcp-saved"></p>
-            <h4>Add a server</h4>
-            <form class="form" id="mcp-add">
-              <label for="mcp-label">Name</label>
-              <input id="mcp-label" type="text" required maxlength="60" autocomplete="off" data-testid="mcp-label" placeholder="For example, Notes">
-              <label for="mcp-command">Program</label>
-              <input id="mcp-command" type="text" required autocomplete="off" data-testid="mcp-command" placeholder="The program to run, such as a path to it">
-              <label for="mcp-args">Arguments, one per line</label>
-              <textarea id="mcp-args" rows="3" data-testid="mcp-args" placeholder="Optional. One argument on each line."></textarea>
-              <label>What Jig may do
-                <select id="mcp-access" data-testid="mcp-access">
-                  <option value="read">Read only</option>
-                  <option value="act" selected>Read and act</option>
-                </select>
-              </label>
-              <p class="hint-quiet">Read only hides tools that are not reads. Read and act can use them, and still asks you before anything that could send, change or delete.</p>
-              <button type="submit" class="btn btn-primary" data-testid="mcp-add">Add server</button>
-            </form>
           </section>
 
           <!-- Search -->

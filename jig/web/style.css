@@ -640,6 +640,8 @@ input[type="checkbox"][role="switch"]:checked::after { transform: translateX(20p
 .said-text { margin: 2px 0 0; overflow-wrap: anywhere; }
 p.said-text { white-space: pre-wrap; }
 .conn-steps { margin: 6px 0 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; }
+.conn-steps .form { margin-top: 8px; }
+.mcp-example { margin: 6px 0 0; padding: 8px 10px; background: var(--sunk); border: 1px solid var(--line); border-radius: 10px; }
 .conn-links { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; margin-left: 6px; }
 .conn-links a { color: var(--link); font-weight: 700; }
 .conn-form, .conn-code, .item > .advanced { margin-top: 10px; }
