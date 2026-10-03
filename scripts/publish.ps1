@@ -240,7 +240,8 @@ fr.RepoFilter(args, commit_callback=fix_identity).run()
 function Assert-NoAttackContent([string]$RepoPath) {
     Step "Verifying that no authored attack content remains in $RepoPath"
     foreach ($p in $script:AttackPaths) {
-        $hits = @(Run git -C $RepoPath log --all --oneline -- $p)
+        # A bare -- is dropped by PowerShell before Run sees it, so Git would read the path as a revision.
+        $hits = @(Run git -C $RepoPath log --all --oneline '--' $p)
         if ($hits) { Fail "attack path '$p' still appears in history ($($hits.Count) commit(s), e.g. $($hits[0]))." }
     }
     Ok "none of the $($script:AttackPaths.Count) removed attack paths appear in any commit"
