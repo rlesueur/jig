@@ -87,6 +87,13 @@ def test_an_answer_that_was_cut_off_or_unreadable_is_described_not_repeated(tmp_
     for message in ("The model produced output that does not match the expected peg-native format",
                     "Failed to parse input at pos 12: <tool_call>"):
         assert _UNPARSED.search(json.dumps({"error": {"code": 500, "message": message}}))
+    # Once the reply streams, llama.cpp sends the same error inside the stream (HTTP 200), as it did here in the
+    # 187th of 200 tool_call probes; its code is kept, so the answer is sent back like any other.
+    line = ('{"error":{"code":500,"message":"The model produced output that does not match the expected '
+            'peg-native format","type":"server_error"}}')
+    streamed = client._stream_error(json.loads(line), line)
+    assert streamed.status == 500 and _UNPARSED.search(streamed.body)
+    assert client._stream_error({"error": "overloaded"}, '{"error": "overloaded"}').status is None
 
 
 # Against the real model server ---------------------------------------------------------------------------------

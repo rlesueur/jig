@@ -43,6 +43,10 @@ STRUCTURED_RETRIES = 1
 # After an answer stopped for repeating itself, the fresh request asks for a new seed and this much more
 # temperature (standard OpenAI-compatible fields; not sent where the provider does not take them).
 RETRY_TEMPERATURE_STEP = 0.2
+# Asks a streamed reply to end with its token counts ({"include_usage": true}): the standard field, documented
+# by OpenAI, Anthropic's and Gemini's OpenAI-compatible APIs, llama.cpp, vLLM, Ollama and LM Studio. A server
+# that refuses it is asked again without it, and its replies say why they have no counts (usage_missing).
+USAGE_FIELD = "stream_options"
 # Keys Jig keeps on saved messages for itself; they are never sent to a model.
 JIG_ONLY_KEYS = ("jig_stopped", "jig_continue")
 # llama.cpp's server answers HTTP 500 with one of these when its chat parser cannot read the model's output as
@@ -122,6 +126,8 @@ class ChatResult:
     # and temperature each fresh retry asked for, with any it could not send and why. Content-free.
     stops: list[dict[str, Any]] = field(default_factory=list)
     retry_sampling: list[dict[str, Any]] = field(default_factory=list)
+    # Why the reply has no token counts, when it has none (the server refused stream_options, or sent none).
+    usage_missing: str | None = None
 
     def assistant_message(self) -> dict[str, Any]:
         """The message to append to history, in the standard OpenAI shape.
@@ -146,6 +152,7 @@ class ChatResult:
             **({"structured_retries": self.structured_retries} if self.structured_retries else {}),
             **({"stops": self.stops} if self.stops else {}),
             **({"retry_sampling": self.retry_sampling} if self.retry_sampling else {}),
+            **({"usage_missing": self.usage_missing} if self.usage_missing else {}),
         }
 
 
@@ -503,14 +510,30 @@ class ModelClient:
     async def _send(self, body: dict[str, Any], on_delta: DeltaCallback | None,
                     check: ProgressCheck | None = None) -> ChatResult:
         started = time.perf_counter()
+        check = check or ProgressCheck()
+        if body.get("stream") and USAGE_FIELD not in self._refused_fields:
+            body = {**body, USAGE_FIELD: {"include_usage": True}}
         try:
-            result = await self._stream(body, on_delta, check or ProgressCheck(), started)
+            try:
+                result = await self._stream(body, on_delta, check, started)
+            except ModelError as exc:
+                if USAGE_FIELD not in body or exc.status not in (400, 422) or USAGE_FIELD not in (exc.body or ""):
+                    raise
+                # Asking for token counts is not worth failing the reply: ask again without, and say so.
+                self._refused_fields[USAGE_FIELD] = f"the server refused it (HTTP {exc.status})"
+                log.warning("%s: the server refused %s (HTTP %s), so its replies will have no token counts",
+                            self.label, USAGE_FIELD, exc.status)
+                body = {k: v for k, v in body.items() if k != USAGE_FIELD}
+                result = await self._stream(body, on_delta, check, started)
         except httpx.TimeoutException as exc:
             raise ModelError(self.redact(f"{self.label} request timed out: {exc!r}")) from exc
         except httpx.HTTPError as exc:
             raise ModelServerUnavailable(self.redact(f"{self.label} request failed: {exc!r}"),
                                          reason="unreachable") from exc
         result.elapsed_s = time.perf_counter() - started
+        if not result.usage:
+            result.usage_missing = (f"{USAGE_FIELD} was not sent: {self._refused_fields[USAGE_FIELD]}"
+                                    if USAGE_FIELD in self._refused_fields else "the server sent no usage")
         return result
 
     def _cut_off_message(self, body: dict[str, Any], result: ChatResult) -> str:
@@ -537,6 +560,14 @@ class ModelClient:
                               "server with a larger context, or split the task into smaller ones.",
                               status=status, body=text)
         return ModelError(f"{self.label} server returned HTTP {status}{hint}: {text[:500]}", status=status, body=text)
+
+    def _stream_error(self, chunk: dict[str, Any], line: str) -> ModelError:
+        """An error sent inside a stream that had already begun (HTTP 200). Its own code is kept as the status:
+        llama.cpp reports output its parser cannot read this way, with code 500, once the reply is streaming."""
+        error = chunk["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        return ModelError(self.redact(f"{self.label} stream error: {error}"), body=self.redact(line),
+                          status=code if isinstance(code, int) and not isinstance(code, bool) else None)
 
     async def _stream(self, body: dict[str, Any], on_delta: DeltaCallback | None, check: ProgressCheck,
                       started: float) -> ChatResult:
@@ -584,8 +615,7 @@ class ModelClient:
                     except json.JSONDecodeError as exc:
                         raise ModelError(f"Malformed stream chunk: {exc}", body=self.redact(line)) from exc
                     if "error" in chunk:
-                        raise ModelError(self.redact(f"{self.label} stream error: {chunk['error']}"),
-                                         body=self.redact(line))
+                        raise self._stream_error(chunk, line)
                     usage = chunk.get("usage") or usage
                     timings = chunk.get("timings") or timings
                     for choice in chunk.get("choices") or []:

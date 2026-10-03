@@ -180,5 +180,5 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 # Keys Jig itself sets in every request; [model.sampling] must not set them.
-RESERVED_REQUEST_KEYS = frozenset({"model", "messages", "stream", "tools", "tool_choice", "response_format",
-                                   "max_tokens", "max_completion_tokens"})
+RESERVED_REQUEST_KEYS = frozenset({"model", "messages", "stream", "stream_options", "tools", "tool_choice",
+                                   "response_format", "max_tokens", "max_completion_tokens"})
