@@ -81,7 +81,9 @@ export class JigInstance {
       await term.start();
     }
     this.serve = term;
-    await term.typeCommand('jig serve', { wait: false, charMs: term.id === 'serve' ? 5 : 42 });
+    /* off camera, --no-browser: in a real console on Windows, `jig serve` opens Jig's own window */
+    const offCamera = term.id === 'serve';
+    await term.typeCommand(offCamera ? 'jig serve --no-browser' : 'jig serve', { wait: false, charMs: offCamera ? 5 : 42 });
     const log = createWriteStream(path.join(this.captureDir, 'jig-serve.log'));
     this.serve.onData((d) => log.write(d));
     await waitUntil('Jig to answer /health (start-up runs the real capability check)', async () => {
