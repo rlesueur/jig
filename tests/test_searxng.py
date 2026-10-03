@@ -12,7 +12,7 @@ import pytest
 from jig.constants import Mode
 from jig.errors import ToolError
 from jig.searxng import (ABSENT, PINNED_COMMIT, PINNED_VERSION, Searxng, SearxngError, SearxngUnavailable,
-                         install_dir, looks_like_searxng, lookup_pinned_commit)
+                         install_dir, looks_like_searxng, lookup_pinned_commit, search_router)
 from jig.tools.builtin import build_registry
 from jig.tools.registry import ToolContext
 from jig.tools.web import search_scrape_refusal
@@ -153,3 +153,39 @@ async def test_search_uses_a_real_local_searxng_when_one_is_running(tmp_path: Pa
     for row in found["results"]:
         assert row["url"].startswith(("http://", "https://"))
         assert "title" in row
+
+
+def test_search_settings_routes_do_not_ask_for_a_query_parameter(tmp_path: Path) -> None:
+    """Settings asks GET /search with no query string. The request object must not become a required parameter."""
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+
+    service = Searxng(tmp_path, discover_port=_closed_port())
+
+    def jig_of(_request: object) -> object:
+        class Holder:
+            searxng = service
+        return Holder()
+
+    def require_local(_request: object, _action: str) -> None:
+        return None
+
+    def require_confirm(body: object, message: str) -> None:
+        if not getattr(body, "confirm", None):
+            raise HTTPException(400, message)
+
+    app = FastAPI()
+    app.include_router(search_router(jig_of, require_local, require_confirm))
+    with TestClient(app) as client:
+        status = client.get("/search")
+        assert status.status_code == 200, status.text
+        assert "summary" in status.json()
+        refused = client.post("/search/use", json={"confirm": False, "enabled": True})
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == "Search was not changed"
+        turned_off = client.post("/search/use", json={"confirm": True, "enabled": False})
+        assert turned_off.status_code == 200
+        assert turned_off.json()["enabled"] is False
+        again = client.get("/search")
+        assert again.status_code == 200
+        assert again.json()["enabled"] is False

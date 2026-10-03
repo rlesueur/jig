@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import Request
+from pydantic import BaseModel
 
 from .errors import JigError
 from .logs import hide_query
@@ -850,16 +852,17 @@ class Searxng:
 
 
 # Settings API -----------------------------------------------------------------------------------------------
+class _SearchConfirm(BaseModel):
+    confirm: bool | None = None
+
+
+class _SearchUse(_SearchConfirm):
+    enabled: bool | None = None
+
+
 def search_router(jig_of: Any, require_local: Any, require_confirm: Any) -> Any:
     """``/search`` routes. Installing, removing and the on/off switch only work on this computer."""
     from fastapi import APIRouter, HTTPException
-    from pydantic import BaseModel
-
-    class ConfirmBody(BaseModel):
-        confirm: bool | None = None
-
-    class UseBody(ConfirmBody):
-        enabled: bool | None = None
 
     router = APIRouter(tags=["search"])
 
@@ -871,23 +874,23 @@ def search_router(jig_of: Any, require_local: Any, require_confirm: Any) -> Any:
         return found
 
     @router.get("/search")
-    async def search_status(request: Any) -> dict[str, Any]:
+    async def search_status(request: Request) -> dict[str, Any]:
         return await service(request).status()
 
     @router.post("/search/install")
-    async def search_install(request: Any, body: ConfirmBody) -> dict[str, Any]:
+    async def search_install(request: Request, body: _SearchConfirm) -> dict[str, Any]:
         require_local(request, "Installing search")
         require_confirm(body, "Search was not installed")
         return service(request).start_install()
 
     @router.post("/search/remove")
-    async def search_remove(request: Any, body: ConfirmBody) -> dict[str, Any]:
+    async def search_remove(request: Request, body: _SearchConfirm) -> dict[str, Any]:
         require_local(request, "Removing search")
         require_confirm(body, "Search was not removed")
         return await service(request).remove()
 
     @router.post("/search/use")
-    async def search_use(request: Any, body: UseBody) -> dict[str, Any]:
+    async def search_use(request: Request, body: _SearchUse) -> dict[str, Any]:
         require_local(request, "Changing search")
         require_confirm(body, "Search was not changed")
         if body.enabled is None:
