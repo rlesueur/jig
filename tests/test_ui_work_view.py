@@ -49,6 +49,23 @@ def _visible_jigs(page) -> list[int]:
         .map((n) => Math.round(n.getBoundingClientRect().width))""")
 
 
+def _work_words(page) -> str:
+    """The work line's words, without its mark or its Stop button."""
+    line = page.get_by_test_id("work-line")
+    if not line.count():
+        return ""
+    return line.evaluate("""(el) => [...el.childNodes]
+        .filter((n) => !(n.nodeType === 1 && (n.getAttribute('aria-hidden') || n.matches('button'))))
+        .map((n) => n.textContent).join('').trim()""")
+
+
+def _wait_for_work_words(page, words: str, timeout_s: float = 10) -> None:
+    end = time.monotonic() + timeout_s
+    while (now := _work_words(page)) != words:
+        assert time.monotonic() < end, f"the work line said {now!r}, not {words!r}"
+        time.sleep(0.2)
+
+
 def test_a_coding_task_from_the_corner_to_each_step(server):
     data, base, workspace = server
     playwright = pytest.importorskip("playwright.sync_api", reason="pip install playwright")
@@ -86,7 +103,7 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
                     # the pointer, the caption and the work line follow approval.requested over the socket
                     playwright.expect(page.get_by_test_id("chat-waiting").last).to_be_visible(timeout=10_000)
                     playwright.expect(corner.get_by_role("status")).to_have_text("Waiting for your answer.", timeout=10_000)
-                    playwright.expect(page.get_by_test_id("work-line")).to_have_text("I need your OK to carry on.", timeout=10_000)
+                    _wait_for_work_words(page, "I need your OK to carry on.")
                     card.locator(".why-ask > summary").click()
                     assert card.get_by_test_id("sentinel-verdict").is_visible()
                     card.get_by_role("button", name=f"Yes, approve {tool}", exact=True).click()
@@ -97,9 +114,8 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
                 if page.evaluate("document.documentElement.dataset.jigState") == "working":
                     tasks.add(page.evaluate("document.getElementById('avatar').task || ''"))
                 doing.add(page.get_by_test_id("doing-text").inner_text())
-                line = page.get_by_test_id("work-line")
-                if line.count():
-                    lines.add(line.inner_text())
+                if words := _work_words(page):
+                    lines.add(words)
                 if (n := _page_scrolls(page)) > 1:
                     grew.append(n)
                 time.sleep(0.15)
@@ -115,9 +131,7 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
             page.get_by_test_id("work-meter").wait_for()
             meter = page.get_by_test_id("work-meter").get_by_role("img").get_attribute("aria-label")
             assert meter.startswith("Tests: ") and "passed" in meter, meter
-            line = page.get_by_test_id("work-line").evaluate(
-                "el => [...el.childNodes].filter(n => !(n.nodeType === 1 && n.getAttribute('aria-hidden')))"
-                ".map(n => n.textContent).join('').trim()")
+            line = _work_words(page)
             assert line.startswith(("All done", "Done, but", "I couldn")), line
 
             # the steps, in plain words; each one opens to what was really run, or what changed
@@ -182,7 +196,7 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
     assert not [e for e in after if e["data"]["run_id"] == run_id]
 
 
-def test_jig_is_off_shows_jig_asleep_in_its_corner(server):
+def test_jig_is_off_shows_jig_asleep_in_its_corner_even_mid_question(server):
     data, base, _ = server
     playwright = pytest.importorskip("playwright.sync_api", reason="pip install playwright")
     headers = token(data)
@@ -193,6 +207,18 @@ def test_jig_is_off_shows_jig_asleep_in_its_corner(server):
             page = browser.new_page(viewport=DESKTOP)
             page.goto(f"{base}/#code={code}")
             page.wait_for_selector("#app:not([hidden])", timeout=60_000)
+            # turned off while a question waits in the corner: Jig sleeps full size, with nothing left to answer
+            page.get_by_test_id("chat-new").click()
+            page.get_by_test_id("chat-input").fill("Run python3 -m unittest -v in your sandbox and tell me how many tests pass.")
+            page.get_by_test_id("chat-send").click()
+            held = page.locator('#corner-held [data-testid="approval"][data-status="pending"]')
+            deadline = time.monotonic() + 600
+            page.wait_for_timeout(1000)
+            while not held.count():
+                assert page.get_by_test_id("chat-send").is_disabled(), \
+                    f"the reply ended without asking to run the tests: {page.get_by_test_id('chat-log').inner_text()[-300:]}"
+                assert time.monotonic() < deadline, "Jig did not ask to run the tests"
+                time.sleep(0.5)
             page.goto(f"{base}/#settings/power")
             page.locator("#power-off").click()
             page.locator("#confirm-ok").click()
@@ -201,6 +227,8 @@ def test_jig_is_off_shows_jig_asleep_in_its_corner(server):
             assert page.evaluate("document.documentElement.dataset.jigState") == "paused"
             assert _visible_jigs(page)[0] >= 230
             assert page.get_by_test_id("doing").is_hidden()
+            assert not page.locator('#corner-held [data-testid="approval"][data-status="pending"]').first.is_visible()
+            assert page.get_by_test_id("avatar-card").get_attribute("data-holding") == "none"
             page.set_viewport_size(NARROW)
             page.wait_for_timeout(400)
             assert _visible_jigs(page)[0] >= 112

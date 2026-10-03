@@ -1385,7 +1385,7 @@ function renderCorner() {
   if (w && !w.size) view.stepsOpen = false;
   const small = narrow.matches;
   const sheet = small && !offState && ((asking && !view.sheetLater) || view.stepsOpen);
-  corner.dataset.holding = asking ? 'ask' : view.stepsOpen ? 'steps' : w ? 'work' : 'none';
+  corner.dataset.holding = offState ? 'none' : asking ? 'ask' : view.stepsOpen ? 'steps' : w ? 'work' : 'none';
   corner.classList.toggle('is-sheet', sheet);
   $('app').classList.toggle('sheet-open', sheet);
 
