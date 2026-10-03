@@ -735,6 +735,7 @@ The API binds to `127.0.0.1`, and every endpoint except `GET /health` and the UI
 - Embeddings-backed memory search.
 - **Bulk testing with published metrics**: run every scenario (research, coding, background jobs, memory, safety and each connector) many times on real models and services, and publish pass rates, failure kinds and timings per model.
 - **Agentic benchmarks**: run recognised agent benchmarks with the same local model twice, once on its own and once inside Jig, to measure how much the harness adds over the base model.
+- **Sound cues**: quiet, optional sounds for the moments that need you (an approval waiting, a background task finished, a run stopped), with one switch in Settings to turn them off.
 
 ## Licence
 
