@@ -224,10 +224,10 @@ add the runtime summaries the work view needs.
 Direction A is built (`jig/web/app.js`, `work.js`, `style.css`). Two pieces of work land in it separately, and the layout
 leaves them their place:
 
-- **Stopping a reply.** While Jig works in the conversation, the corner's work line holds the Stop button (at the end of
-  the line, so it stays next to what it stops), and the status row under Jig holds "Stop the reply" for a reply with no
-  steps yet. On a narrow window the band hides the status row while the work line is showing, unless a background job
-  can be stopped, so there is still exactly one Stop in reach.
+- **Stopping a reply.** There is one Stop for a reply, "Stop the reply" in the status row under Jig, so it is always in
+  the same place; the work line has none. While Jig holds a question, the row keeps only that button. On a narrow window
+  the band keeps it beside the work line (the row's status text, Pause and "What Jig's up to" step aside while the work
+  line is showing), and the sheet keeps it too.
 - **"Jig stopped this reply because it was repeating itself".** This belongs to the reply, so it sits under the reply in
   the conversation with Continue anyway and Try again, like any other note on a reply. The corner's work line ends as
   stopped (the work view has a `stopped` status for it); no second Jig and no pop-up.

@@ -1063,7 +1063,6 @@ function describeWorking(ev) {
 const WORK_EVENTS = new Set(['approval.requested', 'approval.resolved', 'tool.start', 'tool.summary', 'tool.end']);
 
 let chatAbort = null; // stops the reply being written: closing its stream cancels the run in Jig
-let liveWork = null; // the work view of that reply
 const replyTexts = new WeakMap(); // a reply's text so far, so a stopped reply can be continued in place
 
 function stopReply() {
@@ -1115,7 +1114,6 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
     if (!work) {
       if (ev.type !== 'tool.start' && ev.type !== 'approval.requested') return;
       work = new Work({ runId, ask });
-      liveWork = work;
       stepsLink(work, msg);
       showWork(work);
     }
@@ -1247,7 +1245,6 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
     if (runId) liveChatRuns.delete(runId);
     chatBusy = false;
     chatAbort = null;
-    liveWork = null;
     $('chat-send').disabled = false;
     if (work) {
       work.finish(msg.classList.contains('error') ? 'failed' : stopped ? 'stopped' : 'done');
@@ -1405,8 +1402,7 @@ function renderCorner() {
   const box = $('corner-work');
   box.hidden = !w || (asking && small);
   if (w) {
-    box.replaceChildren(...w.summaryNode({ stepsOpen: view.stepsOpen, onToggle: () => openSteps(!view.stepsOpen),
-      onStop: w === liveWork ? stopReply : null }));
+    box.replaceChildren(...w.summaryNode({ stepsOpen: view.stepsOpen, onToggle: () => openSteps(!view.stepsOpen) }));
     box.dataset.status = w.status;
   }
 

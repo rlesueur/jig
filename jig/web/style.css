@@ -268,6 +268,9 @@ body:has(#app:not([hidden])) { height: 100vh; height: 100dvh; overflow: hidden; 
 /* While Jig holds a question it steps back a little, so the whole card and its buttons fit. */
 .corner[data-holding="ask"] .corner-stage jig-avatar { width: 196px; height: 196px; }
 .corner[data-holding="ask"] .doing { display: none; }
+/* "Stop the reply" stays in its place whenever a reply is being written, even where the rest of the row steps aside. */
+.corner[data-holding="ask"] .doing:has(#chat-stop:not([hidden])) { display: flex; }
+.corner[data-holding="ask"] .doing-text, .corner[data-holding="ask"] .doing-actions > :not(#chat-stop) { display: none; }
 
 /* Jig's caption: a speech bubble, and the avatar's text equivalent for screen readers. */
 .say {
@@ -315,7 +318,6 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
   background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
 }
 .work-line { margin: 0; display: flex; gap: 10px; align-items: baseline; font-weight: 800; font-size: 16.5px; line-height: 1.35; }
-.work-line .work-stop { margin-left: auto; }
 .pulse { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dot-ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot-ok) 22%, transparent); transform: translateY(-1px); animation: breathe 2s ease-in-out infinite; }
 .work-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; font-weight: 900; transform: translateY(2px); }
 .work-mark.ok { background: var(--ok); color: var(--surface); }
@@ -761,8 +763,9 @@ html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { 
   .doing-actions > * { white-space: nowrap; }
   .doing-text { font-size: 14px; }
   .doing[data-busy="false"] .doing-text { display: none; }
-  /* the work line already says what Jig is doing in the conversation, and holds its Stop */
-  .corner[data-holding="work"] .doing:not(:has(#doing-stop:not([hidden]))) { display: none; }
+  /* the work line already says what Jig is doing in the conversation: the row keeps only its Stop buttons */
+  .corner[data-holding="work"] .doing:not(:has(#doing-stop:not([hidden]), #chat-stop:not([hidden]))) { display: none; }
+  .corner[data-holding="work"] .doing-text, .corner[data-holding="work"] #agent-toggle, .corner[data-holding="work"] #doing-open { display: none; }
   .doing[data-busy="false"] { border-top: 0; padding-top: 0; }
   /* A finished run: Jig grows a little for its celebration, then settles back. */
   html[data-jig-state="success"] .corner:not(.is-sheet) { grid-template-columns: 152px minmax(0, 1fr); }
@@ -779,6 +782,8 @@ html[data-theme="dark"] .face-light, html:not([data-theme="dark"]) .face-dark { 
   .corner.is-sheet .corner-words { min-height: 0; overflow-y: auto; padding: 0 2px 2px; }
   .corner.is-sheet .say { align-self: flex-start; margin-left: 120px; min-height: 44px; }
   .corner.is-sheet .doing { display: none; }
+  .corner.is-sheet .doing:has(#chat-stop:not([hidden])) { display: flex; }
+  .corner.is-sheet .doing-text, .corner.is-sheet .doing-actions > :not(#chat-stop) { display: none; }
   .corner.is-sheet .corner-body { overflow: visible; }
   .corner.is-sheet .work { padding: 12px 14px; border: 1px solid var(--line); background: var(--surface-2); }
   .corner-steps .steps-pane { padding: 4px 2px 8px; border: 0; box-shadow: none; background: none; overflow: visible; }

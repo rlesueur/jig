@@ -1,8 +1,9 @@
 """Jig's corner and the work view, in a real browser, against a real `jig serve` on its own port, the real model and
 the container sandbox: a real coding task with failing tests, followed from the corner (one line, a pass/fail meter),
 into the steps (the command and each test's result, the change as before and after), on a wide and a narrow window.
-The page itself never scrolls, the status line says Jig is busy while it replies, approvals wait in Jig's corner,
-and the per-step details live only in the page: they leave the event history when the conversation is deleted."""
+The page itself never scrolls, the status line says Jig is busy while it replies, "Stop the reply" stays in Jig's
+corner (the only Stop for a reply, on a narrow window too), approvals wait in Jig's corner, and the per-step details
+live only in the page: they leave the event history when the conversation is deleted."""
 
 from __future__ import annotations
 
@@ -50,13 +51,26 @@ def _visible_jigs(page) -> list[int]:
 
 
 def _work_words(page) -> str:
-    """The work line's words, without its mark or its Stop button."""
+    """The work line's words, without its mark."""
     line = page.get_by_test_id("work-line")
     if not line.count():
         return ""
     return line.evaluate("""(el) => [...el.childNodes]
-        .filter((n) => !(n.nodeType === 1 && (n.getAttribute('aria-hidden') || n.matches('button'))))
+        .filter((n) => !(n.nodeType === 1 && n.getAttribute('aria-hidden')))
         .map((n) => n.textContent).join('').trim()""")
+
+
+def _now(page) -> dict:
+    """In one look, so a reply that ends in between cannot mix two moments: whether Jig is still replying (Send is
+    off), the status line, and whether "Stop the reply" is on screen."""
+    return page.evaluate("""() => {
+        const stop = document.getElementById('chat-stop');
+        const r = stop.getBoundingClientRect();
+        return { replying: document.getElementById('chat-send').disabled,
+                 doing: document.getElementById('doing-text').innerText,
+                 stop: stop.checkVisibility() && r.width > 0 && r.top >= 0 && r.bottom <= innerHeight,
+                 workStops: document.querySelectorAll('[data-testid="work-stop"]').length };
+    }""")
 
 
 def _wait_for_work_words(page, words: str, timeout_s: float = 10) -> None:
@@ -88,7 +102,7 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
             page.get_by_test_id("chat-send").click()
 
             states, tasks, doing, lines, held = set(), set(), set(), set(), 0
-            grew = []
+            grew, narrow_stop = [], None
             deadline = time.monotonic() + 15 * 60
             while page.get_by_test_id("chat-send").is_disabled():
                 assert time.monotonic() < deadline, "the coding task did not finish"
@@ -98,6 +112,9 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
                     card = page.locator(f'#corner-held [data-testid="approval"][data-id="{aid}"]')
                     tool = card.get_attribute("data-tool")
                     held += 1
+                    # one Stop for the reply, in the corner, while the question waits too
+                    now = _now(page)
+                    assert not now["replying"] or now["stop"], "no Stop the reply while a question was held"
                     # held in the corner, with a pointer to it in the reply, and the conversation still in view
                     assert page.get_by_test_id("chat-log").locator('[data-testid="approval"][data-status="pending"]').count() == 0
                     # the pointer, the caption and the work line follow approval.requested over the socket
@@ -113,9 +130,21 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
                 states.add(page.evaluate("document.documentElement.dataset.jigState || ''"))
                 if page.evaluate("document.documentElement.dataset.jigState") == "working":
                     tasks.add(page.evaluate("document.getElementById('avatar').task || ''"))
-                doing.add(page.get_by_test_id("doing-text").inner_text())
+                now = _now(page)
+                assert now["workStops"] == 0, "the work line has a Stop of its own"
+                if now["replying"]:
+                    doing.add(now["doing"])
+                    assert now["stop"], "Stop the reply was not on screen while Jig replied"
                 if words := _work_words(page):
                     lines.add(words)
+                    if narrow_stop is None and now["replying"]:
+                        # a narrow window shows the work line in the band, and Stop the reply beside it
+                        page.set_viewport_size(NARROW)
+                        page.wait_for_timeout(400)
+                        narrow = _now(page)
+                        narrow_stop = narrow["stop"] or not narrow["replying"]
+                        page.set_viewport_size(DESKTOP)
+                        page.wait_for_timeout(300)
                 if (n := _page_scrolls(page)) > 1:
                     grew.append(n)
                 time.sleep(0.15)
@@ -126,6 +155,7 @@ def test_a_coding_task_from_the_corner_to_each_step(server):
             assert not any(t.startswith("Nothing on the go") for t in doing if t), \
                 f"the status line said nothing was happening while Jig replied: {doing}"
             assert any("test" in t for t in lines), lines
+            assert narrow_stop, "on a narrow window Stop the reply was not on screen beside the work line"
 
             # the corner after the run: one line and the meter
             page.get_by_test_id("work-meter").wait_for()
