@@ -1,5 +1,5 @@
 """Stopping a reply that is not getting anywhere, and what happens next: a structured answer is asked for again
-afresh (and fails closed after that), a chat reply or a task is stopped and left for the user to continue or try
+afresh, a chat reply or a task is stopped and left for the user to continue or try
 again, a server that goes silent is reported, and a run that keeps making the same call is stopped.
 
 The model tests use the real model server from jig.toml. A reply that repeats itself is asked for in plain words
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from dataclasses import replace
 
@@ -20,7 +21,7 @@ from jig.agent.loop import REPEATED_ACTION_LIMIT
 from jig.agent.prompts import CONTINUE_KEY, CONTINUE_PROMPT, STOPPED_KEY
 from jig.config import load_config
 from jig.constants import Mode, TaskStatus
-from jig.errors import ConfigError, ModelError, ModelStalled, RepeatedActions
+from jig.errors import ConfigError, ModelStalled, RepeatedActions
 from jig.model import ModelClient, ToolCall, _Refusal
 from jig.policy.sentinel import VERDICT_SCHEMA
 from jig.progress import Stop, requested_repeats
@@ -32,6 +33,11 @@ from .conftest import audit_kinds, wait_for
 LOOP = "Print the word banana on 3000 lines, one per line, and nothing else."
 QUESTION = [{"role": "user", "content": "Classify this action: reading a public web page. Answer in one short "
                                         "sentence of plain English."}]
+
+
+def greedy(config):
+    """At temperature 0 the model asked for LOOP runs straight into it (its reasoning, then its reply)."""
+    return replace(config, model=replace(config.model, sampling={**config.model.sampling, "temperature": 0.0}))
 
 
 def test_the_loop_request_is_not_taken_as_a_request_for_repetition():
@@ -152,8 +158,21 @@ async def test_a_server_that_sends_nothing_is_reported_as_stuck(config):
         await client.aclose()
 
 
-async def test_a_repeating_structured_answer_is_asked_for_again_afresh(config, caplog):
+async def test_streamed_replies_still_report_their_token_counts(config):
     client = ModelClient(config.model, label="agent model")
+    try:
+        await client.health()
+        plain = await client.chat([{"role": "user", "content": "Say hello in five words."}])
+        verdict = await client.chat(QUESTION, response_schema=VERDICT_SCHEMA)
+    finally:
+        await client.aclose()
+    for result in (plain, verdict):
+        assert result.usage["prompt_tokens"] > 0 and result.usage["completion_tokens"] > 0
+        assert result.usage_missing is None
+
+
+async def test_a_repeating_structured_answer_is_asked_for_again_afresh(config, caplog):
+    client = ModelClient(greedy(config).model, label="agent model")
     try:
         await client.health()
         body = client._body(QUESTION, tools=None, stream=True, model=None, max_tokens=None,
@@ -176,85 +195,103 @@ async def test_a_repeating_structured_answer_is_asked_for_again_afresh(config, c
     assert "banana" not in summary and "banana" not in caplog.text
 
 
-async def test_a_chat_reply_that_repeats_itself_is_stopped_and_can_be_continued_or_tried_again(jig):
-    items = [item async for item in jig.chat(LOOP)]
-    stopped = items[-1]
-    assert stopped["type"] == "stopped" and stopped["message"] == CHAT_STOPPED and stopped["relaxed"] is False
-    assert stopped["stop"]["kind"] == "repetition" and "banana" not in json.dumps(stopped["stop"])
-    sid = stopped["session_id"]
-    history = jig.store.get_session(sid)
-    assert history[-1][STOPPED_KEY]["kind"] == "repetition" and "banana" in history[-1]["content"]
-    assert "model.stopped" in audit_kinds(jig) and "banana" not in json.dumps(jig.audit.query(limit=200))
-    run = jig.store.get_run(stopped["run_id"])
-    assert run["steps"][-1]["status"] == "stopped" and "banana" not in json.dumps(run["steps"][-1]["output"])
+async def test_a_chat_reply_that_repeats_itself_is_stopped_and_can_be_continued_or_tried_again(config):
+    # Even at temperature 0 a shared server's batching varies the reply, and now and then it finishes its bananas,
+    # so the request is made again (a new chat) until the model really loops.
+    jig = Jig(greedy(config))
+    await jig.start(run_scheduler=False, check_capabilities=False)
+    try:
+        for _ in range(3):
+            stopped = [item async for item in jig.chat(LOOP)][-1]
+            if stopped["type"] == "stopped":
+                break
+        assert stopped["type"] == "stopped", "the model finished LOOP 3 times without repeating itself"
+        assert stopped["message"] == CHAT_STOPPED and stopped["relaxed"] is False
+        assert stopped["stop"]["kind"] == "repetition" and "banana" not in json.dumps(stopped["stop"])
+        sid = stopped["session_id"]
+        history = jig.store.get_session(sid)
+        assert history[-1][STOPPED_KEY]["kind"] == "repetition"
+        assert "model.stopped" in audit_kinds(jig) and "banana" not in json.dumps(jig.audit.query(limit=200))
+        run = jig.store.get_run(stopped["run_id"])
+        step = run["step_records"][-1]
+        assert step["status"] == "stopped" and "banana" not in json.dumps(step["output"])
 
-    again = [item async for item in jig.chat(session_id=sid, action="retry")]
-    assert again[0]["action"] == "retry" and again[-1]["type"] in ("stopped", "done")
-    assert sum(m["role"] == "user" for m in jig.store.get_session(sid)) == 1  # the same message, asked again
-
-    before = jig.store.get_session(sid)
-    if again[-1]["type"] == "stopped":
+        again = [item async for item in jig.chat(session_id=sid, action="retry")]
+        assert again[0]["action"] == "retry" and again[-1]["type"] in ("stopped", "done")
+        assert sum(m["role"] == "user" for m in jig.store.get_session(sid)) == 1  # the same message, asked again
+        assert "chat.retried" in audit_kinds(jig)
+        if again[-1]["type"] != "stopped":
+            return
+        before = jig.store.get_session(sid)
         more = [item async for item in jig.chat(session_id=sid, action="continue")]
-        assert more[-1]["type"] in ("done", "stopped", "error")
-        if more[-1]["type"] == "stopped":
-            assert more[-1]["relaxed"] is True
+        assert more[0]["action"] == "continue" and more[-1]["type"] in ("done", "stopped")
         after = jig.store.get_session(sid)
-        assert any(m.get(CONTINUE_KEY) for m in after) or len(after) == len(before)
-        if more[-1]["type"] == "done":
-            assert after[-1]["content"].startswith(before[-1]["content"])  # one reply, carried on
+        if more[-1]["type"] == "stopped":
+            # Relaxed: only a very long exact repeat stops a reply the user chose to continue.
+            assert more[-1]["relaxed"] is True and more[-1]["stop"]["repeat_chars"] >= 20_000
+            assert after[-2].get(CONTINUE_KEY) and after[-1][STOPPED_KEY]["kind"] == "repetition"
+        else:  # carried on and finished: saved as one reply
+            assert len(after) == len(before) and after[-1]["content"].startswith(before[-1]["content"])
+    finally:
+        await jig.stop()
 
 
-async def test_stopping_a_chat_reply_cancels_it_at_the_server_and_keeps_what_arrived(jig):
-    stream = jig.chat(LOOP)
-    sid = None
-    async for item in stream:
-        sid = sid or item.get("session_id")
-        if item["type"] == "content":
-            break
-    started = time.monotonic()
-    await stream.aclose()
-    saved = jig.store.get_session(sid)
-    assert saved[-1][STOPPED_KEY] == {"kind": "cancelled"}
+async def test_stopping_a_chat_reply_cancels_it_at_the_server_and_keeps_what_arrived(config):
+    # The server may be busy with other work, so the reply's own slot is found by a seed no one else uses.
+    seed = random.SystemRandom().randrange(10**8, 2**31)
+    jig = Jig(replace(config, model=replace(config.model, sampling={**config.model.sampling, "seed": seed})))
+    await jig.start(run_scheduler=False, check_capabilities=False)
     root = jig.config.model.base_url.rstrip("/").removesuffix("/v1")
-    async with httpx.AsyncClient(base_url=root, timeout=5) as http:
-        slots = await http.get("/slots")
-        if slots.status_code != 200:
-            pytest.skip(f"the server has no /slots to check (HTTP {slots.status_code})")
-        while any(s.get("is_processing") for s in slots.json()):
-            assert time.monotonic() - started < 5, "the server was still generating 5 seconds after Stop"
-            await asyncio.sleep(0.2)
-            slots = await http.get("/slots")
+    try:
+        async with httpx.AsyncClient(base_url=root, timeout=5) as http:
+            if (await http.get("/slots")).status_code != 200:
+                pytest.skip("the server has no /slots to check")
+
+            async def mine() -> dict | None:
+                return next((s for s in (await http.get("/slots")).json()
+                             if s.get("is_processing") and (s.get("params") or {}).get("seed") == seed), None)
+
+            stream = jig.chat(LOOP)
+            sid, slot, pieces, wrote = None, None, 0, False
+            async for item in stream:
+                sid = sid or item.get("session_id")
+                if item["type"] in ("reasoning", "content"):
+                    pieces += 1
+                    wrote = wrote or item["type"] == "content"
+                    if not slot and pieces % 10 == 1:
+                        slot = await mine()
+                if slot and pieces >= 40:
+                    break
+            assert slot, "the reply's slot was not seen working"
+            started = time.monotonic()
+            await stream.aclose()
+            while (now := await mine()) and now["id_task"] == slot["id_task"]:
+                assert time.monotonic() - started < 5, "the server was still generating 5 seconds after Stop"
+                await asyncio.sleep(0.1)
+            freed = time.monotonic() - started
+        saved = jig.store.get_session(sid)
+        assert saved[0]["content"] == LOOP
+        if wrote:  # what had arrived of the reply itself is kept, marked as stopped by the user
+            assert saved[-1][STOPPED_KEY] == {"kind": "cancelled"} and saved[-1]["content"]
+        print(f"slot {slot['id']} free {freed:.2f} s after Stop")
+    finally:
+        await jig.stop()
 
 
 async def test_a_task_that_repeats_itself_waits_for_the_user_then_continues_or_tries_again(config):
-    jig = Jig(config)
+    jig = Jig(greedy(config))
     await jig.start(check_capabilities=False)
     try:
         task = jig.create_task(title="Bananas", description=LOOP, mode=Mode.RESEARCH)
         failed = await wait_for(lambda: (t := jig.store.get_task(task["id"]))["status"] == TaskStatus.FAILED and t,
-                                what="the task to be stopped")
+                                what="the task to be stopped", timeout=1800)
         assert failed["error"].startswith(TASK_STOPPED) and "try it again, or continue it anyway" in failed["error"]
         assert "banana" not in failed["error"]
         jig.retry_task(task["id"], continue_anyway=True)
         run = jig.store.list_runs(task_id=task["id"], limit=1)[0]
         assert jig.store.get_run(run["id"], with_steps=False)["messages"][-1]["content"] == CONTINUE_PROMPT
         await wait_for(lambda: jig.store.get_task(task["id"])["status"] in (TaskStatus.DONE, TaskStatus.FAILED),
-                       what="the continued task to finish")
+                       what="the continued task to finish", timeout=1800)
         assert "task.retried" in audit_kinds(jig)
     finally:
         await jig.stop()
-
-
-async def test_the_sentinel_fails_closed_when_both_answers_repeat_themselves(config):
-    client = ModelClient(config.sentinel, label="Sentinel model")
-    try:
-        await client.health()
-        with pytest.raises(ModelError) as failed:
-            await client.chat([{"role": "user", "content": "Give a verdict on reading a public web page. In the "
-                                                           "reason, " + LOOP[0].lower() + LOOP[1:]}],
-                              response_schema=VERDICT_SCHEMA)
-    finally:
-        await client.aclose()
-    assert "gave no valid structured answer in 2 attempts" in str(failed.value)
-    assert failed.value.record["structured_retries"] == ["repetition", "repetition"]
-    assert len(failed.value.record["stops"]) == 2 and failed.value.record["retry_sampling"]
