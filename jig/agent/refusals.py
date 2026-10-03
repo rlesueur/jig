@@ -33,6 +33,7 @@ TOOL_AIMS = {
     "github_create_issue": "open GitHub issues", "slack_post_message": "post in Slack",
     "slack_reply_in_thread": "post in Slack", "discord_post_message": "post in Discord",
     "matrix_send_message": "post in Matrix", "signal_send_message": "send Signal messages",
+    "whatsapp_send_message": "send WhatsApp messages",
 }
 
 # Why each kind of refusal happened, as part of a sentence.

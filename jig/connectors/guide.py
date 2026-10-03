@@ -135,6 +135,26 @@ GUIDES: dict[str, dict[str, Any]] = {
                   "checks that it works before saving anything."),
         ],
     },
+    "whatsapp": {
+        "summary": "Use your own WhatsApp Business number through Meta's Cloud API. Jig can see that number and, "
+                   "with your OK each time, send a text message. It cannot read incoming messages.",
+        "steps": [
+            _step("Create a Meta app and choose the use case 'Connect with customers through WhatsApp'.",
+                  ("https://developers.facebook.com/apps/", "Open Meta's App Dashboard")),
+            _step("On WhatsApp, then API Setup, copy the Phone number ID under the From number, and the WhatsApp "
+                  "Business Account ID (Meta also calls this the Messaging account ID)."),
+            _step("In Business settings, System users, add a system user, assign your app and your WhatsApp "
+                  "account, and generate a token with business_management, whatsapp_business_messaging and "
+                  "whatsapp_business_management. Meta shows the token once.",
+                  ("https://business.facebook.com/latest/settings/system_users", "Open System users")),
+            _step("Paste the token, the Phone number ID and the WhatsApp Business Account ID below and choose "
+                  "Connect. Jig checks them with Meta and keeps them in its vault. Read lets Jig see the business "
+                  "number; Send also lets it send text, and each message needs your OK."),
+        ],
+        "note": "Incoming WhatsApp messages arrive only by a public webhook. Jig on this computer doesn't have "
+                "one, so it never shows incoming messages. A text message only works for 24 hours after that "
+                "person last messaged the business number.",
+    },
 }
 
 

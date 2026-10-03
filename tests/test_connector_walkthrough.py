@@ -51,6 +51,14 @@ def test_every_connector_has_a_walkthrough_with_safe_links(client):
     assert "hasn't verified" in json.dumps(warning) or "unverified" in json.dumps(warning).lower()
     assert [s["action"]["type"] for s in rows["microsoft"]["walkthrough"]] == ["connect", "try"]
     assert [s["action"]["type"] for s in rows["slack"]["walkthrough"]][-1] == "pick"
+    whatsapp = rows["whatsapp"]["walkthrough"]
+    whatsapp_text = json.dumps(whatsapp).lower()
+    assert [s["action"]["type"] for s in whatsapp] == ["done", "done", "token", "try"]
+    assert "phone number id" in whatsapp_text and "whatsapp business account" in whatsapp_text
+    assert "webhook" in whatsapp_text
+    assert "baileys" not in whatsapp_text and "whatsapp-web" not in whatsapp_text
+    assert [i["name"] for i in rows["whatsapp"]["inputs"]] == ["token", "phone_number_id", "waba_id"]
+    assert all(i["secret"] for i in rows["whatsapp"]["inputs"])
     assert "GOCSPX" not in json.dumps(rows)
 
 

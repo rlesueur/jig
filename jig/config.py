@@ -236,7 +236,7 @@ CONNECTOR_APP_KEYS = {"microsoft": ("client_id", "tenant"), "github": ("client_i
 
 # Connectors that read [connectors.<id>]; see jig.connectors.
 CONNECTOR_IDS = ("gmail", "google-calendar", "google-drive", "microsoft", "github", "slack", "discord", "matrix",
-                 "signal")
+                 "signal", "whatsapp")
 
 
 @dataclass(frozen=True)

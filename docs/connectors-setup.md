@@ -15,6 +15,7 @@ How much setup each one needs:
 - **Slack and Discord:** you add a Jig bot to your own workspace or server, and paste its token.
 - **Matrix:** your own account, with your password (once) or a token.
 - **Signal:** signal-cli linked to your phone. Jig can download signal-cli (and Java, if needed) for you, and shows the QR code to scan in Signal on your phone.
+- **WhatsApp:** Meta's WhatsApp Business Cloud API only (a business number and a token you create). Not a personal WhatsApp account. Jig can see the business number and, with your approval each time, send a text message. It cannot read incoming messages.
 
 ## Status
 
@@ -33,6 +34,7 @@ A live test opens your test config's own data directory, where the connections a
 | Discord | `discord` | your own bot's token | list and read channels the bot can see; post | built; tested against the real service; live test waiting for a connected account |
 | Matrix | `matrix` | your account (password once, or a token) | list joined rooms, read unencrypted messages; post in unencrypted rooms | built; tested against the real service; live test waiting for a connected account |
 | Signal | `signal` | signal-cli linked to your phone | send messages (to yourself while testing); receive new messages if you allow it | built; tested with a real signal-cli where one is installed (skipped otherwise); live test waiting for a linked device |
+| WhatsApp | `whatsapp` | a token, phone number ID and WhatsApp Business Account ID from Meta's Cloud API | see the business number; send a text message | built; tested against Meta's real API with a made-up token (it is refused); live test skipped until a token is in the vault |
 | Paying and booking in the browser | (built in) | nothing to connect | detects checkouts, payments and bookings; you always decide; Jig never types card details | built; tested against real public demo shops (needs Docker) |
 
 Every connector can be connected from Settings > Connections or with `jig connect`. Every send, post, write, change or cancellation needs your approval (see below). None of the connectors can delete mail or files, share files, close or merge on GitHub, or ping a whole channel.
@@ -45,7 +47,7 @@ Every connector can be connected from Settings > Connections or with `jig connec
 - **The model never sees them.** Connector credentials are used only inside the connector code, after the policy gate has approved the action. A core rule blocks any tool from referencing a `connector.*` secret with `{{secret:...}}`, the same way model API keys are protected, and token values are redacted from every tool result, error and audit entry.
 - **Tokens only go to the provider.** Each connector has a fixed list of hosts (for example `gmail.googleapis.com`, `graph.microsoft.com`, `api.github.com`), and Jig refuses to send its token anywhere else, over anything but HTTPS.
 - **Least privilege.** Each connector asks only for the scopes of the access level you choose (`--access`, or "What Jig may do" in Settings).
-- **Disconnect at any time.** `jig disconnect <provider>`, or Disconnect in Settings, revokes the grant at the provider where the provider supports that (Google, Slack and Matrix do), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, Signal), it says exactly where to remove the access yourself.
+- **Disconnect at any time.** `jig disconnect <provider>`, or Disconnect in Settings, revokes the grant at the provider where the provider supports that (Google, Slack and Matrix do), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, Signal, WhatsApp), it says exactly where to remove the access yourself.
 
 The commands that are the same for every connector:
 
@@ -486,6 +488,43 @@ required_prefix = "[Jig test]"
 Live test: set `JIG_LIVE_SIGNAL_CONFIG` and `JIG_LIVE_SIGNAL_NUMBER` and run `tests\test_connector_signal_live.py`. It sends one `[Jig test]` message to your Note to Self, and checks that a send to another number and a denied approval send nothing.
 
 `jig disconnect signal` makes Jig forget the number and path. Jig can't unlink itself: on your phone, open **Settings > Linked devices** and unlink "Jig". To remove signal-cli's copy of the keys as well, run `signal-cli.bat -a <your number> deleteLocalAccountData` after unlinking.
+
+---
+
+## WhatsApp
+
+Jig uses Meta's [WhatsApp Business Cloud API](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started) only. It does not link a personal WhatsApp account, and it does not use WhatsApp Web.
+
+Official documentation: [Get started](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started), [Text messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/text-messages), [Webhooks](https://developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks/).
+
+You create three values in Meta, then type them in **Settings > Connections > WhatsApp** (Set up step by step, or the connect form on that page). They go straight into the vault. Jig asks Meta whether the token can see that phone number on that WhatsApp Business account, and stores nothing if Meta says no.
+
+1. [developers.facebook.com/apps](https://developers.facebook.com/apps/) > **Create app**. Name it, then choose the use case **Connect with customers through WhatsApp**, pick or create a business portfolio, and create the app.
+2. **WhatsApp > API Setup**. Copy:
+   - the **Phone number ID** under the From number;
+   - the **WhatsApp Business Account ID** (Meta also calls this the Messaging account ID).
+3. The token on API Setup expires quickly. In [Business settings > System users](https://business.facebook.com/latest/settings/system_users), add a system user, assign your app (**Manage app**) and your WhatsApp account (**Manage WhatsApp Business accounts**), then **Generate token** with these permissions: `business_management`, `whatsapp_business_messaging` and `whatsapp_business_management`. Copy the token when Meta shows it. It is shown once.
+4. In Settings > Connections, under WhatsApp, choose what Jig may do. **read** sees the business number only. **send** can also send a text message, and each send needs your approval. Paste the token, the Phone number ID and the WhatsApp Business Account ID, then choose **Connect**.
+
+   Or, on this computer, three lines on standard input, in that order (token, phone number ID, WhatsApp Business Account ID):
+
+   ```powershell
+   .\.venv\Scripts\jig connect whatsapp --access send --stdin
+   ```
+
+**Incoming messages.** Meta delivers them only to an HTTPS webhook that you host on the public internet. The Cloud API has no call that lists recent messages. Jig does not ask you to open a port, and it has no tool that reads or invents incoming WhatsApp messages.
+
+**Sending.** A text message is `POST /<PHONE_NUMBER_ID>/messages` on `graph.facebook.com`. It only succeeds inside the 24-hour window after that person last messaged the business number (or, for Meta's test number, after you have added their number on API Setup and they have confirmed the code). Outside that window Meta refuses the send, and Jig reports Meta's error. It does not switch to a template message. Every send needs your approval. Messages must start with the prefix below, and can only go to numbers in `allowed_targets`, in international form.
+
+```toml
+[connectors.whatsapp]
+allowed_targets = ["+447700900123"]   # the only numbers Jig may message
+required_prefix = "[Jig test]"
+```
+
+`jig disconnect whatsapp` deletes the token and the ids from the vault. Meta has no way for Jig to revoke the token: in Business settings > System users, remove the token or the system user.
+
+The live test (`tests\test_connector_whatsapp_live.py`) looks in the vault of `JIG_LIVE_WHATSAPP_CONFIG`, or of `%USERPROFILE%\.jig-connectors-test\jig.toml` when that file exists. It skips, and says so, when there is no WhatsApp token. It does not send while `allowed_targets` is still the placeholder `+440000000000`.
 
 ---
 

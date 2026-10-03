@@ -316,6 +316,64 @@ STEPS: dict[str, list[dict[str, Any]]] = {
               "check that Signal knows the number.",
               action={"type": "token"}),
     ],
+    "whatsapp": [
+        _step("create", "Make a WhatsApp app",
+              "I can't link a normal WhatsApp account. This uses Meta's official WhatsApp Business Cloud API: "
+              "an app you create, and a business number Meta gives it.",
+              see="Meta's App Dashboard: a Create app button, then a name and your email, then a list of use "
+                  "cases. Choose 'Connect with customers through WhatsApp'. Then a business portfolio (one you "
+                  "have, or a new one), then Create app.",
+              do=["Open the link and choose Create app.",
+                  "Type a name (Jig is fine) and your email.",
+                  "Choose Connect with customers through WhatsApp, then Next.",
+                  "Pick a business portfolio, or create one, then Next and Create app."],
+              links=[_link("https://developers.facebook.com/apps/", "Meta App Dashboard"),
+                     _link("https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started",
+                           "Meta's setup guide")],
+              action={"type": "done", "label": "I've made the app"}),
+        _step("ids", "Copy the two ids",
+              "On the API Setup page Meta shows the business number and two ids. I'll check both with Meta when "
+              "you connect, together with the token. Don't paste them into the chat.",
+              see="WhatsApp, then API Setup (from Quickstart, choose Start using the API if you haven't yet). "
+                  "A From phone number, with a Phone number ID under it, and a WhatsApp Business Account ID. "
+                  "Meta also calls that second one the Messaging account ID.",
+              do=["Choose WhatsApp, then API Setup, in the left-hand menu.",
+                  "If it asks you to connect a messaging account, create one or pick the one it made.",
+                  "Under the From number, copy the Phone number ID.",
+                  "Copy the WhatsApp Business Account ID (the Messaging account ID) as well.",
+                  "You'll paste both in the next step."],
+              links=[_link("https://developers.facebook.com/apps/", "Your Meta apps")],
+              note="A test number from Meta can message only the phone numbers you add on that page, and each "
+                   "of those people has to confirm the code WhatsApp sends them.",
+              action={"type": "done", "label": "I've copied both ids"}),
+        _step("token", "Make a token and connect",
+              "The token on API Setup is temporary and runs out quickly. For Jig, make a system user token and "
+              "give it permission to manage the WhatsApp account and to send messages. It goes straight into "
+              "my vault. I'll ask Meta whether it can see that phone number on that account, and I won't keep "
+              "anything if Meta says no.",
+              see="Business settings, System users. Add a system user, then Assign assets: your app (Manage "
+                  "app) and your WhatsApp account (Manage WhatsApp Business accounts). Generate token, and tick "
+                  "business_management, whatsapp_business_messaging and whatsapp_business_management. Meta shows "
+                  "the token once.",
+              do=["Open Business settings, System users, and add a system user.",
+                  "Assign your app and your WhatsApp account to it, with full control of each.",
+                  "Generate a token with business_management, whatsapp_business_messaging and "
+                  "whatsapp_business_management. Copy it straight away.",
+                  "Below, choose what I may do. Read: I can see the business number only. Send: I can also send "
+                  "text messages, and each one needs your OK.",
+                  "Paste the token, the Phone number ID and the WhatsApp Business Account ID, then Connect."],
+              links=[_link("https://business.facebook.com/latest/settings/system_users", "System users")],
+              note="I can't read incoming WhatsApp messages. Meta only delivers those to a public HTTPS webhook, "
+                   "and a Jig on this computer doesn't have one. I won't pretend messages have arrived. A plain "
+                   "text message also only works for 24 hours after that person last messaged the business "
+                   "number; outside that window Meta refuses it, and I'll tell you rather than sending something "
+                   "else.",
+              action={"type": "token"}),
+        _step("try", "See the business number",
+              "Let me ask Meta for the business number, to check the token works. This doesn't read anyone's "
+              "messages.",
+              action={"type": "try"}),
+    ],
 }
 
 TRY_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -324,6 +382,7 @@ TRY_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
     "google-drive": ("gdrive_search", {"query": "Jig", "max_results": 5}),
     "microsoft": ("outlook_list_calendars", {}),
     "github": ("github_list_repos", {"max_results": 10}),
+    "whatsapp": ("whatsapp_account", {}),
 }
 PICK_TOOLS = {"slack": "slack_list_channels", "discord": "discord_list_channels", "matrix": "matrix_list_rooms"}
 READ_TOOLS = {"slack": ("slack_read_channel", "channel_id"), "discord": ("discord_read_channel", "channel_id"),
@@ -501,6 +560,12 @@ async def _try(jig: Any, name: str) -> dict[str, Any]:
     if name == "google-drive":
         return _ok(f"I can search your Drive (I looked for 'Jig' and found {len(out['files'])} file"
                    f"{'s' if len(out['files']) != 1 else ''}). You're all set: every file I save needs your OK first.")
+    if name == "whatsapp":
+        shown = out.get("display_phone_number") or "your business number"
+        named = f" ({out['verified_name']})" if out.get("verified_name") else ""
+        return _ok(f"I can see the WhatsApp business number {shown}{named}. I can't read incoming messages: Meta "
+                   "only delivers those to a public webhook, and this computer isn't one. Every message I send "
+                   "needs your OK first.")
     repos = out["repos"]
     if not repos:
         return _not_yet("I'm signed in, but I can't see any repositories. Choose some for the Jig GitHub App (the "
@@ -572,12 +637,12 @@ def _plain(step: dict[str, Any]) -> dict[str, Any]:
 def register_help_tool(registry: Any, connectors: Connectors) -> None:
     @registry.tool(
         description="Help someone connect one of their accounts (Gmail, Google Calendar, Google Drive, Microsoft, "
-        "GitHub, Slack, Discord, Matrix, Signal): the same step-by-step guide Settings > Connections shows, and "
-        "whether it is connected now. Use it whenever they ask how to connect, set up or fix an account. Read-only. "
-        "Without a provider, lists every account and whether it is connected.",
+        "GitHub, Slack, Discord, Matrix, Signal, WhatsApp): the same step-by-step guide Settings > Connections "
+        "shows, and whether it is connected now. Use it whenever they ask how to connect, set up or fix an account. "
+        "Read-only. Without a provider, lists every account and whether it is connected.",
         effect=Effect.READ, category=ToolCategory.WEB,
         args={"provider": "Which account: gmail, google-calendar, google-drive, microsoft, github, slack, discord, "
-                          "matrix or signal. Empty for all of them."},
+                          "matrix, signal or whatsapp. Empty for all of them."},
     )
     async def connection_help(ctx: Any, provider: str = "") -> dict[str, Any]:
         rows = {r["provider"]: r for r in ctx.connectors.store.status()}
@@ -587,7 +652,7 @@ def register_help_tool(registry: Any, connectors: Connectors) -> None:
                     "rules": SECRET_RULE}
         name = provider.strip().lower().replace(" ", "-")
         name = {"google-mail": "gmail", "outlook": "microsoft", "onedrive": "microsoft", "calendar": "google-calendar",
-                "drive": "google-drive"}.get(name, name)
+                "drive": "google-drive", "whats-app": "whatsapp"}.get(name, name)
         if name not in rows:
             raise JigError(f"no account called {provider!r}; one of {sorted(rows)}")
         r = rows[name]
