@@ -10,6 +10,53 @@ export function parseJsonBlock(text) {
 }
 
 /**
+ * Each tool call of a run (GET /runs/<id>): the arguments the model gave, from the run's messages, and the
+ * outcome Jig recorded for it in the run's step records (ok, result, error, error_type, policy). The tool
+ * message's text is not parsed: it is written for the model, and Jig ends it with a "[Jig budget]" line.
+ */
+export function toolOutcomes(run) {
+  const steps = new Map();
+  /* a call that waited through a pause runs again on resume; its last record is the one that counts */
+  for (const st of run.step_records || []) if (st.type === 'tool_call' && st.input?.id) steps.set(st.input.id, st);
+  /* a chat run's messages replay the conversation so far: calls before its own user message belong to earlier
+   * runs, unless this run carried them out (a call left waiting when a turn stopped) */
+  const messages = run.messages || [];
+  const turn = messages.map((m) => m.role).lastIndexOf('user');
+  const out = [];
+  for (const [i, msg] of messages.entries()) {
+    for (const c of msg.role === 'assistant' ? msg.tool_calls || [] : []) {
+      if (i < turn && !steps.has(c.id)) continue;
+      const raw = c.function?.arguments;
+      let args = {};
+      try { args = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch { args = { _raw: raw }; }
+      const st = steps.get(c.id);
+      const o = st?.output;
+      out.push({
+        id: c.id, tool: c.function?.name, args, status: st?.status ?? 'not run', ok: Boolean(o?.ok),
+        result: o?.result ?? null, error: o?.error ?? st?.error ?? null, errorType: o?.error_type ?? null, policy: o?.policy ?? {},
+      });
+    }
+  }
+  return out;
+}
+
+/** An outcome in words: "write_file shopping.md: denied by the user (ApprovalDenied)". */
+export function outcomeWords(o) {
+  const target = o.args.path || o.args.url || o.args.command || '';
+  const how = o.ok ? 'succeeded'
+    : o.policy?.mode === 'refused' ? `refused in ${o.errorType === 'ModeViolation' ? 'read-only' : 'this'} mode (${o.errorType})`
+      : o.policy?.approval && o.policy.approval.status !== 'approved' ? `${o.policy.approval.status} by the user (${o.errorType})`
+        : `failed (${o.errorType || o.status})`;
+  return `${o.tool}${target ? ` ${String(target).slice(0, 60)}` : ''}: ${how}`;
+}
+
+/** Did any call of these tools (and matching `pred`) succeed? With the outcomes of all of them, in words. */
+export function happened(outcomes, tools, pred = () => true) {
+  const mine = outcomes.filter((o) => tools.includes(o.tool) && pred(o));
+  return { happened: mine.some((o) => o.ok), outcome: mine.length ? mine.map(outcomeWords).join('; ') : `no ${tools.join('/')} call` };
+}
+
+/**
  * Record every state change of the page's real <jig-avatar>, so the run can check that the UI showed
  * what the server's /events stream said.
  */

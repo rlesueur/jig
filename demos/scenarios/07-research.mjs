@@ -5,14 +5,16 @@
  * approved in the conversation. The report is then shown as the real file in Jig's workspace.
  *
  * Capability checks: at least three pages read from railcard.co.uk, the reply and the file name all three
- * railcards and cite railcard.co.uk addresses, every cited address is a page Jig actually read, the save asked
- * first and happened only after Yes.
+ * railcards and cite railcard.co.uk addresses, every cited address is a page Jig actually read (or where a redirect
+ * it was shown took it), the save asked first and happened only after Yes, and the reply claims no save that
+ * didn't happen. Pages and outcomes come from the run's record (GET /runs/<id>), not the content-free audit log.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { cropAround, fit, FULL, marksOf } from '../lib/edit.mjs';
 import { ui } from '../lib/ui-map.mjs';
-import { answerCard, followChat } from './common.mjs';
+import { checkClaims } from '../lib/claims.mjs';
+import { answerCard, followChat, happened, toolOutcomes } from './common.mjs';
 import { backToChat, openSettings, signIn, union } from './common-ui.mjs';
 
 const FILE = 'railcards.md';
@@ -21,6 +23,10 @@ const ASK = 'Compare the Family & Friends Railcard, the Two Together Railcard an
   + 'tell me the price, who can use it, the discount and the main restrictions of each, citing the web address each '
   + `fact came from. Then save a short report with the sources to ${FILE}.`;
 const CARDS = [/Family (&|and) Friends/i, /Two Together/i, /16-25/];
+/* the official site's host, exactly: railcards.co.uk is another site */
+const onRailcard = (u) => {
+  try { return /^(.+\.)?railcard\.co\.uk$/i.test(new URL(/^https?:\/\//i.test(u) ? u : `https://${u}`).hostname); } catch { return false; }
+};
 /* Windows PowerShell 5 reads files without a byte order mark as ANSI, which garbles £ and dashes. */
 const SHOW_FILE = `Get-Content -Encoding UTF8 ${FILE}`;
 
@@ -87,20 +93,24 @@ export default {
     ctx.mark('read-end');
     await s.stopRecording();
 
-    /* capability checks, from the run's own record */
-    const audit = await jig.get(`/audit?run_id=${chat.runId}&kind=tool&limit=500`);
-    const isFetch = (a) => /^(web_fetch|browser_open)$/.test(a.data.tool);
-    const calls = audit.filter((a) => a.kind === 'tool.call' && isFetch(a));
-    const okIds = new Set(audit.filter((a) => a.kind === 'tool.result' && isFetch(a)).map((a) => a.data.call_id));
-    const fetched = calls.map((a) => a.data.args?.url || '');
-    const read = calls.filter((a) => okIds.has(a.data.call_id)).map((a) => a.data.args?.url || '');
-    ctx.note(`pages requested: ${fetched.join(' | ')}; read successfully: ${read.join(' | ')}`);
-    checks.ok('read at least three railcard.co.uk pages', read.filter((u) => /railcard\.co\.uk/i.test(u)).length >= 3, fetched);
-    /* A citation counts only if it is a page Jig actually read (ignoring scheme, "www.", a trailing slash, query and fragment). */
+    /* capability checks, from the run's own record (the audit log keeps only the sizes of addresses) */
+    const run = await jig.get(`/runs/${chat.runId}`);
+    const outcomes = toolOutcomes(run);
+    const pages = outcomes.filter((o) => /^(web_fetch|browser_open)$/.test(o.tool));
     const norm = (u) => u.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
-    const readSet = new Set(read.map(norm));
+    const asked = (o) => String(o.args.url || '');
+    /* where the page really came from: web_fetch gives the address its redirects ended at, browser_open the page's own */
+    const landed = (o) => String((o.tool === 'web_fetch' ? o.result?.final_url : o.result?.url) || asked(o));
+    const redirected = (o) => o.ok && norm(landed(o)) !== norm(asked(o));
+    const read = pages.filter((o) => o.ok);
+    ctx.note(`pages: ${pages.map((o) => `${asked(o)}${redirected(o) ? ` → ${landed(o)}` : ''} (${o.ok ? 'read' : o.errorType || o.status})`).join(' | ')}`);
+    const railcardPages = new Set(read.map(landed).filter(onRailcard).map(norm));
+    checks.ok('read at least three railcard.co.uk pages', railcardPages.size >= 3, pages.map((o) => `${landed(o)} ${o.ok ? 'read' : o.errorType}`));
+    /* A citation counts only if it is a page Jig actually read (ignoring scheme, "www.", a trailing slash, query and
+     * fragment): the address it asked for, or the one a redirect it was shown took it to. */
+    const readSet = new Set(read.flatMap((o) => [asked(o), landed(o)]).map(norm));
     const cited = (t) => [...new Set((t.match(/https?:\/\/[^\s)\]>"'`]+/gi) || []).map((u) => u.replace(/[.,;:]+$/, ''))
-      .filter((u) => /railcard\.co\.uk/i.test(u)))];
+      .filter(onRailcard))];
     const unread = (urls) => urls.filter((u) => !readSet.has(norm(u)));
     const replyCited = cited(chat.final);
     ctx.note(`reply cites: ${replyCited.join(' | ') || '(none)'}`);
@@ -116,6 +126,8 @@ export default {
     ctx.note(`${FILE}: ${text.length} characters; cites: ${fileCited.join(' | ') || '(none)'}`);
     checks.ok(`${FILE} lists railcard.co.uk sources`, fileCited.length > 0, text.slice(0, 400));
     checks.ok(`every address ${FILE} cites is a page Jig read`, unread(fileCited).length === 0, unread(fileCited));
+    const saved = happened(outcomes, ['write_file'], (o) => path.basename(String(o.args.path || '')) === FILE);
+    checkClaims(ctx, 'research', chat.final, [{ kind: 'save', what: `${FILE} was saved`, ...saved, happened: saved.happened && existsSync(file) }]);
 
     const sh = await ctx.term('result', { cwd: jig.workspace, title: 'Windows PowerShell · Jig workspace', cols: 120, rows: 34 });
     ctx.mark('file-start');

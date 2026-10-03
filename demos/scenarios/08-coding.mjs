@@ -6,39 +6,32 @@
  * Running code asks first (the usual setting), so each run shows its approval card with the exact command,
  * answered Yes in the conversation. Afterwards the tests are run again outside Jig, in the same console.
  *
- * Capability checks: report.py was changed, Jig ran the tests in the sandbox, its last test run passed, and
- * the tests pass when run independently.
+ * Capability checks: report.py was changed, Jig ran the tests in the sandbox, its last test run passed (the exit
+ * code from the run's step records), the reply claims no change that didn't happen, and the tests pass when run
+ * independently.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { cropAround, fit, FULL, marksOf } from '../lib/edit.mjs';
 import { ui } from '../lib/ui-map.mjs';
-import { answerCard, followChat } from './common.mjs';
+import { checkClaims } from '../lib/claims.mjs';
+import { answerCard, followChat, toolOutcomes } from './common.mjs';
 import { backToChat, openSettings, signIn } from './common-ui.mjs';
 
 const ASK = 'The tests for report.py in your workspace are failing. Run them in your sandbox with python3 -m unittest -v, '
   + 'find out why, fix report.py (standard library only) and run the tests again until they all pass. '
   + 'Then run report.py and show me the summary.';
 
-/** Each sandbox command the run executed, with its exit code and output, from the run's own messages. */
+/**
+ * Each sandbox command the run asked for, with its exit code and output as Jig recorded them (the step's
+ * structured result; a denied or failed call has no exit code, and says why in `error`).
+ */
 function commandsRun(run) {
-  const calls = new Map();
-  const out = [];
-  for (const msg of run.messages) {
-    for (const c of msg.tool_calls || []) {
-      if (c.function?.name === 'run_command' || c.function?.name === 'run_python') {
-        let args = {};
-        try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* recorded as-is below */ }
-        calls.set(c.id, { tool: c.function.name, command: args.command || args.code || '' });
-      }
-    }
-    if (msg.role === 'tool' && calls.has(msg.tool_call_id)) {
-      let res = {};
-      try { res = JSON.parse(msg.content); } catch { res = { raw: msg.content }; }
-      out.push({ ...calls.get(msg.tool_call_id), ...res });
-    }
-  }
-  return out;
+  return toolOutcomes(run).filter((o) => o.tool === 'run_command' || o.tool === 'run_python').map((o) => ({
+    tool: o.tool, command: String(o.args.command || o.args.code || ''), ok: o.ok,
+    exit_code: o.result?.exit_code, stdout: o.result?.stdout || '', stderr: o.result?.stderr || '',
+    error: o.ok ? null : o.errorType || o.status,
+  }));
 }
 
 export default {
@@ -104,7 +97,10 @@ export default {
     const cmds = commandsRun(run);
     const tests = cmds.filter((c) => /unittest/.test(c.command));
     ctx.note(`sandbox commands: ${cmds.map((c) => `[${c.exit_code ?? c.error ?? '?'}] ${c.command.slice(0, 80)}`).join(' | ')}`);
-    checks.ok('Jig changed report.py', readFileSync(path.join(jig.workspace, 'report.py'), 'utf8') !== before);
+    const changed = readFileSync(path.join(jig.workspace, 'report.py'), 'utf8') !== before;
+    checks.ok('Jig changed report.py', changed);
+    checkClaims(ctx, 'code', chat.final, [{ kind: 'save', what: 'report.py was changed', about: /report\.py|\breport\b|\bscript\b/i,
+      happened: changed, outcome: changed ? 'report.py in the workspace differs from the seeded one' : 'report.py is as seeded' }]);
     checks.ok('Jig ran the tests in its sandbox', tests.length >= 1, cmds.map((c) => c.command));
     checks.equal('Jig\'s last test run in the sandbox passed (exit code)', tests.at(-1)?.exit_code, 0);
     const firstFailed = tests.length > 1 && tests[0].exit_code !== 0;

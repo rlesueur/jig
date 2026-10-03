@@ -50,6 +50,25 @@ Two settings for a take while other Jigs are running: `DEMO_JIG_PORT` moves the 
 `DEMO_WORK` gives the take a snapshot folder and venv of its own instead of `.work/`. pip can't reinstall a venv
 whose `jig.exe` a running Jig holds open, and a failed reinstall leaves that venv without Jig.
 
+For a checkout connector take beside the checkout Jig on 8770, start one of your own on `DEMO_JIG_PORT` with a
+data folder of its own and give that folder as `DEMO_CHECKOUT_DATA`.
+
+## What the checks read
+
+Tool calls and their outcomes come from the run's own record (`GET /runs/<id>`): the arguments from its messages,
+the outcome from its step records (`ok`, `result`, `error_type`, `policy`), never by parsing the tool message,
+which is written for the model and ends with Jig's `[Jig budget]` line. The audit log keeps only sizes and
+decisions, so it can't say which page was read or what a command printed.
+
+**Claims in the reply.** Wherever a reply could claim an action the run can check (a file or draft saved, an email
+sent, an event or schedule made, an issue opened, an order placed), the reply may claim it only if it happened: a
+tool call of that kind succeeded, or the scenario checked it directly (the file changed, the provider has it). The
+rule for what counts as a claim is data, `lib/claims.json` (its `rule` field says it in words), read by
+`lib/claims.mjs` and `connectors/claims.py` alike: a clause with one of the kind's verbs, said by Jig in the first
+person, in a done passive, as the clause's first word ("Saved to shopping.md") or as a state ("shopping.md now
+contains"), and with no negation or condition in the clause. Each such check notes the clauses it found and the
+outcomes it compared them with.
+
 ## Restyling
 
 - UI elements are found **only** by accessible role and name, label or data-testid, all in `lib/ui-map.mjs`.

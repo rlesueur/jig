@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { cropAround, fit, FULL, marksOf } from '../lib/edit.mjs';
+import { BASE } from '../lib/jig.mjs';
 import { ui } from '../lib/ui-map.mjs';
 import { DEMOS, JIG_REPO } from '../lib/util.mjs';
 import { answerCard, followChat } from './common.mjs';
@@ -17,9 +18,10 @@ import { backToChat, openSettings, signIn } from './common-ui.mjs';
 
 /* both run from the demo venv (run.ps1's snapshot of HEAD), so other workers' uncommitted jig/ edits never reach them */
 export const TEST_JIG = { base: 'http://127.0.0.1:8792', config: 'C:\Users\you\\.jig-connectors-test\\jig.toml', snapshot: true };
+/* DEMO_JIG_PORT and DEMO_CHECKOUT_DATA: a checkout Jig of the take's own, beside one already on 8770 */
 export const CHECKOUT_JIG = {
-  base: 'http://127.0.0.1:8770', config: path.join(DEMOS, 'configs', 'connectors-checkout.toml'),
-  dataDir: path.join(os.tmpdir(), 'jig-checkout', 'data'), snapshot: true,
+  base: BASE, config: path.join(DEMOS, 'configs', 'connectors-checkout.toml'),
+  dataDir: process.env.DEMO_CHECKOUT_DATA || path.join(os.tmpdir(), 'jig-checkout', 'data'), snapshot: true,
 };
 
 const CARD_TEXT = {
