@@ -9,6 +9,7 @@ from typing import Any
 from .constants import TERMINAL_GOAL_STATUSES, TERMINAL_TASK_STATUSES, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, dumps, iso, later_iso, new_id, now, now_iso
 from .errors import CannotDelete, NotFound
+from .model import JIG_ONLY_KEYS
 from .recurrence import Recurrence
 
 
@@ -360,8 +361,11 @@ class Store:
             messages = json.loads(session["messages_json"])
         else:
             messages = next((json.loads(r["messages_json"]) for r in reversed(runs) if r["messages_json"]), [])
-        said = [{"role": m["role"], "text": m["content"]} for m in messages
-                if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str) and m["content"].strip()]
+        stopped_key, continue_key = JIG_ONLY_KEYS
+        said = [{"role": m["role"], "text": m["content"], **({"stopped": m[stopped_key]["kind"]} if m.get(stopped_key)
+                                                             else {})}
+                for m in messages if m.get("role") in ("user", "assistant") and not m.get(continue_key)
+                and isinstance(m.get("content"), str) and m["content"].strip()]
         first = next((m["text"] for m in said if m["role"] == "user"), "")
         out = {"id": sid, "title": " ".join(first.split())[:120], "started_at": row["started_at"],
                "updated_at": row["updated_at"], "messages": len(said),

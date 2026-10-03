@@ -17,11 +17,19 @@ from zoneinfo import ZoneInfo
 
 from ..constants import Mode
 from ..errors import NotFound
+from ..model import JIG_ONLY_KEYS
 
 # A saved chat message keeps what Jig added for the model (the <jig-context> block, a budget line) under this
 # key, apart from what the user wrote or the tool gave, and it is added back when the chat is replayed: the
 # conversation then reaches the model exactly as it did before, so the server can reuse its cache.
 CONTEXT_KEY = "jig_context"
+# A reply Jig stopped as it streamed, for repeating itself, is kept with STOPPED_KEY (what jig.progress recorded,
+# never text). The user's "Continue anyway" adds CONTINUE_PROMPT as a user message marked with CONTINUE_KEY, which
+# relaxes the progress check for that turn. Neither key is sent to the model (jig.model.JIG_ONLY_KEYS).
+STOPPED_KEY, CONTINUE_KEY = JIG_ONLY_KEYS
+CONTINUE_PROMPT = ("[Jig] Your previous reply was stopped part-way because it seemed to be repeating itself. The "
+                   "user has asked you to continue anyway. Carry on from exactly where it stopped, without repeating "
+                   "what you have already written.")
 
 _MODE_TEXT = {
     Mode.RESEARCH: (

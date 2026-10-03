@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from ..audit import AuditLog
 from ..constants import EventType, Mode, RunStatus
-from ..errors import JigError, ModelError, StepLimitExceeded
+from ..errors import JigError, ModelError, ModelStopped, RepeatedActions, StepLimitExceeded
 from ..events import EventBus
 from ..model import ModelClient, ToolCall
 from ..pause import RunPaused, until_paused
 from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
-from .prompts import STEP_LIMIT_PROMPT, budget_line
+from .prompts import CONTINUE_KEY, STOPPED_KEY, STEP_LIMIT_PROMPT, budget_line
 
 DeltaSink = Callable[[str, str], Awaitable[None]]
+# A run that makes the same tool call and gets the same result this many times is stopped.
+REPEATED_ACTION_LIMIT = 3
 
 
 @dataclass
@@ -71,6 +75,22 @@ def _pending_tool_calls(messages: list[dict[str, Any]]) -> list[ToolCall]:
     return []
 
 
+def _continuing(messages: list[dict[str, Any]]) -> bool:
+    """Whether this turn continues a reply that was stopped for repeating itself (the user chose "Continue
+    anyway"), so the progress check is relaxed for it."""
+    last_user = next((m for m in reversed(messages) if m["role"] == "user"), None)
+    return bool(last_user and last_user.get(CONTINUE_KEY))
+
+
+def _action_key(call: ToolCall, result: str) -> str:
+    """The same call (tool and arguments) with the same result, as a digest: no content is kept."""
+    try:
+        args = json.dumps(json.loads(call.arguments_raw or "{}"), sort_keys=True)
+    except ValueError:
+        args = call.arguments_raw
+    return hashlib.sha256(f"{call.name}\0{args}\0{result}".encode()).hexdigest()
+
+
 class Agent:
     def __init__(self, *, model: ModelClient, registry: ToolRegistry, executor: ToolExecutor, store: Store,
                  bus: EventBus, audit: AuditLog, max_steps: int,
@@ -98,6 +118,8 @@ class Agent:
                                on_wait=spec.on_wait, pause=spec.pause)
         steps = _steps_taken(messages)
         limit_reached = False
+        relaxed = _continuing(messages)
+        actions: dict[str, int] = {}
         try:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
@@ -110,8 +132,8 @@ class Agent:
                     limit_reached = True
                     self.store.checkpoint_run(run_id, messages, steps)
                     break
-                result = await until_paused(self._model_step(messages, spec, run_id, steps + 1), spec.pause,
-                                            f"model call {steps + 1}")
+                result = await until_paused(self._model_step(messages, spec, run_id, steps + 1, relaxed=relaxed),
+                                            spec.pause, f"model call {steps + 1}")
                 steps += 1
                 messages.append(result.assistant_message())
                 self.store.checkpoint_run(run_id, messages, steps)
@@ -121,8 +143,18 @@ class Agent:
                     final = result.content
                     break
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
+                self._check_repeats(result.tool_calls, messages, actions, ids)
                 self._add_budget(messages, steps, limit, result)
                 self.store.checkpoint_run(run_id, messages, steps)
+        except ModelStopped as exc:
+            # What arrived is kept, marked as stopped, so the reply can be continued or tried again.
+            messages.append({"role": "assistant", "content": exc.partial.content, STOPPED_KEY: exc.stop.record()})
+            self.store.checkpoint_run(run_id, messages, steps)
+            self.store.finish_run(run_id, status=RunStatus.FAILED, error=f"ModelStopped: {exc}")
+            self.audit.record("run.end", "run stopped: the model was repeating itself", **ids, status="stopped",
+                              stop=exc.stop.record())
+            self.bus.publish(EventType.RUN_END, status="stopped", reason=exc.stop.kind, **ids)
+            raise
         except RunPaused as exc:
             # The run record stays 'running' with its checkpoint, so resuming the task picks it up.
             self.store.checkpoint_run(run_id, messages, steps)
@@ -156,6 +188,24 @@ class Agent:
         return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages,
                          limit_reached=limit_reached)
 
+    def _check_repeats(self, calls: list[ToolCall], messages: list[dict[str, Any]], actions: dict[str, int],
+                       ids: dict[str, Any]) -> None:
+        """Stop the run once it has made the same call and got the same result REPEATED_ACTION_LIMIT times."""
+        last = max(i for i, m in enumerate(messages) if m["role"] == "assistant")
+        results = {m.get("tool_call_id"): m["content"] for m in messages[last + 1:] if m["role"] == "tool"}
+        for call in calls:
+            if call.id not in results:
+                continue
+            key = _action_key(call, results[call.id])
+            actions[key] = actions.get(key, 0) + 1
+            if actions[key] >= REPEATED_ACTION_LIMIT:
+                self.audit.record("run.repeated_actions", f"{call.name} made with the same arguments and the same "
+                                  f"result {actions[key]} times", **ids, tool=call.name, times=actions[key])
+                raise RepeatedActions(
+                    f"Jig stopped this run because it made the same call ({call.name}, with the same arguments) and "
+                    f"got the same result {actions[key]} times, so it was not getting anywhere. What it did up to "
+                    "then is kept.")
+
     def _add_budget(self, messages: list[dict[str, Any]], step: int, limit: int, result: Any) -> None:
         """End the step's last tool result with the budget line (kept, so the prompt stays a stable prefix)."""
         if not messages or messages[-1]["role"] != "tool":
@@ -186,7 +236,7 @@ class Agent:
         return result.content
 
     async def _model_step(self, messages: list[dict[str, Any]], spec: RunSpec, run_id: str, idx: int, *,
-                          offer_tools: bool = True):
+                          offer_tools: bool = True, relaxed: bool = False):
         ids = {"run_id": run_id, "task_id": spec.task_id}
         tools = self.registry.schemas_for_mode(spec.mode, task=spec.kind == "task") if offer_tools else []
         step_id = self.store.start_step(run_id, idx, "model_call", self.model.model_name,
@@ -203,10 +253,20 @@ class Agent:
                 await sink(kind, text)
 
         try:
-            result = await self.model.chat(messages, tools=tools or None, on_delta=on_delta)
+            result = await self.model.chat(messages, tools=tools or None, on_delta=on_delta, relaxed=relaxed)
         except asyncio.CancelledError:
             self.store.finish_step(step_id, status="cancelled", error="interrupted")
             self.bus.publish(EventType.MODEL_END, step=idx, ok=False, **ids)
+            raise
+        except ModelStopped as exc:
+            # Only where and why it stopped is recorded, never the repeated text.
+            self.store.finish_step(step_id, status="stopped", error=str(exc), output={
+                "stop": exc.stop.record(), "content_chars": len(exc.partial.content),
+                "reasoning_chars": len(exc.partial.reasoning), "relaxed": relaxed,
+                "elapsed_s": round(exc.partial.elapsed_s, 3)})
+            self.audit.record("model.stopped", f"step {idx}: stopped as it streamed, repeating itself", **ids,
+                              step=idx, stop=exc.stop.record(), relaxed=relaxed)
+            self.bus.publish(EventType.MODEL_END, step=idx, ok=False, stopped=exc.stop.kind, **ids)
             raise
         except JigError as exc:
             self.store.finish_step(step_id, status="error", error=str(exc))

@@ -53,9 +53,16 @@ from .setup import Controller, setup_router, timezone_state
 
 
 class ChatIn(BaseModel):
-    message: str
+    message: str = ""
     session_id: str | None = None
     mode: Mode = Mode.ACTION
+    # After a reply Jig stopped for repeating itself: "retry" asks again, "continue" carries it on.
+    action: Literal["send", "retry", "continue"] = "send"
+
+
+class TaskRetryIn(BaseModel):
+    # Carry the stopped task on from where it stopped, instead of running it again from the start.
+    continue_anyway: bool = False
 
 
 class GoalIn(BaseModel):
@@ -596,7 +603,7 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.post("/chat")
     async def chat(request: Request, body: ChatIn) -> StreamingResponse:
         jig = J(request)
-        stream = jig.chat(body.message, session_id=body.session_id, mode=body.mode)
+        stream = jig.chat(body.message, session_id=body.session_id, mode=body.mode, action=body.action)
         first = await anext(stream)
 
         async def gen() -> AsyncIterator[str]:
@@ -723,6 +730,10 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.post("/tasks/{task_id}/resume")
     async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
         return J(request).resume_task(task_id)
+
+    @app.post("/tasks/{task_id}/retry")
+    async def retry_task(request: Request, task_id: str, body: TaskRetryIn) -> dict[str, Any]:
+        return J(request).retry_task(task_id, continue_anyway=body.continue_anyway)
 
     @app.get("/agent")
     async def agent_status(request: Request) -> dict[str, Any]:

@@ -11,8 +11,9 @@ from typing import Any
 
 from .agent.loop import Agent, RunSpec
 from .agent.planner import Planner
-from .agent.prompts import (CONTEXT_KEY, OUTCOME_PROMPT, OUTCOME_SCHEMA, agent_system_prompt, chosen_memories,
-                            for_model, kept_apart, shown_memories, turn_context)
+from .agent.prompts import (CONTEXT_KEY, CONTINUE_KEY, CONTINUE_PROMPT, OUTCOME_PROMPT, OUTCOME_SCHEMA, STOPPED_KEY,
+                            agent_system_prompt, chosen_memories, for_model, kept_apart, shown_memories,
+                            turn_context)
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
 from .config import Config
@@ -21,7 +22,7 @@ from .connectors import register_tools as register_connector_tools
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
 from .discovery import check_context
-from .errors import CannotDelete, JigError, ModelCapabilityError, NotFound
+from .errors import CannotDelete, JigError, ModelCapabilityError, ModelStopped, NotFound
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .instance import InstanceLock
@@ -45,6 +46,10 @@ log = logging.getLogger(__name__)
 
 # How much of an earlier task's result a dependent task is given in its prompt.
 DEPENDENCY_RESULT_CHARS = 4000
+# What the user is told when Jig stops a reply or a task because the model was repeating itself
+# (jig.progress). The web UI recognises a stopped task by its error starting with TASK_STOPPED.
+CHAT_STOPPED = "Jig stopped this reply because it was repeating itself."
+TASK_STOPPED = "Jig stopped this task because"
 
 _CHAT_EVENT_TYPES = {EventType.TOOL_START, EventType.TOOL_SUMMARY, EventType.TOOL_END, EventType.SENTINEL_VERDICT,
                      EventType.APPROVAL_REQUESTED, EventType.APPROVAL_RESOLVED}
@@ -434,6 +439,36 @@ class Jig:
         self.scheduler.wake()
         return task
 
+    def retry_task(self, task_id: str, *, continue_anyway: bool) -> dict[str, Any]:
+        """A task Jig stopped because the model was repeating itself: run it again from the start, or continue
+        from where it stopped, with the progress check relaxed for that reply. Tasks of the same goal that were
+        held back by it are lined up again."""
+        task = self.store.get_task(task_id)
+        runs = self.store.list_runs(task_id=task_id, limit=1)
+        last = self.store.get_run(runs[0]["id"], with_steps=False) if runs else None
+        if task["status"] != TaskStatus.FAILED or not last or not last["messages"] \
+                or STOPPED_KEY not in last["messages"][-1]:
+            raise ValueError(f"task {task_id} was not stopped for repeating itself, so it cannot be "
+                             f"{'continued' if continue_anyway else 'tried again'} this way")
+        if continue_anyway:
+            run_id = self.store.create_run(kind="task", mode=Mode(task["mode"]), task_id=task_id,
+                                           goal_id=task["goal_id"])
+            self.store.checkpoint_run(run_id, [*last["messages"], {"role": "user", "content": CONTINUE_PROMPT,
+                                                                   CONTINUE_KEY: True}], last["steps"])
+        self.audit.record("task.retried", "continued anyway by the user" if continue_anyway else
+                          "tried again by the user", actor="user", task_id=task_id, continue_anyway=continue_anyway)
+        task = self.set_task_status(task_id, TaskStatus.QUEUED, error=None, finished_at=None)
+        if task["goal_id"]:
+            for other in self.store.list_tasks(goal_id=task["goal_id"]):
+                if other["status"] == TaskStatus.BLOCKED:
+                    self.set_task_status(other["id"], TaskStatus.QUEUED, error=None, finished_at=None)
+            goal = self.store.get_goal(task["goal_id"])
+            if goal["status"] == GoalStatus.FAILED:
+                self.store.update_goal(goal["id"], status=GoalStatus.ACTIVE, error=None)
+                self.bus.publish(EventType.GOAL_STATUS, goal_id=goal["id"], status=GoalStatus.ACTIVE.value)
+        self.scheduler.wake()
+        return task
+
     def agent_status(self) -> dict[str, Any]:
         return {"paused": self.scheduler.paused, "running": self.scheduler.running_task_ids,
                 "paused_tasks": [t["id"] for t in self.store.list_tasks(status=TaskStatus.PAUSED)]}
@@ -535,6 +570,10 @@ class Jig:
             return
         except asyncio.CancelledError:
             raise
+        except ModelStopped as exc:
+            self.set_task_status(task_id, TaskStatus.FAILED, error=f"{TASK_STOPPED} {exc.stop.describe('the model')}. "
+                                 "You can try it again, or continue it anyway.")
+            return
         except (JigError, OSError) as exc:
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"{type(exc).__name__}: {exc}")
             return
@@ -626,23 +665,44 @@ class Jig:
         self.bus.publish(EventType.HISTORY_CHANGED, action=action)
 
     # Chat ------------------------------------------------------------------
-    async def chat(self, message: str, *, session_id: str | None = None,
-                   mode: Mode = Mode.ACTION) -> AsyncIterator[dict[str, Any]]:
-        """Stream one chat turn: reasoning/content deltas, tool and approval events, then ``done``."""
-        if not message.strip():
+    async def chat(self, message: str = "", *, session_id: str | None = None, mode: Mode = Mode.ACTION,
+                   action: str = "send") -> AsyncIterator[dict[str, Any]]:
+        """Stream one chat turn: reasoning/content deltas, tool and approval events, then ``done``, ``stopped``
+        (Jig stopped the reply because it was repeating itself; what had arrived is kept) or ``error``.
+
+        After a stopped reply, ``action`` "retry" asks the same message again from the start, and "continue"
+        carries the reply on from where it stopped, with the progress check relaxed for it (CONTINUE_PROMPT).
+        Neither happens unless the user asks. If the turn is cancelled (the user's Stop), what was said and done
+        so far is kept, with the part of the reply that had arrived."""
+        if action not in ("send", "retry", "continue"):
+            raise ValueError(f"action must be 'send', 'retry' or 'continue', not {action!r}")
+        if action == "send" and not message.strip():
             raise ValueError("message must not be empty")
+        if action != "send" and not session_id:
+            raise ValueError(f"{action} needs the conversation's session_id")
         session_id = session_id or new_id("sess")
         try:
             history = self.store.get_session(session_id)
         except NotFound:
+            if action != "send":
+                raise
             history = []
+        asked = message
+        if action != "send":
+            if not history or (history[-1].get(STOPPED_KEY) or {}).get("kind") != "repetition":
+                raise ValueError("the last reply in this conversation was not stopped for repeating itself")
+            last_user = max(i for i, m in enumerate(history) if m["role"] == "user" and not m.get(CONTINUE_KEY))
+            asked = history[last_user]["content"]
+            if action == "retry":
+                message, history = asked, history[:last_user]
+        continuing = action == "continue"
         shown, left_out = trimmed_history(history, self.context_tokens())
         if left_out:
             self.audit.record("chat.history_trimmed", f"the first {left_out} of {len(history)} messages of a long "
                               "conversation were left out of the prompt to fit the model's context", actor="runtime",
                               session_id=session_id, left_out=left_out, messages=len(history))
-        context = self._turn_context(message, shown_memories(shown))
-        ask = message + context
+        context = "" if continuing else self._turn_context(message, shown_memories(shown))
+        ask = CONTINUE_PROMPT if continuing else message + context
         replay = [for_model(m) for m in shown]
         if left_out:
             if replay:
@@ -650,33 +710,63 @@ class Jig:
             else:
                 ask = trim_note(left_out) + ask
         messages = [{"role": "system", "content": self._system_prompt(mode)},
-                    *replay, {"role": "user", "content": ask}]
+                    *replay, {"role": "user", "content": ask, **({CONTINUE_KEY: True} if continuing else {})}]
         turn_start = len(messages) - 1
         extra = {"history_trimmed": left_out} if left_out else {}
+        if action != "send":
+            self.audit.record("chat.retried", "continued anyway by the user" if continuing else "tried again by "
+                              "the user", actor="user", session_id=session_id, action=action)
 
         def saved() -> list[dict[str, Any]]:
             """The whole conversation, with this turn as the user wrote it and the tool results as the tools gave
             them; what Jig added for the model is kept apart (``CONTEXT_KEY``) to be replayed with them."""
-            turn = [{**m, "content": message, CONTEXT_KEY: context} if i == 0 else kept_apart(m)
-                    for i, m in enumerate(messages[turn_start:])]
-            return [*history, *turn]
+            first = ({"role": "user", "content": CONTINUE_PROMPT, CONTINUE_KEY: True} if continuing
+                     else {**messages[turn_start], "content": message, CONTEXT_KEY: context})
+            return [*history, first, *(kept_apart(m) for m in messages[turn_start + 1:])]
+
+        def finished() -> list[dict[str, Any]]:
+            """A continued reply that finished without using tools is saved as one reply."""
+            turn = saved()[len(history):]
+            if continuing and len(turn) == 2 and not turn[1].get("tool_calls"):
+                stopped = {k: v for k, v in history[-1].items() if k != STOPPED_KEY}
+                return [*history[:-1], {**stopped, "content": (stopped.get("content") or "") + turn[1]["content"]}]
+            return saved()
 
         run_id = self.store.create_run(kind="chat", mode=mode, session_id=session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        arrived: list[str] = []  # the reply text of the model call in progress
 
         async def on_delta(kind: str, text: str) -> None:
+            if kind == "content":
+                arrived.append(text)
             await queue.put({"type": kind, "text": text})
 
         def listener(event: Event) -> None:
-            if event.data.get("run_id") == run_id and event.type in _CHAT_EVENT_TYPES:
+            if event.data.get("run_id") != run_id:
+                return
+            if event.type in (EventType.MODEL_START, EventType.MODEL_END):
+                arrived.clear()
+            if event.type in _CHAT_EVENT_TYPES:
                 queue.put_nowait({"type": "event", "event": event.as_dict()})
 
-        spec = RunSpec(kind="chat", mode=mode, intent=f"User message: {message}", session_id=session_id,
+        spec = RunSpec(kind="chat", mode=mode, intent=f"User message: {asked}", session_id=session_id,
                        run_id=run_id, on_delta=on_delta)
 
         async def drive() -> None:
             try:
                 result = await self.agent.run(messages, spec)
+            except ModelStopped as exc:
+                self.store.save_session(session_id, answered_only(saved()))
+                await queue.put({"type": "stopped", "reason": exc.stop.kind, "message": CHAT_STOPPED,
+                                 "detail": exc.stop.describe(), "stop": exc.stop.record(), "relaxed": continuing,
+                                 "run_id": run_id, "session_id": session_id})
+                return
+            except asyncio.CancelledError:
+                if arrived:
+                    messages.append({"role": "assistant", "content": "".join(arrived),
+                                     STOPPED_KEY: {"kind": "cancelled"}})
+                self.store.save_session(session_id, answered_only(saved()))
+                raise
             except Exception as exc:
                 if not isinstance(exc, (JigError, OSError)):
                     log.exception("chat run %s crashed", run_id)
@@ -685,7 +775,7 @@ class Jig:
                 await queue.put({"type": "error", "error": f"{type(exc).__name__}: {exc}", "run_id": run_id,
                                  "session_id": session_id})
                 return
-            self.store.save_session(session_id, saved())
+            self.store.save_session(session_id, finished())
             done = {"limit_reached": True} if result.limit_reached else {}
             await queue.put({"type": "done", "final": result.final, "run_id": run_id, "session_id": session_id,
                              "steps": result.steps, **done, **extra})
@@ -693,11 +783,11 @@ class Jig:
         self.bus.add_listener(listener)
         runner = asyncio.create_task(drive())
         try:
-            yield {"type": "start", "run_id": run_id, "session_id": session_id, **extra}
+            yield {"type": "start", "run_id": run_id, "session_id": session_id, "action": action, **extra}
             while True:
                 item = await queue.get()
                 yield item
-                if item["type"] in ("done", "error"):
+                if item["type"] in ("done", "stopped", "error"):
                     break
         finally:
             self.bus.remove_listener(listener)
