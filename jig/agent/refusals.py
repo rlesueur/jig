@@ -30,9 +30,7 @@ TOOL_AIMS = {
     "gcal_cancel_event": "cancel calendar events", "outlook_cancel_event": "cancel calendar events",
     "gdrive_create_file": "save files to your Drive", "gdrive_update_file": "change files in your Drive",
     "onedrive_upload_file": "save files to your OneDrive", "github_comment": "comment on GitHub",
-    "github_create_issue": "open GitHub issues", "slack_post_message": "post in Slack",
-    "slack_reply_in_thread": "post in Slack", "discord_post_message": "post in Discord",
-    "matrix_send_message": "post in Matrix", "signal_send_message": "send Signal messages",
+    "github_create_issue": "open GitHub issues", "discord_post_message": "post in Discord",
     "whatsapp_send_message": "send WhatsApp messages",
 }
 

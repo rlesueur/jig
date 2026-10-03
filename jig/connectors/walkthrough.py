@@ -5,8 +5,8 @@ what to click, and a check that the step worked before moving on. The same steps
 reads (``connection_help``) when someone asks in chat for help connecting an account, so both always say
 the same thing.
 
-Every check here is real and read-only: it asks the provider (Google, Discord, a Matrix homeserver), runs
-signal-cli, or runs one of the connector's own read tools. None of them ever takes or returns a secret:
+Every check here is real and read-only: it asks the provider (Google or Discord), or runs one of the
+connector's own read tools. None of them ever takes or returns a secret:
 tokens, passwords and client files are only typed into Settings, which sends them straight to the vault.
 
 A step's ``action`` tells the page what to show:
@@ -20,22 +20,18 @@ A step's ``action`` tells the page what to show:
   check         a non-secret value to type (``input``) and a check (``check``) to run on it
   pick          a list of channels or rooms found with the connected account; picking one reads it
   try           a final read with the connected account, in plain words
-  signal_install  what Jig found (Java, signal-cli), "Download for me" with progress, or a path to check
-  signal_link   Jig runs signal-cli's link step and shows its link as a QR code until the phone has scanned it
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from ..constants import Effect, Mode, ToolCategory
 from ..errors import ConnectorError, ConnectorNotConnected, JigError
-from . import discord, google, matrix, signal_setup
+from . import discord, google
 from .base import PROVIDERS, Connectors
 
 SETTINGS_LINK = "#settings/connections/{name}"
@@ -45,16 +41,6 @@ SECRET_RULE = ("Never ask for, or accept, a password, token, client secret or cl
                "into Jig's vault. If someone pastes one into the chat anyway, tell them to make a new one on the "
                "provider's site (the pasted one should be treated as leaked) and to type the new one in Settings.")
 
-# Slack builds the app from this when the link below is opened (api.slack.com/apps?new_app=1&manifest_json=):
-# the name, a bot user and exactly the scopes Jig uses, so nobody has to add them by hand.
-SLACK_MANIFEST = {
-    "display_information": {"name": "Jig", "description": "Your Jig assistant, reading and (with your OK) posting."},
-    "features": {"bot_user": {"display_name": "Jig", "always_online": False}},
-    "oauth_config": {"scopes": {"bot": ["channels:read", "channels:history", "chat:write", "users:read"]}},
-    "settings": {"org_deploy_enabled": False, "socket_mode_enabled": False, "token_rotation_enabled": False},
-}
-SLACK_NEW_APP = "https://api.slack.com/apps?new_app=1&manifest_json=" + quote(json.dumps(SLACK_MANIFEST,
-                                                                                      separators=(",", ":")))
 DISCORD_INVITE = "https://discord.com/oauth2/authorize?client_id={application_id}&scope=bot&permissions=68608"
 
 
@@ -204,32 +190,6 @@ STEPS: dict[str, list[dict[str, Any]]] = {
               action={"type": "connect"}),
         _step("try", "See your repositories", "Let me check which repositories I can see.", action={"type": "try"}),
     ],
-    "slack": [
-        _step("create", "Make the Jig bot",
-              "Slack apps live in your own workspace. My link fills everything in for you: the name, a bot "
-              "called Jig, and exactly what it may do.",
-              see="Slack asks you to pick a workspace, then shows the app's settings for you to review, then a "
-                  "Create button.",
-              do=["Pick your workspace, then Next.", "Have a look, then Next again.", "Choose Create."],
-              links=[_link(SLACK_NEW_APP, "Make the Jig bot")],
-              action={"type": "done", "label": "I've made it"}),
-        _step("token", "Install it and copy its token",
-              "Now install the bot in your workspace and give me its token. It goes straight into my vault and "
-              "I'll check it with Slack.",
-              see="The app's settings. In the left-hand menu, Install App (or OAuth & Permissions), with an "
-                  "'Install to <your workspace>' button. After you choose Allow, a 'Bot User OAuth Token' "
-                  "starting xoxb- with a Copy button.",
-              do=["Choose Install App in the left-hand menu, then Install to your workspace, then Allow.",
-                  "Copy the Bot User OAuth Token (it starts xoxb-) and paste it below."],
-              links=[_link("https://api.slack.com/apps", "Your Slack apps")],
-              action={"type": "token"}),
-        _step("channel", "Invite me to a channel",
-              "I can only read channels I've been invited to. Make one for me (like #jig-test), or use one you "
-              "have, and invite me.",
-              see="Your Slack channel. Typing /invite @Jig and pressing Enter adds the bot.",
-              do=["In Slack, open the channel and type /invite @Jig", "Then choose Look again below and pick it."],
-              action={"type": "pick"}),
-    ],
     "discord": [
         _step("create", "Make the Jig app",
               "Discord bots live in your own server. First make an app for it on Discord's developer site.",
@@ -262,59 +222,6 @@ STEPS: dict[str, list[dict[str, Any]]] = {
                   "Make a channel for me (like #jig-test) if you like, then choose Look again below and pick it."],
               links=[_link(DISCORD_INVITE, "Add the bot to your server")],
               action={"type": "pick"}),
-    ],
-    "matrix": [
-        _step("server", "Your homeserver",
-              "Which Matrix server is your account on? For most people it's matrix.org. I'll check it answers.",
-              see="Nothing to open: your Matrix ID ends with your server, as in @you:matrix.org.",
-              action={"type": "check", "check": "matrix_server",
-                      "input": {"name": "homeserver", "prompt": "Homeserver", "placeholder": "https://matrix.org"}}),
-        _step("token", "Sign in",
-              "Now sign in. The easiest way: your Matrix ID and password. I sign in once as a new device called "
-              "Jig, keep only that device's key in my vault, and forget the password.",
-              do=["Type your Matrix ID (like @you:matrix.org) and your password, then Connect.",
-                  "Or type token as the sign-in and paste an access token instead of a password."],
-              note="Jig can't read or post in end-to-end encrypted rooms: it has no encryption keys.",
-              action={"type": "token"}),
-        _step("room", "Pick a room",
-              "Here are the rooms you've joined. Encrypted ones are greyed out, because I can't read those.",
-              do=["Pick a room, or make an unencrypted one in Element (New room, then turn off 'Enable "
-                  "end-to-end encryption') and choose Look again."],
-              action={"type": "pick"}),
-    ],
-    "signal": [
-        _step("install", "Get signal-cli",
-              "Signal works through signal-cli, a free program that links to your phone the way Signal Desktop "
-              "does. It needs Java 25 or newer. I can download both for you, or use copies you already have.",
-              do=["Choose Download for me. I get signal-cli from its official release on GitHub and, if this "
-                  "computer has no Java 25, Eclipse Temurin's free Java. I check each against the checksum its "
-                  "publisher lists and keep them in my own folder, just for Signal.",
-                  "Already have signal-cli? If I found it, choose Use the one I found. If not, open 'I have my "
-                  "own signal-cli', type where its bin\\signal-cli.bat is, and choose Check."],
-              links=[_link(signal_setup.TEMURIN_PAGE, "Get Java yourself (Eclipse Temurin)"),
-                     _link(signal_setup.RELEASES_PAGE, "Get signal-cli yourself")],
-              note="The download is about 120 MB for signal-cli, plus about 60 MB for Java if you need it. Neither "
-                   "is part of Jig: signal-cli is open source under the GPL-3.0 licence, and Temurin under the "
-                   "GPL-2.0 with the Classpath Exception. Both are free.",
-              action={"type": "signal_install", "check": "signal_cli",
-                      "input": {"name": "signal_cli", "prompt": "Where signal-cli.bat is",
-                                "placeholder": "C:\Users\you\\signal-cli\\bin\\signal-cli.bat"}}),
-        _step("link", "Link it to your phone",
-              "Now I'll show a code for your phone to scan. It adds me to your Signal account as a linked device "
-              "called Jig, like Signal Desktop. Your phone stays your main Signal.",
-              see="In Signal on your phone: Settings, then Linked devices, then Link new device. Your camera opens "
-                  "to scan the code.",
-              do=["Choose Show the code.",
-                  "On your phone, open Signal and go to Settings > Linked devices > Link new device.",
-                  "Point your phone's camera at the code, and confirm if Signal asks.",
-                  "Keep this page open: I'll say when it's linked."],
-              note="signal-cli keeps the linked device's keys in its own folder in your user profile. To undo the "
-                   "link at any time, open Signal on your phone, Settings > Linked devices, and unlink Jig.",
-              action={"type": "signal_link"}),
-        _step("token", "Connect",
-              "Last step: choose what I may do. I've filled in your number and where signal-cli is, and I'll "
-              "check that Signal knows the number.",
-              action={"type": "token"}),
     ],
     "whatsapp": [
         _step("create", "Make a WhatsApp app",
@@ -384,9 +291,8 @@ TRY_TOOLS: dict[str, tuple[str, dict[str, Any]]] = {
     "github": ("github_list_repos", {"max_results": 10}),
     "whatsapp": ("whatsapp_account", {}),
 }
-PICK_TOOLS = {"slack": "slack_list_channels", "discord": "discord_list_channels", "matrix": "matrix_list_rooms"}
-READ_TOOLS = {"slack": ("slack_read_channel", "channel_id"), "discord": ("discord_read_channel", "channel_id"),
-              "matrix": ("matrix_read_room", "room_id")}
+PICK_TOOLS = {"discord": "discord_list_channels"}
+READ_TOOLS = {"discord": ("discord_read_channel", "channel_id")}
 
 
 def walkthrough(name: str, *, install_url: str | None = None) -> list[dict[str, Any]]:
@@ -475,52 +381,18 @@ async def _discord_app(http: httpx.AsyncClient, values: Any) -> dict[str, Any]:
                "the last step.", application_id=app_id, invite_url=DISCORD_INVITE.format(application_id=app_id))
 
 
-async def _matrix_server(http: httpx.AsyncClient, values: Any) -> dict[str, Any]:
-    typed = _value(values, "homeserver", "homeserver")
-    base = await matrix.check_homeserver(http, typed if "://" in typed else f"https://{typed}")
-    try:
-        r = await http.get(f"{base}{matrix.CLIENT}/login", timeout=20)
-        flows = [f.get("type") for f in r.json().get("flows", [])] if r.status_code == 200 else []
-    except (httpx.HTTPError, ValueError, AttributeError):
-        flows = []
-    if "m.login.password" in flows:
-        return _ok(f"Found your homeserver at {base}. It lets you sign in with a password.", homeserver=base)
-    return _ok(f"Found your homeserver at {base}. It doesn't offer password sign-in, so in the next step type token "
-               "as the sign-in and paste an access token (Element: Settings, Help & About, Advanced).",
-               homeserver=base, password_login=False)
-
-
-async def _signal_cli(jig: Any, values: Any) -> dict[str, Any]:
-    binary, version = await signal_setup.check_ready(_value(values, "signal_cli", "path to signal-cli.bat", 500),
-                                                     signal_setup.tools_dir(jig.config.data_dir))
-    return _ok(f"signal-cli runs ({version}). Now link it to your phone.", signal_cli=binary)
-
-
 async def _pick(jig: Any, name: str) -> dict[str, Any]:
     tool = PICK_TOOLS[name]
-    if name == "slack":
-        out = await _read_tool(jig, tool, {})
-        items = [{"id": c["channel_id"], "label": f"#{c['name']}",
-                  "note": "" if c["bot_is_member"] else "Jig isn't in this channel yet: /invite @Jig",
-                  "disabled": not c["bot_is_member"]} for c in out["channels"]]
-    elif name == "discord":
-        servers = (await _read_tool(jig, tool, {}))["servers"]
-        items = []
-        for s in servers[:10]:
-            listed = await _read_tool(jig, tool, {"guild_id": s["guild_id"]})
-            items += [{"id": c["channel_id"], "label": f"#{c['name']}", "note": f"in {s['name']}", "disabled": False}
-                      for c in listed["channels"]]
-    else:
-        rooms = (await _read_tool(jig, tool, {}))["rooms"]
-        items = [{"id": r["room_id"], "label": r.get("name") or r["room_id"],
-                  "note": "encrypted: Jig can't read it" if r.get("encrypted") else "",
-                  "disabled": bool(r.get("encrypted"))} for r in rooms]
+    servers = (await _read_tool(jig, tool, {}))["servers"]
+    items = []
+    for s in servers[:10]:
+        listed = await _read_tool(jig, tool, {"guild_id": s["guild_id"]})
+        items += [{"id": c["channel_id"], "label": f"#{c['name']}", "note": f"in {s['name']}", "disabled": False}
+                  for c in listed["channels"]]
     items.sort(key=lambda i: (i["disabled"], i["label"].lower()))
     if not any(not i["disabled"] for i in items):
-        where = {"slack": "a channel I've been invited to (type /invite @Jig in it)",
-                 "discord": "a server with the bot in it (open the link in this step)",
-                 "matrix": "an unencrypted room you've joined"}[name]
-        return _not_yet(f"I can't see {where} yet. Do that, then choose Look again.", items=items)
+        return _not_yet("I can't see a server with the bot in it (open the link in this step) yet. Do that, then "
+                        "choose Look again.", items=items)
     return _ok("Here's what I can see. Pick the one you'd like me to use.", items=items)
 
 
@@ -574,7 +446,7 @@ async def _try(jig: Any, name: str) -> dict[str, Any]:
                "OK first.")
 
 
-CHECKS = {"google_client", "discord_app", "matrix_server", "signal_cli", "pick", "read", "try"}
+CHECKS = {"google_client", "discord_app", "pick", "read", "try"}
 
 
 async def run_check(jig: Any, name: str, check: str, values: Any) -> dict[str, Any]:
@@ -592,10 +464,6 @@ async def run_check(jig: Any, name: str, check: str, values: Any) -> dict[str, A
         out = await google_client_check(jig.http, client)
     elif check == "discord_app":
         out = await _discord_app(jig.http, values)
-    elif check == "matrix_server":
-        out = await _matrix_server(jig.http, values)
-    elif check == "signal_cli":
-        out = await _signal_cli(jig, values)
     elif check == "pick":
         if name not in PICK_TOOLS:
             raise ConnectorError(f"{PROVIDERS[name].label} has no channels to pick")
@@ -629,7 +497,7 @@ def _plain(step: dict[str, Any]) -> dict[str, Any]:
     kind = step["action"]["type"]
     if kind in ("token", "google_client"):
         out["typed_where"] = "Settings > Connections only (it goes straight to the vault); never in the chat"
-    elif kind in ("check", "pick", "try", "connect", "signal_install", "signal_link"):
+    elif kind in ("check", "pick", "try", "connect"):
         out["checked_in"] = "Settings > Connections, which checks this step for real"
     return out
 
@@ -637,12 +505,12 @@ def _plain(step: dict[str, Any]) -> dict[str, Any]:
 def register_help_tool(registry: Any, connectors: Connectors) -> None:
     @registry.tool(
         description="Help someone connect one of their accounts (Gmail, Google Calendar, Google Drive, Microsoft, "
-        "GitHub, Slack, Discord, Matrix, Signal, WhatsApp): the same step-by-step guide Settings > Connections "
+        "GitHub, Discord, WhatsApp): the same step-by-step guide Settings > Connections "
         "shows, and whether it is connected now. Use it whenever they ask how to connect, set up or fix an account. "
         "Read-only. Without a provider, lists every account and whether it is connected.",
         effect=Effect.READ, category=ToolCategory.WEB,
-        args={"provider": "Which account: gmail, google-calendar, google-drive, microsoft, github, slack, discord, "
-                          "matrix, signal or whatsapp. Empty for all of them."},
+        args={"provider": "Which account: gmail, google-calendar, google-drive, microsoft, github, discord "
+                          "or whatsapp. Empty for all of them."},
     )
     async def connection_help(ctx: Any, provider: str = "") -> dict[str, Any]:
         rows = {r["provider"]: r for r in ctx.connectors.store.status()}

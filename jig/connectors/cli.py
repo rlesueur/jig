@@ -37,7 +37,7 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:
                    help="GitHub: connect with a fine-grained personal access token instead of signing in with the "
                         "Jig GitHub App (advanced)")
     c.add_argument("--option", action="append", default=[], metavar="NAME=VALUE",
-                   help="a non-secret setting the connector asks for (for example homeserver=https://matrix.org)")
+                   help="a non-secret setting the connector asks for (NAME=VALUE)")
     c.add_argument("--stdin", action="store_true",
                    help="read the secret(s) the connector asks for from standard input, one per line, instead of "
                         "prompting")

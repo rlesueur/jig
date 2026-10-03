@@ -34,8 +34,7 @@ for _names, _kinds, _object in (
     (("memory_forget",), (_DELETE,), "memory"),
     (("gmail_create_draft",), (_SAVE, _CREATE), "draft"),
     (("gmail_send", "gmail_send_draft", "gmail_reply"), (_SEND,), "email"),
-    (("slack_post_message", "slack_reply_in_thread", "discord_post_message", "matrix_send_message",
-      "signal_send_message"), (_SEND,), "message"),
+    (("discord_post_message", "whatsapp_send_message"), (_SEND,), "message"),
     (("github_comment",), (_SEND, _CREATE), "comment"),
     (("github_create_issue",), (_CREATE,), "issue"),
     (("gcal_create_event", "outlook_create_event"), (_BOOK, _CREATE), "event"),
@@ -64,7 +63,7 @@ _OBJECTS = {
     "memory": r"\bmemor(?:y|ies)\b|\bremember(?:ed)?\b",
     "draft": r"\bdrafts?\b",
     "email": r"\be-?mails?\b|\bmail\b|\brepl(?:y|ies)\b|\binbox\b",
-    "message": r"\bmessages?\b|\bslack\b|\bdiscord\b|\bsignal\b|\bmatrix\b|\bchannel\b",
+    "message": r"\bmessages?\b|\bdiscord\b|\bwhatsapp\b|\bchannel\b",
     "comment": r"\bcomments?\b",
     "issue": r"\bissues?\b",
     "event": r"\bevents?\b|\bmeetings?\b|\bcalendar\b|\bappointments?\b|\binvites?\b|\binvitations?\b|\brehearsal\b"

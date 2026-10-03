@@ -3,8 +3,6 @@
 .walk-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .walk-top a { color: var(--link); font-weight: 700; }
 .walk-count { color: var(--muted); font-weight: 700; }
-.walk-progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
-.walk-progress > span { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width 0.3s ease; }
 .walk-stage { display: flex; align-items: flex-start; gap: 16px; }
 .walk-words { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .walk-says { margin: 0; font-size: 20px; font-weight: 900; color: var(--text); }
@@ -25,17 +23,6 @@
 .walk-command code { padding: 6px 10px; border-radius: 8px; background: var(--sunk); border: 1px solid var(--line); overflow-wrap: anywhere; }
 .walk-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .walk-note { margin: 0; }
-.walk-found { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.walk-found li { padding-left: 1.4em; position: relative; overflow-wrap: anywhere; line-height: 1.5; }
-.walk-found li::before { position: absolute; left: 0; font-weight: 900; }
-.walk-found li.ok::before { content: "\2713"; color: var(--ok); }
-.walk-found li.missing::before { content: "\2022"; color: var(--muted); }
-.walk-download { display: flex; flex-direction: column; gap: 6px; }
-.walk-download p { margin: 0; }
-.walk-qr { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 16px; }
-.walk-qr-side { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; flex: 1 1 220px; }
-.walk-qr-side p { margin: 0; line-height: 1.5; }
-.walk-qr-title { font-weight: 900; font-size: 17px; }
 .walk-nav { display: flex; justify-content: space-between; gap: 12px; }
 @media (max-width: 560px) {
   .walk-code-big { font-size: 34px; }

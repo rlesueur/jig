@@ -83,19 +83,6 @@ GUIDES: dict[str, dict[str, Any]] = {
         "advanced_links": [{"url": "https://github.com/settings/personal-access-tokens/new",
                             "label": "Make a fine-grained token"}],
     },
-    "slack": {
-        "summary": "Add a Jig bot to your Slack workspace. It can read the channels you invite it to and, with "
-                   "your OK each time, post.",
-        "steps": [
-            _step("Create a Slack app: choose Create New App, then From scratch, call it Jig and pick your "
-                  "workspace.", ("https://api.slack.com/apps", "Open Slack apps")),
-            _step("Open OAuth & Permissions. Under Bot Token Scopes add channels:read, channels:history and "
-                  "chat:write (and users:read to see names)."),
-            _step("Choose Install to Workspace and Allow. Copy the Bot User OAuth Token (it starts with xoxb-)."),
-            _step("In Slack, invite the bot to a channel: type /invite @Jig in it."),
-            _step("Paste the token below and choose Connect. Jig checks it with Slack and keeps it in its vault."),
-        ],
-    },
     "discord": {
         "summary": "Add a Jig bot to your own Discord server. It can read the channels it can see and, with "
                    "your OK each time, post.",
@@ -109,30 +96,6 @@ GUIDES: dict[str, dict[str, Any]] = {
                   ("https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot&permissions=68608",
                   "Add the bot")),
             _step("Paste the bot token below and choose Connect."),
-        ],
-    },
-    "matrix": {
-        "summary": "Use your own Matrix account. Jig can read and, with your OK each time, post in rooms "
-                   "without end-to-end encryption.",
-        "steps": [
-            _step("Type your homeserver (for example https://matrix.org)."),
-            _step("Easiest: type your Matrix ID (like @you:matrix.org) and your password. Jig signs in once as a "
-                  "new device called Jig, keeps only that device's key and forgets the password."),
-            _step("Or type 'token' as the sign-in, and paste an access token instead of a password. (A token "
-                  "copied from Element belongs to Element, so disconnecting Jig signs Element out too.)"),
-        ],
-    },
-    "signal": {
-        "summary": "Send yourself (and, if you allow it, receive) Signal messages, through signal-cli linked to "
-                   "your phone like Signal Desktop.",
-        "steps": [
-            _step("Get signal-cli, which needs Java 25 or newer. In Set up step by step, Jig can download both for "
-                  "you (signal-cli from its GitHub release, Java from Eclipse Temurin), or you can install them "
-                  "yourself.", ("https://github.com/AsamK/signal-cli/releases", "Download signal-cli")),
-            _step("Link it to your phone: Jig shows a QR code; in Signal on your phone, open Settings > Linked "
-                  "devices > Link new device and scan it. Jig says when it's linked."),
-            _step("Choose what Jig may do and Connect. Jig fills in your number and where signal-cli is, and "
-                  "checks that it works before saving anything."),
         ],
     },
     "whatsapp": {

@@ -33,7 +33,6 @@ from ..connectors import google as google_connector
 from ..connectors import microsoft as microsoft_connector
 from ..connectors import provider as connector_provider
 from ..connectors.guide import guide as connector_guide
-from ..connectors import signal_setup
 from ..connectors import walkthrough as connector_walkthrough
 from ..constants import EventType, Mode
 from ..db import now_iso
@@ -179,12 +178,8 @@ class ConnectIn(ConfirmIn):
 
 
 class WalkthroughCheckIn(ConfirmIn):
-    # The non-secret value a step checks (an application ID, a homeserver, a channel). Checked by hand.
+    # The non-secret value a step checks (an application ID, a channel). Checked by hand.
     values: Any = None
-
-
-class SignalLinkIn(ConfirmIn):
-    signal_cli: str = Field(min_length=1, max_length=500)
 
 
 class ClientIn(ConfirmIn):
@@ -295,8 +290,6 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         try:
             yield
         finally:
-            for job in getattr(app.state, "signal_jobs", ()):
-                await job.close()  # ends a signal-cli link still waiting for the phone
             stop_request = getattr(app.state, "stop_request", None) or take_stop_request(config.data_dir)
             await controller.shutdown(stop_request)
             devices.close()
@@ -1007,45 +1000,6 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             return await connector_walkthrough.run_check(J(request), name, check, body.values)
         except JigError as exc:
             raise HTTPException(400, str(exc)) from None
-
-    # Signal without a terminal: what's installed, a download at the person's request, and signal-cli's link
-    # step run here with its link shown as a QR code (jig.connectors.signal_setup).
-    class _CurrentAudit:
-        def record(self, *args: Any, **kwargs: Any) -> None:
-            controller.current.audit.record(*args, **kwargs)
-
-    signal_tools = signal_setup.tools_dir(config.data_dir)
-    signal_download = signal_setup.Downloads(signal_tools, _CurrentAudit())
-    signal_link = signal_setup.Link(signal_tools, _CurrentAudit(), _qr_data_uri)
-    app.state.signal_jobs = (signal_download, signal_link)
-
-    @app.get("/connections/signal/setup")
-    async def signal_setup_status(request: Request) -> dict[str, Any]:
-        _require_local(request, "Setting up Signal")
-        return {**await signal_setup.status(signal_tools), "download": signal_download.state,
-                "link": signal_link.state}
-
-    @app.post("/connections/signal/setup/download")
-    async def signal_setup_download(request: Request, body: ConfirmIn) -> dict[str, Any]:
-        """Download signal-cli (and Java, if none is new enough) into the data folder's tools, checked against
-        their publishers' checksums. Answers at once; GET /connections/signal/setup shows the progress."""
-        _require_local(request, "Downloading signal-cli")
-        _require_confirm(body, "Downloading signal-cli")
-        return signal_download.start()
-
-    @app.post("/connections/signal/setup/link")
-    async def signal_setup_link(request: Request, body: SignalLinkIn) -> dict[str, Any]:
-        """Run signal-cli's link step. GET /connections/signal/setup shows its QR code, then the linked number."""
-        _require_local(request, "Linking Signal")
-        _require_confirm(body, "Linking Signal")
-        return signal_link.start(body.signal_cli)
-
-    @app.post("/connections/signal/setup/link/cancel")
-    async def signal_setup_link_cancel(request: Request, body: ConfirmIn) -> dict[str, Any]:
-        _require_local(request, "Linking Signal")
-        _require_confirm(body, "Stopping the Signal link")
-        await signal_link.close()
-        return signal_link.state
 
     def _connector(name: str):
         try:

@@ -218,7 +218,7 @@ class ConnectorLimits:
     # send still needs approval.
     allowed_recipients: list[str] = field(default_factory=list)
     # Exact names or ids of the only places Jig may change (calendars, folders, repositories, channels,
-    # rooms, phone numbers; each connector's section in docs/connectors-setup.md says which). Empty: any.
+    # phone numbers; each connector's section in docs/connectors-setup.md says which). Empty: any.
     allowed_targets: list[str] = field(default_factory=list)
     # When set, everything Jig writes (a subject after any "Re: ", an event or file name, a message or
     # comment) must start with this, for example "[Jig test]".
@@ -235,8 +235,7 @@ class ConnectorLimits:
 CONNECTOR_APP_KEYS = {"microsoft": ("client_id", "tenant"), "github": ("client_id", "app_slug")}
 
 # Connectors that read [connectors.<id>]; see jig.connectors.
-CONNECTOR_IDS = ("gmail", "google-calendar", "google-drive", "microsoft", "github", "slack", "discord", "matrix",
-                 "signal", "whatsapp")
+CONNECTOR_IDS = ("gmail", "google-calendar", "google-drive", "microsoft", "github", "discord", "whatsapp")
 
 
 @dataclass(frozen=True)

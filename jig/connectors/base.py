@@ -64,7 +64,7 @@ class Grant:
     expires_at: float | None = None  # epoch seconds
     scopes: list[str] = field(default_factory=list)
     token_type: str = "Bearer"  # the Authorization scheme ("Bot" for Discord)
-    # Non-secret details of the connection the connector needs (a Matrix homeserver, a Signal number).
+    # Non-secret details of the connection the connector needs (which Microsoft or GitHub app).
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -132,7 +132,7 @@ class ProviderSpec:
     # For a provider with an app Jig ships (or one the user brings): client_status(store) ->
     # {"configured": bool, "source": "built-in" | "config" | "vault" | None, "problem": str | None}.
     client_status: Callable[[Any], dict[str, Any]] | None = None
-    # Extra hosts that depend on the connection (a Matrix homeserver), from the stored grant.
+    # Extra hosts that depend on the stored grant.
     grant_hosts: Callable[[Grant], frozenset[str]] | None = None
     # Where the user removes the app's access on the provider's side.
     manage_url: str = ""

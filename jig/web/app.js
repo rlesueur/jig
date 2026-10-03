@@ -850,11 +850,8 @@ const TOOL_DOING = {
   onedrive_upload_file: 'saving a file to OneDrive', github_list_repos: 'looking at your repositories',
   github_list_issues: 'looking through issues', github_read_issue: 'reading an issue', github_read_file: 'reading a file on GitHub',
   github_comment: 'commenting on GitHub', github_create_issue: 'opening a GitHub issue',
-  slack_list_channels: 'listing Slack channels', slack_read_channel: 'reading Slack', slack_post_message: 'posting in Slack',
-  slack_reply_in_thread: 'replying in Slack', discord_list_channels: 'listing Discord channels',
-  discord_read_channel: 'reading Discord', discord_post_message: 'posting in Discord', matrix_list_rooms: 'listing your Matrix rooms',
-  matrix_read_room: 'reading a Matrix room', matrix_send_message: 'posting to a Matrix room',
-  signal_send_message: 'sending a Signal message', signal_receive: 'checking for new Signal messages',
+  discord_list_channels: 'listing Discord channels',
+  discord_read_channel: 'reading Discord', discord_post_message: 'posting in Discord',
   whatsapp_account: 'checking the WhatsApp business number', whatsapp_send_message: 'sending a WhatsApp message',
 };
 const doingWords = (tool) => TOOL_DOING[tool] || `using ${tool}`;
@@ -1500,12 +1497,7 @@ const QUESTION = {
   onedrive_upload_file: (x) => `Can I save ${q(x.name)} to your OneDrive?`,
   github_comment: (x) => `Can I comment on #${x.number} in ${x.repo}?`,
   github_create_issue: (x) => `Can I open an issue in ${x.repo}?`,
-  slack_post_message: (x, r) => `Can I post in Slack${r.channel ? ` in #${r.channel}` : ''}?`,
-  slack_reply_in_thread: (x, r) => `Can I reply in a Slack thread${r.channel ? ` in #${r.channel}` : ''}?`,
   discord_post_message: (x, r) => `Can I post in Discord${r.channel ? ` in #${r.channel}` : ''}?`,
-  matrix_send_message: (x, r) => `Can I post in the Matrix room ${q(r.room || x.room_id)}?`,
-  signal_send_message: (x, r) => (r.note_to_self ? 'Can I send you a Signal message (Note to Self)?' : `Can I send a Signal message to ${x.recipient}?`),
-  signal_receive: () => 'Can I collect your new Signal messages?',
   whatsapp_send_message: (x) => `Can I send a WhatsApp message to ${x.recipient}?`,
 };
 /* A checkout, payment or booking found on the page before the click or submit (never automatic). */
@@ -1550,12 +1542,7 @@ const WILL = {
   onedrive_upload_file: (x, r) => `Jig will save ${q(x.name)} (${String(x.content ?? '').length.toLocaleString('en-GB')} characters) in the OneDrive folder ${q(r.folder || x.folder || '/')}${r.replaces ? ', replacing the file that is there.' : '. Nothing is replaced.'}`,
   github_comment: (x) => `Jig will post this comment on #${x.number} in ${x.repo}, as you:`,
   github_create_issue: (x) => `Jig will open an issue titled ${q(x.title)} in ${x.repo}, as you:`,
-  slack_post_message: () => 'Jig will post this message as its Slack bot in the channel described below:',
-  slack_reply_in_thread: () => 'Jig will post this reply as its Slack bot in the thread described below:',
   discord_post_message: () => 'Jig will post this message as its Discord bot in the channel described below. Nobody is pinged:',
-  matrix_send_message: () => 'Jig will post this message as you in the Matrix room described below:',
-  signal_send_message: (x, r) => `Jig will send this Signal message from your number to ${r.note_to_self ? 'you (Note to Self)' : x.recipient}:`,
-  signal_receive: () => 'Jig will collect the Signal messages waiting for its linked device. Your phone sees them as delivered, not read.',
   whatsapp_send_message: (x, r) => `Jig will send this WhatsApp message from ${r.from_number || 'your business number'} to ${x.recipient}:`,
 };
 const guestsText = (x) => (x.attendees && x.attendees.length ? `, and invite ${joinList(x.attendees)} (they get an email)` : ', with no guests');
@@ -1568,9 +1555,8 @@ const checkoutWill = (r) => {
 const PREVIEW = { write_file: 'content', note_write: 'body', run_command: 'command', run_python: 'code',
   gmail_send: 'body', gmail_reply: 'body', gmail_create_draft: 'body', schedule_create: 'prompt',
   gcal_create_event: 'description', outlook_create_event: 'notes', gdrive_create_file: 'content', gdrive_update_file: 'content',
-  onedrive_upload_file: 'content', github_comment: 'body', github_create_issue: 'body', slack_post_message: 'text',
-  slack_reply_in_thread: 'text', discord_post_message: 'content', matrix_send_message: 'text', signal_send_message: 'text',
-  whatsapp_send_message: 'text' };
+  onedrive_upload_file: 'content', github_comment: 'body', github_create_issue: 'body',
+  discord_post_message: 'content', whatsapp_send_message: 'text' };
 /* What a call refers to, looked up by Jig from your account (written by other people, so shown as text). */
 const RESOLVED_WORDS = { draft_to: 'To', draft_cc: 'Cc', draft_subject: 'Subject', draft_text: 'Message',
   draft_attachments: 'Attachments', thread_subject: 'Subject', last_from: 'Last message from', last_date: 'Date',
@@ -2398,11 +2384,8 @@ const CAN = {
   github_list_repos: 'See your GitHub repositories', github_list_issues: 'List or search issues and pull requests',
   github_read_issue: 'Read issues and pull requests', github_read_file: 'Read files on GitHub',
   github_comment: 'Comment on GitHub', github_create_issue: 'Open GitHub issues',
-  slack_list_channels: 'List Slack channels', slack_read_channel: 'Read Slack channels', slack_post_message: 'Post in Slack',
-  slack_reply_in_thread: 'Reply in Slack threads', discord_list_channels: 'List Discord channels',
+  discord_list_channels: 'List Discord channels',
   discord_read_channel: 'Read Discord channels', discord_post_message: 'Post in Discord',
-  matrix_list_rooms: 'List Matrix rooms', matrix_read_room: 'Read Matrix rooms', matrix_send_message: 'Post to Matrix rooms',
-  signal_send_message: 'Send Signal messages', signal_receive: 'Receive Signal messages',
   whatsapp_account: 'See the WhatsApp business number', whatsapp_send_message: 'Send WhatsApp messages',
 };
 const CHOICE_TEXT = { allow: 'On its own', ask: 'Ask me first', block: 'Never' };

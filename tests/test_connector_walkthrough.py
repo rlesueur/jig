@@ -50,7 +50,7 @@ def test_every_connector_has_a_walkthrough_with_safe_links(client):
     warning = next(s for s in rows["gmail"]["walkthrough"] if s["id"] == "google-warning")
     assert "hasn't verified" in json.dumps(warning) or "unverified" in json.dumps(warning).lower()
     assert [s["action"]["type"] for s in rows["microsoft"]["walkthrough"]] == ["connect", "try"]
-    assert [s["action"]["type"] for s in rows["slack"]["walkthrough"]][-1] == "pick"
+    assert [s["action"]["type"] for s in rows["discord"]["walkthrough"]][-1] == "pick"
     whatsapp = rows["whatsapp"]["walkthrough"]
     whatsapp_text = json.dumps(whatsapp).lower()
     assert [s["action"]["type"] for s in whatsapp] == ["done", "done", "token", "try"]
@@ -67,7 +67,7 @@ def test_checks_need_confirmation_and_a_known_check(client):
     r = _check(client, "discord", "nonsense")
     assert r.status_code == 400 and "no check called" in r.json()["error"]
     assert _check(client, "nope", "try").status_code == 404
-    r = _check(client, "slack", "google_client")
+    r = _check(client, "discord", "google_client")
     assert r.status_code == 400 and "only the Google connectors" in r.json()["error"]
 
 
@@ -96,23 +96,6 @@ def test_the_discord_check_finds_a_real_app_and_refuses_a_made_up_one(client):
     assert r.status_code == 400
 
 
-def test_the_matrix_check_finds_a_real_homeserver(client):
-    r = _check(client, "matrix", "matrix_server", {"homeserver": "matrix.org"})
-    assert r.status_code == 200 and r.json()["ok"] is True, r.text
-    assert r.json()["homeserver"].startswith("https://")
-    r = _check(client, "matrix", "matrix_server", {"homeserver": "jig-walk-test.invalid"})
-    assert r.status_code == 400
-    r = _check(client, "matrix", "matrix_server", {"homeserver": "http://matrix.org"})
-    assert r.status_code == 400 and "https://" in r.json()["error"]
-
-
-def test_the_signal_check_says_clearly_when_signal_cli_isnt_there(client, tmp_path):
-    r = _check(client, "signal", "signal_cli", {"signal_cli": str(tmp_path / "signal-cli.bat")})
-    assert r.status_code == 400 and r.json()["error"]
-    r = _check(client, "signal", "signal_cli", {})
-    assert r.status_code == 400 and "type the path" in r.json()["error"]
-
-
 def test_trying_an_account_that_isnt_connected_fails_clearly(client):
     r = _check(client, "gmail", "try")
     assert r.status_code == 400 and r.json()["error"]
@@ -128,7 +111,7 @@ async def test_the_help_tool_is_read_only_and_never_takes_secrets(jig):
     assert spec.effect is Effect.READ
     help_fn = spec.fn
     every = await help_fn(_ctx(jig))
-    assert {a["provider"] for a in every["accounts"]} >= {"gmail", "microsoft", "github", "slack"}
+    assert {a["provider"] for a in every["accounts"]} >= {"gmail", "microsoft", "github", "discord", "whatsapp"}
     gmail = await help_fn(_ctx(jig), provider="Gmail")
     assert gmail["provider"] == "gmail" and gmail["now"]["status"] == "not_connected"
     assert gmail["settings_link"] == "#settings/connections/gmail" and gmail["rules"] == wt.SECRET_RULE

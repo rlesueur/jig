@@ -4,7 +4,7 @@ Jig's connectors let it work with your own accounts: your mailbox, calendars, fi
 
 The easiest way to connect is **Settings > Connections** in Jig's web page, on the computer Jig runs on. Each account there has plain step-by-step instructions, links to the right page on the provider's site, and a Connect button. Everything below can also be done with `jig connect` in a terminal.
 
-**Set up step by step.** Each account in Settings > Connections also has a guided set-up (the **Set up step by step** button, or `#settings/connections/<name>`, for example `#settings/connections/gmail`). Jig takes you through it one step at a time: what you'll see on the provider's page, what to click, and a check that the step worked before Next lights up. The checks are real: Jig asks Google whether it knows your client file, asks Discord whether your Application ID is a real app, finds your Matrix homeserver, runs your signal-cli, lists the Slack channels, Discord channels or Matrix rooms it can see so you pick one rather than typing an ID, and at the end reads something from the account to show it works. For Google, if you type your project ID, the Cloud Console links open in that project, and the "Google hasn't verified this app" warning is explained before you meet it. Microsoft and GitHub are one click and an approval; for GitHub the sign-in code is shown large with a Copy button, and the page updates by itself when you approve.
+**Set up step by step.** Each account in Settings > Connections also has a guided set-up (the **Set up step by step** button, or `#settings/connections/<name>`, for example `#settings/connections/gmail`). Jig takes you through it one step at a time: what you'll see on the provider's page, what to click, and a check that the step worked before Next lights up. The checks are real: Jig asks Google whether it knows your client file, asks Discord whether your Application ID is a real app, lists the Discord channels it can see so you pick one rather than typing an ID, and at the end reads something from the account to show it works. For Google, if you type your project ID, the Cloud Console links open in that project, and the "Google hasn't verified this app" warning is explained before you meet it. Microsoft and GitHub are one click and an approval; for GitHub the sign-in code is shown large with a Copy button, and the page updates by itself when you approve.
 
 **Help in chat.** Ask Jig "help me connect Gmail" (or any account) and it walks you through the same steps in the conversation, using a read-only tool that gives it the guide and whether the account is connected now. It never asks for a token, password or client file in the chat: those only go into the Settings form, straight to the vault, and Jig gives you the link to that step.
 
@@ -12,9 +12,7 @@ How much setup each one needs:
 
 - **Microsoft and GitHub: just sign in.** Jig has its own app with each, so you sign in and choose what to share. (Organisations that need their own app can still use one.)
 - **Google (Gmail, Calendar, Drive): a one-off setup first.** You make your own small, free Google app, then sign in. The steps are below and in Settings. A shared Google app, checked by Google, so that nobody has to do this, is being looked into for after launch.
-- **Slack and Discord:** you add a Jig bot to your own workspace or server, and paste its token.
-- **Matrix:** your own account, with your password (once) or a token.
-- **Signal:** signal-cli linked to your phone. Jig can download signal-cli (and Java, if needed) for you, and shows the QR code to scan in Signal on your phone.
+- **Discord:** you add a Jig bot to your own server, and paste its token.
 - **WhatsApp:** Meta's WhatsApp Business Cloud API only (a business number and a token you create). Not a personal WhatsApp account. Jig can see the business number and, with your approval each time, send a text message. It cannot read incoming messages.
 
 ## Status
@@ -30,10 +28,7 @@ A live test opens your test config's own data directory, where the connections a
 | Google Drive | `google-drive` | the same Google app, then sign in | search and read files (Docs as text, Sheets as CSV); create files, change files Jig created | built; tested against the real service; live test passed against a real connected account (2 October 2026) |
 | Outlook calendar and OneDrive | `microsoft` | sign in with Jig's Microsoft app (personal, work or school account), or your organisation's own app | the same for your Outlook calendar; search, list, read and save OneDrive files | built; tested against the real service; Jig's Microsoft app is registered; live test passed against a real connected account (2 October 2026) |
 | GitHub | `github` | sign in with the Jig GitHub App (a code you type in at GitHub), or a fine-grained token | see repositories, read issues, pull requests and files; comment and open issues | built; tested against the real service; the Jig GitHub App is created; live test passed against a real connected account (2 October 2026) |
-| Slack | `slack` | your own bot's token | list and read channels the bot is in; post and reply in threads | built; tested against the real service; live test waiting for a connected account |
 | Discord | `discord` | your own bot's token | list and read channels the bot can see; post | built; tested against the real service; live test waiting for a connected account |
-| Matrix | `matrix` | your account (password once, or a token) | list joined rooms, read unencrypted messages; post in unencrypted rooms | built; tested against the real service; live test waiting for a connected account |
-| Signal | `signal` | signal-cli linked to your phone | send messages (to yourself while testing); receive new messages if you allow it | built; tested with a real signal-cli where one is installed (skipped otherwise); live test waiting for a linked device |
 | WhatsApp | `whatsapp` | a token, phone number ID and WhatsApp Business Account ID from Meta's Cloud API | see the business number; send a text message | built; tested against Meta's real API with a made-up token (it is refused); live test skipped until a token is in the vault |
 | Paying and booking in the browser | (built in) | nothing to connect | detects checkouts, payments and bookings; you always decide; Jig never types card details | built; tested against real public demo shops (needs Docker) |
 
@@ -47,7 +42,7 @@ Every connector can be connected from Settings > Connections or with `jig connec
 - **The model never sees them.** Connector credentials are used only inside the connector code, after the policy gate has approved the action. A core rule blocks any tool from referencing a `connector.*` secret with `{{secret:...}}`, the same way model API keys are protected, and token values are redacted from every tool result, error and audit entry.
 - **Tokens only go to the provider.** Each connector has a fixed list of hosts (for example `gmail.googleapis.com`, `graph.microsoft.com`, `api.github.com`), and Jig refuses to send its token anywhere else, over anything but HTTPS.
 - **Least privilege.** Each connector asks only for the scopes of the access level you choose (`--access`, or "What Jig may do" in Settings).
-- **Disconnect at any time.** `jig disconnect <provider>`, or Disconnect in Settings, revokes the grant at the provider where the provider supports that (Google, Slack and Matrix do), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, Signal, WhatsApp), it says exactly where to remove the access yourself.
+- **Disconnect at any time.** `jig disconnect <provider>`, or Disconnect in Settings, revokes the grant at the provider where the provider supports that (Google does), and deletes the tokens from the vault. Where it can't (Microsoft, GitHub, Discord, WhatsApp), it says exactly where to remove the access yourself.
 
 The commands that are the same for every connector:
 
@@ -73,7 +68,7 @@ Every connector supports a `[connectors.<name>]` section in the config, which th
 
 ```toml
 [connectors.google-calendar]
-allowed_targets = ["[Jig test]"]        # the only places Jig may change: calendars, folders, channels, rooms, repositories
+allowed_targets = ["[Jig test]"]        # the only places Jig may change: calendars, folders, channels, repositories, phone numbers
 allowed_recipients = ["you@example.com"] # the only people it may send to or invite
 required_prefix = "[Jig test]"          # every subject, title, file name or message must start with this
 ```
@@ -358,30 +353,6 @@ If you later change the app's permissions, everyone who installed it is asked by
 
 ---
 
-## Slack
-
-Jig uses a bot that you create in your own workspace. Reading needs no approval; posting always needs your approval.
-
-Official documentation: [Create an app](https://api.slack.com/quickstart), [Token types](https://api.slack.com/concepts/token-types), [Scopes](https://api.slack.com/scopes).
-
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) > **Create New App > From scratch**, name it "Jig" and pick your workspace.
-2. **OAuth & Permissions > Scopes > Bot Token Scopes**, add `channels:read` (list public channels), `channels:history` (read channels the bot is in) and `chat:write` (post as the bot; for `write` access). Optionally `users:read`, to show names instead of user ids. If a required scope is missing, `jig connect slack` refuses and lists what is missing.
-3. **Install to Workspace** and allow. The token you need is the **Bot User OAuth Token** (it starts with `xoxb-`; Jig refuses user tokens, `xoxp-`). If you add scopes later, reinstall the app.
-4. Create a channel for testing, for example `#jig-test`, and type `/invite @Jig` in it. Copy its **Channel ID** (click the channel name; it is at the bottom, like `C0123456789`).
-5. Connect: in Settings > Connections, under Slack, choose the access level, paste the token and choose **Connect**. Or run `.\.venv\Scripts\jig connect slack --access write` (or `--access read`), which asks for the token without showing it, or reads it with `--stdin`. Either way the token goes straight into the vault and is never shown again.
-
-```toml
-[connectors.slack]
-allowed_targets = ["C0123456789"]   # channel ids, or exact names such as "jig-test"
-required_prefix = "[Jig test]"
-```
-
-Jig never notifies a whole channel or group (`@here`, `@channel`, `@everyone` and user groups are refused), posts plain text with no link previews, and can't read private channels or direct messages with these scopes.
-
-`jig disconnect slack` revokes the bot token at Slack (`auth.revoke`) and deletes it from the vault. To use Slack again, reinstall the app to get a new token.
-
----
-
 ## Discord
 
 Discord does not allow automating a normal user account, so Jig uses a bot that you add to your own server.
@@ -404,90 +375,7 @@ Every post is sent with mentions turned off, so it never pings anyone, and is at
 
 Discord has no way to revoke a bot token through its API. `jig disconnect discord` deletes the token from the vault; to make it useless, go to your application's **Bot** page and choose **Reset Token**.
 
-Live tests for Slack and Discord: make a config connected with `write` access and the limits above set to the test channel. The workspace or server also needs one other channel (such as `#general`): the test tries to post there and checks that Jig refuses. Set `JIG_LIVE_SLACK_CONFIG` and `JIG_LIVE_SLACK_CHANNEL`, or `JIG_LIVE_DISCORD_CONFIG` and `JIG_LIVE_DISCORD_CHANNEL`, and run `tests\test_connector_slack_live.py` or `tests\test_connector_discord_live.py`.
-
----
-
-## Matrix
-
-Jig uses your own Matrix account on the homeserver you choose. It can list the rooms you have joined, read their text messages and, with your approval each time, post a plain-text message.
-
-Official documentation: [Client-server API](https://spec.matrix.org/latest/client-server-api/).
-
-**Encryption.** Jig has no end-to-end encryption keys. In an encrypted room it marks every encrypted message as unreadable and refuses to post. Use an unencrypted room for anything you want Jig to read or post in.
-
-The homeserver must be an `https://` address on the public internet. Jig follows the domain's `/.well-known/matrix/client` delegation (`https://matrix.org` becomes `https://matrix-client.matrix.org`), checks that it answers, and only ever sends your access token to that host.
-
-Choose one way to sign in. Both work in Settings > Connections (type the homeserver, your Matrix ID or `token`, and the password or token) as well as in a terminal:
-
-- **Recommended: log in once as a new device called "Jig".** Jig asks for your password (hidden), logs in, keeps only the access token it gets back and forgets the password. Disconnecting later signs out only this session.
-
-  ```powershell
-  .\.venv\Scripts\jig connect matrix --option homeserver=https://matrix.org --option login=@you:matrix.org
-  ```
-
-  Your homeserver must offer password login (matrix.org does). If it uses single sign-on only, use a token.
-- **Paste an access token** (Element: Settings > Help & About > Advanced > Access Token). That token belongs to Element's session, so **disconnecting Jig signs Element out too**.
-
-  ```powershell
-  .\.venv\Scripts\jig connect matrix --option homeserver=https://matrix.org --option login=token
-  ```
-
-Every post says it mentions nobody (an empty `m.mentions`), so `@room` or a name in the text notifies no one.
-
-Access levels: `read` (list rooms and read text messages) or `send` (the default: also post, each post needs your approval). Matrix tokens have no scopes of their own, so the level is a limit Jig applies itself.
-
-For testing, create a room with encryption turned off (Element: New room > turn off "Enable end-to-end encryption") and copy its room id (Settings > Advanced > Internal room ID):
-
-```toml
-[connectors.matrix]
-allowed_targets = ["!abc123:matrix.org"]   # the only rooms Jig may post in (room ids, not names)
-required_prefix = "[Jig test]"
-```
-
-Live test: set `JIG_LIVE_MATRIX_CONFIG` and `JIG_LIVE_MATRIX_ROOM` and run `tests\test_connector_matrix_live.py`. It posts one `[Jig test]` message to that room and reads it back, and checks that a post to another room and a denied approval post nothing.
-
-`jig disconnect matrix` logs the session out at the homeserver, then deletes the token from the vault.
-
----
-
-## Signal
-
-Jig sends (and, if you allow it, receives) Signal messages through [signal-cli](https://github.com/AsamK/signal-cli), a program on your computer that is linked to your phone as a separate device, like Signal Desktop. Jig runs it directly, never through a shell, and passes the message text on standard input.
-
-**What Jig stores.** Nothing secret: only your number and the path to signal-cli. signal-cli keeps the linked device's keys in its own data folder (by default `%USERPROFILE%\.local\share\signal-cli`), outside Jig's vault. Anyone who can read that folder can use your Signal account as that device, so keep it in your user profile only.
-
-Everything happens in **Settings > Connections > Signal > Set up step by step**, with no terminal:
-
-1. **Get signal-cli.** signal-cli 0.14 needs Java 25 or newer. Jig looks for both (in `JAVA_HOME`, on `PATH` and in the usual install folders, so a Java you install while Jig is running is found too) and says what it found. **Download for me** gets signal-cli from [its official GitHub release](https://github.com/AsamK/signal-cli/releases) and, if this computer has no Java 25, the Eclipse Temurin Java runtime from [Adoptium](https://adoptium.net/temurin/releases/?version=25&package=jre). Jig checks each file against the SHA-256 checksum its publisher lists (GitHub's for signal-cli, Adoptium's for Java) and deletes it if it doesn't match. Both go in the `tools` folder of Jig's data folder and are used only by Jig. They are about 120 MB and 60 MB, and neither is part of Jig or its installer: signal-cli is GPL-3.0, and Temurin is GPL-2.0 with the Classpath Exception; both are free. The history records each download with its source and checksum (`connector.signal_download`). If you'd rather install them yourself, install Java 25 or newer (Eclipse Temurin is the simplest free one; its Windows `.msi` installer adds Java to `PATH`), unpack `signal-cli-<version>.tar.gz` into a folder in your profile, and choose **Use the one I found** or type where `bin\signal-cli.bat` is.
-2. **Link it to your phone.** Choose **Show the code**: Jig runs signal-cli's link step (`signal-cli link -n Jig`) and shows the `sgnl://linkdevice` link it prints as a QR code, made on your computer. In Signal on your phone, open **Settings > Linked devices > Link new device** and scan it. signal-cli drops an unscanned code after about two minutes, so Jig shows a fresh one by itself, for up to 10 minutes. When signal-cli reports the number it linked, Jig checks that signal-cli now has that account and says so.
-3. **Connect.** Choose what Jig may do and **Connect**: Jig has filled in your number and where signal-cli is.
-
-Jig starts signal-cli's Java itself, with the classpath and options from signal-cli's Windows start script: run through `cmd.exe`, the script's one long line goes over cmd's 8191-character limit when signal-cli is in a long folder path (such as Jig's data folder for many user names).
-
-You can also connect from a terminal, once signal-cli is linked:
-
-   ```powershell
-   .\.venv\Scripts\jig connect signal --option number=+447700900123 --option signal_cli=C:\Users\you\signal-cli\bin\signal-cli.bat
-   ```
-
-   Jig checks that the program is signal-cli, that it has an account for your number and that Signal's servers accept it. Nothing is stored if any check fails.
-
-Don't run `signal-cli daemon` for the same account while Jig uses it: signal-cli allows one process per account.
-
-Access levels: `send` (the default: send messages, each needs your approval) or `receive` (also receive new messages). Receiving takes messages off signal-cli's queue, so Jig sees each one once, and signal-cli sends the usual delivery receipts (never read receipts). Your phone still gets every message.
-
-For testing, send only to yourself (it arrives in Note to Self):
-
-```toml
-[connectors.signal]
-allowed_targets = ["+447700900123"]   # your own number, in international format
-required_prefix = "[Jig test]"
-```
-
-Live test: set `JIG_LIVE_SIGNAL_CONFIG` and `JIG_LIVE_SIGNAL_NUMBER` and run `tests\test_connector_signal_live.py`. It sends one `[Jig test]` message to your Note to Self, and checks that a send to another number and a denied approval send nothing.
-
-`jig disconnect signal` makes Jig forget the number and path. Jig can't unlink itself: on your phone, open **Settings > Linked devices** and unlink "Jig". To remove signal-cli's copy of the keys as well, run `signal-cli.bat -a <your number> deleteLocalAccountData` after unlinking.
+Live test for Discord: make a config connected with `write` access and the limits above set to the test channel. The server also needs one other channel (such as `#general`): the test tries to post there and checks that Jig refuses. Set `JIG_LIVE_DISCORD_CONFIG` and `JIG_LIVE_DISCORD_CHANNEL`, and run `tests\test_connector_discord_live.py`.
 
 ---
 

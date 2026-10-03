@@ -14,7 +14,7 @@ from jig.connectors import github as gh
 from jig.connectors import microsoft as ms
 
 MADE_UP_PAT = "github_pat_11JIGWEBTEST000000000_notarealtokenjustfortestingjigsconnector000000000000"
-MADE_UP_SLACK = "xoxb-made-up-for-jig-web-tests"
+MADE_UP_DISCORD = "jigwebtestnotarealdiscordbottoken"
 GOOGLE_FILE = {"installed": {"client_id": "000000000000-jigwebtest.apps.googleusercontent.com",
                              "client_secret": "GOCSPX-jigwebtestnotarealsecret00",
                              "redirect_uris": ["http://localhost"]}}
@@ -38,8 +38,7 @@ def _audit_text(c) -> str:
 
 def test_every_connector_has_plain_steps_and_a_way_in(client):
     rows = {r["provider"]: r for r in client.get("/connections").json()}
-    assert set(rows) == {"gmail", "google-calendar", "google-drive", "microsoft", "github", "slack", "discord",
-                         "matrix", "signal"}
+    assert set(rows) == {"gmail", "google-calendar", "google-drive", "microsoft", "github", "discord", "whatsapp"}
     for name, r in rows.items():
         assert r["guide"]["summary"] and r["guide"]["steps"], name
         assert r["methods"], name
@@ -47,7 +46,7 @@ def test_every_connector_has_plain_steps_and_a_way_in(client):
             assert all(link["url"].startswith("https://") for link in step["links"]), (name, step)
     assert rows["gmail"]["guide"]["setup"] and "In production" in json.dumps(rows["gmail"]["guide"])
     assert rows["github"]["methods"] == ["device", "token"]
-    assert [i["name"] for i in rows["matrix"]["inputs"]] == ["homeserver", "login", "access_token"]
+    assert [i["name"] for i in rows["whatsapp"]["inputs"]] == ["token", "phone_number_id", "waba_id"]
 
 
 def test_a_typed_token_is_checked_with_the_provider_and_never_echoed(client):
@@ -55,11 +54,11 @@ def test_a_typed_token_is_checked_with_the_provider_and_never_echoed(client):
                     json={"confirm": True, "method": "token", "access": "read", "values": {"token": MADE_UP_PAT}})
     assert r.status_code == 400 and "GitHub rejected the token" in r.json()["error"]
     assert MADE_UP_PAT not in r.text and MADE_UP_PAT not in _audit_text(client)
-    r = client.post("/connections/slack/connect",
-                    json={"confirm": True, "method": "token", "values": {"token": MADE_UP_SLACK}})
-    assert r.status_code == 400 and "invalid_auth" in r.json()["error"]
-    assert MADE_UP_SLACK not in r.text and MADE_UP_SLACK not in _audit_text(client)
-    assert client.jig.connections.get("github") is None and client.jig.connections.get("slack") is None
+    r = client.post("/connections/discord/connect",
+                    json={"confirm": True, "method": "token", "values": {"token": MADE_UP_DISCORD}})
+    assert r.status_code == 400 and "Discord rejected the bot token" in r.json()["error"]
+    assert MADE_UP_DISCORD not in r.text and MADE_UP_DISCORD not in _audit_text(client)
+    assert client.jig.connections.get("github") is None and client.jig.connections.get("discord") is None
 
 
 def test_malformed_requests_never_echo_what_was_sent(client):
@@ -77,7 +76,7 @@ def test_malformed_requests_never_echo_what_was_sent(client):
 
 def test_connecting_needs_confirmation_and_a_known_method(client):
     assert client.post("/connections/github/connect", json={"method": "token"}).status_code == 400
-    r = client.post("/connections/slack/connect", json={"confirm": True, "method": "device"})
+    r = client.post("/connections/discord/connect", json={"confirm": True, "method": "device"})
     assert r.status_code == 400 and "connects by token" in r.json()["error"]
     r = client.post("/connections/github/connect", json={"confirm": True, "access": "admin"})
     assert r.status_code == 400 and "access must be one of" in r.json()["error"]
@@ -109,7 +108,7 @@ def test_your_own_microsoft_app_can_be_set_and_removed(client):
     assert row["client_configured"] and row["client_source"] == "vault"
     assert ms.resolve_client(client.jig.connections)["tenant"] == "contoso.onmicrosoft.com"
     assert client.delete("/connections/microsoft/client").json()["deleted"] is True
-    assert client.post("/connections/slack/client", json={"confirm": True}).status_code == 404
+    assert client.post("/connections/discord/client", json={"confirm": True}).status_code == 404
 
 
 def test_microsoft_says_when_its_built_in_app_isnt_set_up(client, monkeypatch):
