@@ -8,14 +8,16 @@ import { fileURLToPath } from 'node:url';
 export const LIB = path.dirname(fileURLToPath(import.meta.url));
 export const DEMOS = path.resolve(LIB, '..');
 export const JIG_REPO = path.resolve(DEMOS, '..');
-export const WORK = path.join(DEMOS, '.work');
+/* DEMO_WORK: a snapshot and venv of its own, while running Jigs hold the shared venv's jig.exe open. */
+export const WORK = process.env.DEMO_WORK || path.join(DEMOS, '.work');
 export const CAPTURES = path.join(DEMOS, 'captures');
 export const OUT = path.join(DEMOS, 'out');
 
 /* Ports owned by other agents and the user's model server. A demo must never bind or call them, except
  * the model server, which Jig itself talks to. */
 export const FORBIDDEN_PORTS = [8080, 8765, 8766, 8767, 8780, 8790];
-export const PORTS = { jig: 8770, site: 8771, nothing: 8779 };
+/* DEMO_JIG_PORT: a take while the connectors test Jig holds 8770. */
+export const PORTS = { jig: Number(process.env.DEMO_JIG_PORT || 8770), site: 8771, nothing: 8779 };
 for (const p of Object.values(PORTS)) {
   if (FORBIDDEN_PORTS.includes(p)) throw new Error(`Demo port ${p} is reserved for someone else`);
 }

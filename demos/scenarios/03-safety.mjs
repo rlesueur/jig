@@ -5,7 +5,7 @@
  *
  * Capability checks: the save asked first, the denial was recorded with its note and no file was written,
  * the read-only conversation ran in read-only mode and wrote nothing without asking, and the audit log
- * has the denial with its note.
+ * has the denial but not the note's words (it never holds what was said; History does, and can be deleted).
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -109,7 +109,9 @@ export default {
     const detail = ui.auditList(p).locator('details[open]').first();
     await detail.waitFor({ state: 'visible' });
     ctx.mark('audit', { box: await s.box(detail) });
-    checks.ok('the audit entry has the note', (await detail.innerText()).includes(NOTE));
+    const entry = await detail.innerText();
+    checks.ok('the audit entry has the denial', entry.includes('write_file denied'));
+    checks.ok('the audit entry does not hold the note', !entry.includes(NOTE));
     await s.moveTo(detail, { ms: 900 });
     await ctx.sleep(4200);
     ctx.mark('end');

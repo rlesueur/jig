@@ -46,6 +46,10 @@ Exit codes: `0` passed, `1` failed, `3` pending (the feature is not in the commi
 Ports: Jig 8770, test site 8771, "nothing listening" 8779. The run refuses to start if any of these are in use,
 and never touches 8080 (the model server), 8765, 8766, 8767, 8780 or 8790.
 
+Two settings for a take while other Jigs are running: `DEMO_JIG_PORT` moves the demo's Jig off 8770, and
+`DEMO_WORK` gives the take a snapshot folder and venv of its own instead of `.work/`. pip can't reinstall a venv
+whose `jig.exe` a running Jig holds open, and a failed reinstall leaves that venv without Jig.
+
 ## Restyling
 
 - UI elements are found **only** by accessible role and name, label or data-testid, all in `lib/ui-map.mjs`.

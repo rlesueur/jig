@@ -33,7 +33,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $Demos = $PSScriptRoot
 $Repo = Split-Path $Demos -Parent
-$Work = Join-Path $Demos '.work'
+# DEMO_WORK (see lib/util.mjs): pip cannot reinstall a venv whose jig.exe a running Jig holds open
+$Work = if ($env:DEMO_WORK) { $env:DEMO_WORK } else { Join-Path $Demos '.work' }
 
 $FfmpegBin = 'C:\Users\you\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin'
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -87,6 +88,9 @@ function Initialize-Snapshot {
   }
   $installed = if (Test-Path (Join-Path $Work 'venv-commit.txt')) { (Get-Content (Join-Path $Work 'venv-commit.txt')).Trim() } else { '' }
   if ($installed -ne $sha) {
+    $exe = Join-Path $venv 'Scripts\jig.exe'
+    $users = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*$exe*" })
+    if ($users) { throw "A Jig (pid $($users[0].ProcessId)) is running from $venv, so pip can't reinstall it; set DEMO_WORK to a folder of its own" }
     Write-Host "Installing Jig $sha into the demo venv"
     Invoke-Native 'pip install -e' { & $py -m pip install -q -e $src }
     Set-Content (Join-Path $Work 'venv-commit.txt') $sha
