@@ -28,6 +28,8 @@ from ..autostart.api import autostart_router
 from ..code_execution import code_execution_status
 from ..config import MODEL_KEY_PREFIX, Config
 from ..connectors import SECRET_PREFIX as CONNECTOR_SECRET_PREFIX
+from ..mcp.stdio import McpError
+from ..mcp.store import SECRET_PREFIX as MCP_SECRET_PREFIX
 from ..connectors import connect as connect_account
 from ..connectors import google as google_connector
 from ..connectors import microsoft as microsoft_connector
@@ -180,6 +182,23 @@ class ConnectIn(ConfirmIn):
 class WalkthroughCheckIn(ConfirmIn):
     # The non-secret value a step checks (an application ID, a channel). Checked by hand.
     values: Any = None
+
+
+class McpServerIn(ConfirmIn):
+    # Typed Any and checked by hand, so a malformed value is never echoed back in a validation error.
+    label: Any = None
+    command: Any = None
+    args: Any = None
+    access: Any = None
+
+
+class McpEnvIn(ConfirmIn):
+    name: Any = None
+    value: Any = None
+
+
+class McpEnvRemoveIn(ConfirmIn):
+    name: Any = None
 
 
 class ClientIn(ConfirmIn):
@@ -954,6 +973,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         if name.startswith(CONNECTOR_SECRET_PREFIX):
             raise HTTPException(400, f"{name!r} belongs to a connected account; use 'jig connect' or Settings > "
                                      "Connections, which store it with the connection")
+        if name.startswith(MCP_SECRET_PREFIX):
+            raise HTTPException(400, f"{name!r} belongs to an MCP server; set it in Settings > MCP servers")
         if name.startswith(MODEL_KEY_PREFIX) and body.allowed_tools:
             raise HTTPException(400, f"{name!r} is a model API key: it is only for Jig's connection to the model, "
                                      "so no tool may use it. Store it without allowed_tools.")
@@ -968,6 +989,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         if name.startswith(CONNECTOR_SECRET_PREFIX):
             raise HTTPException(400, f"{name!r} belongs to a connected account; disconnect it with 'jig disconnect' "
                                      "or Settings > Connections, which also revokes it at the provider")
+        if name.startswith(MCP_SECRET_PREFIX):
+            raise HTTPException(400, f"{name!r} belongs to an MCP server; remove it in Settings > MCP servers")
         jig.vault.delete(name)
         jig.audit.record("vault.deleted", f"secret {name!r} deleted", actor="user", secret=name)
 
@@ -1131,6 +1154,85 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         _connector(name)
         connect_attempts.pop(name, None)
         return await jig.connectors.disconnect(name, via="api")
+
+    # MCP servers -------------------------------------------------------------------------------
+    # The program and its arguments are what the person typed. A token is only ever the env route's value,
+    # which is stored in the vault and never returned.
+    def _mcp(request: Request) -> Any:
+        try:
+            return J(request).mcp
+        except AttributeError:
+            raise HTTPException(503, "Jig is off until its model is set up and passes its checks. Open Jig's set-up "
+                                     "page to choose one.") from None
+
+    @app.get("/mcp/servers")
+    async def mcp_servers(request: Request) -> list[dict[str, Any]]:
+        return _mcp(request).status()
+
+    @app.post("/mcp/servers")
+    async def mcp_add(request: Request, body: McpServerIn) -> dict[str, Any]:
+        _require_local(request, "Adding an MCP server")
+        _require_confirm(body, "The MCP server was not added")
+        mcp = _mcp(request)
+        try:
+            row = mcp.add(label=body.label, command=body.command, args=body.args or [], access=body.access, via="api")
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
+        try:
+            return await mcp.refresh(row["id"])
+        except McpError:
+            return mcp.one(row["id"])
+
+    @app.post("/mcp/servers/{server_id}/refresh")
+    async def mcp_refresh(request: Request, server_id: str, body: ConfirmIn) -> dict[str, Any]:
+        _require_local(request, "Refreshing an MCP server")
+        _require_confirm(body, "Tools were not refreshed")
+        mcp = _mcp(request)
+        try:
+            return await mcp.refresh(server_id)
+        except NotFound:
+            raise
+        except McpError:
+            return mcp.one(server_id)
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.post("/mcp/servers/{server_id}/remove")
+    async def mcp_remove(request: Request, server_id: str, body: ConfirmIn) -> dict[str, Any]:
+        _require_local(request, "Removing an MCP server")
+        _require_confirm(body, "The MCP server was not removed")
+        mcp = _mcp(request)
+        try:
+            await mcp.remove(server_id, via="api")
+        except NotFound:
+            raise
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return {"id": server_id, "removed": True}
+
+    @app.post("/mcp/servers/{server_id}/env")
+    async def mcp_env_set(request: Request, server_id: str, body: McpEnvIn) -> dict[str, Any]:
+        _require_local(request, "Storing an MCP server secret")
+        _require_confirm(body, "The secret was not stored")
+        mcp = _mcp(request)
+        try:
+            return await mcp.set_env(server_id, body.name, body.value, via="api")
+        except NotFound:
+            raise
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.post("/mcp/servers/{server_id}/env/remove")
+    async def mcp_env_remove(request: Request, server_id: str, body: McpEnvRemoveIn) -> dict[str, Any]:
+        _require_local(request, "Removing an MCP server secret")
+        _require_confirm(body, "The secret was not removed")
+        mcp = _mcp(request)
+        try:
+            return await mcp.remove_env(server_id, body.name, via="api")
+        except NotFound:
+            raise
+        except JigError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     # Turning Jig off ---------------------------------------------------------------------------
     @app.exception_handler(PowerRefused)

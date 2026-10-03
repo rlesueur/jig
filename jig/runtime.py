@@ -24,6 +24,7 @@ from .db import Database, new_id, now_iso
 from .discovery import check_context
 from .errors import CannotDelete, JigError, ModelCapabilityError, ModelStopped, NotFound, RefusedActions
 from .events import Event, EventBus, AvatarStateTracker
+from .mcp import McpService
 from .memory import MemoryStore
 from .instance import InstanceLock
 from .logs import describe_exception
@@ -184,6 +185,7 @@ class Jig:
         self.connections = ConnectionStore(self.db, self.vault, self.audit, config.connectors)
         self.connectors = Connectors(self.connections, self.http, self.redactions)
         register_connector_tools(self.registry, self.connectors)
+        self.mcp = McpService(self.db, self.vault, self.audit, self.registry, self.redactions)
         self.vision = VisionService(self.model, config.vision)
         self.rules = RuleStore(self.db)
         self.container = self._container_backend()
@@ -304,6 +306,7 @@ class Jig:
                           vault_backend=self.vault.backend, sandbox=str(self.sandbox.root),
                           start_reason=self.start_reason, model_server=model_server)
         self._recover()
+        await self.mcp.refresh_all()
         self._refresh_paused()
         if run_scheduler:
             self.scheduler.start()
@@ -345,6 +348,9 @@ class Jig:
             return
         self._closed = True
         try:
+            mcp = getattr(self, "mcp", None)
+            if mcp is not None:
+                await mcp.close()
             await self.model_server.stop()
             await self.http.aclose()
             await self.model.aclose()

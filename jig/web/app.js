@@ -423,7 +423,7 @@ function refreshAll() {
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'connections', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'mcp', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?(?:\/[a-z-]+)?$/);
@@ -458,6 +458,7 @@ function route(moveFocus = true) {
     if (section === 'history') loadAudit(true);
     if (section === 'conversations') loadConversations();
     if (section === 'connections') loadConnections();
+    if (section === 'mcp') loadMcp();
     if (section === 'schedules') loadSchedules();
     if (section === 'devices') loadRemote();
     if (section === 'power') loadPower();
@@ -854,7 +855,7 @@ const TOOL_DOING = {
   discord_read_channel: 'reading Discord', discord_post_message: 'posting in Discord',
   whatsapp_account: 'checking the WhatsApp business number', whatsapp_send_message: 'sending a WhatsApp message',
 };
-const doingWords = (tool) => TOOL_DOING[tool] || `using ${tool}`;
+const doingWords = (tool) => (String(tool).startsWith('mcp_') ? 'using a tool from an MCP server' : (TOOL_DOING[tool] || `using ${tool}`));
 initWork({ el, plural, doing: doingWords });
 
 function setAgentPaused(paused) {
@@ -1590,8 +1591,11 @@ function approvalCard(a, where) {
   const risk = s ? s.risk : 'none';
   const idp = `ap-${a.id}-${where}`;
   const found = a.resolved || {};
-  const question = (QUESTION[a.tool] || (() => `Can I use ${a.tool}?`))(a.args, found);
-  const willText = WILL[a.tool] ? WILL[a.tool](a.args, found) : `Jig will run ${a.tool} with exactly the details under Why am I asking?`;
+  const fromMcp = String(a.tool).startsWith('mcp_');
+  const question = fromMcp ? 'Can I use this tool from an MCP server?' : (QUESTION[a.tool] || (() => `Can I use ${a.tool}?`))(a.args, found);
+  const willText = fromMcp
+    ? 'Jig will run this tool on the MCP server you added. The safety checker reviews it when it could send, change or delete something.'
+    : (WILL[a.tool] ? WILL[a.tool](a.args, found) : `Jig will run ${a.tool} with exactly the details under Why am I asking?`);
   const argList = el('dl', { class: 'args-list' }, Object.entries(a.args).flatMap(([k, v]) => [el('dt', { text: k }), el('dd', {}, argValue(v))]));
   const previewKey = PREVIEW[a.tool];
   const preview = previewKey && a.args[previewKey] !== undefined ? String(a.args[previewKey]) : null;
@@ -3279,5 +3283,94 @@ async function disconnectAccount(button, c) {
 
 $('connections-refresh').addEventListener('click', loadConnections);
 initWalkthrough({ el, api, act, showError, reload: loadConnections, pose, guide });
+
+/* ---------- Settings > MCP servers ---------- */
+
+const MCP_ACCESS = { read: 'Read only', act: 'Read and act' };
+
+function mcpEffect(tool) {
+  if (!tool.declared) return 'does not say what it does, so Jig asks first';
+  const effect = String(tool.effect).replaceAll('_', ' ');
+  return tool.outbound ? `${effect}, reviewed by the safety checker` : effect;
+}
+
+function mcpCard(row) {
+  const env = (row.env || []).map((name) => el('li', {}, el('code', { text: name })));
+  const tools = (row.tools || []).map((tool) => el('li', {}, el('code', { text: tool.remote }), ` — ${mcpEffect(tool)}`));
+  const secretName = el('input', { type: 'text', required: true, autocomplete: 'off', placeholder: 'API_TOKEN', 'aria-label': 'Environment variable' });
+  const secretValue = el('input', { type: 'password', required: true, autocomplete: 'new-password', placeholder: 'Secret', 'aria-label': 'Secret' });
+  const secretForm = el('form', { class: 'form' },
+    el('label', {}, 'Environment variable ', secretName),
+    el('label', {}, 'Secret ', secretValue),
+    el('button', { type: 'submit', class: 'btn btn-small' }, 'Store secret'));
+  secretForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    act(secretForm.querySelector('button'), async () => {
+      const saved = await api(`/mcp/servers/${encodeURIComponent(row.id)}/env`, {
+        method: 'POST', body: { confirm: true, name: secretName.value, value: secretValue.value },
+      });
+      secretValue.value = '';
+      $('mcp-saved').textContent = saved.last_error
+        ? `${row.label}: the secret is stored, but the program did not start. ${saved.last_error}`
+        : `${row.label}: secret stored. The program was started again.`;
+      await loadMcp();
+    });
+  });
+  const refresh = el('button', { type: 'button', class: 'btn btn-small', text: 'Refresh tools' });
+  refresh.addEventListener('click', () => act(refresh, async () => {
+    const saved = await api(`/mcp/servers/${encodeURIComponent(row.id)}/refresh`, { method: 'POST', body: { confirm: true } });
+    $('mcp-saved').textContent = saved.last_error ? `${row.label}: ${saved.last_error}` : `${row.label}: tools refreshed.`;
+    await loadMcp();
+  }));
+  const remove = el('button', { type: 'button', class: 'btn btn-small', text: 'Remove' });
+  remove.addEventListener('click', () => {
+    if (!confirm(`Remove ${row.label}? Its secrets are deleted from the vault on this computer.`)) return;
+    act(remove, async () => {
+      await api(`/mcp/servers/${encodeURIComponent(row.id)}/remove`, { method: 'POST', body: { confirm: true } });
+      $('mcp-saved').textContent = `${row.label}: removed.`;
+      await loadMcp();
+    });
+  });
+  return el('article', { class: 'card-soft' },
+    el('h4', { text: row.label }),
+    el('p', { class: 'hint-quiet', text: `${MCP_ACCESS[row.access] || row.access}. ${plural(row.tool_count, 'tool')}.` }),
+    el('ul', {}, [row.command, ...(row.args || [])].map((part) => el('li', {}, el('code', { text: part })))),
+    row.last_error ? el('p', { class: 'error-text', text: row.last_error }) : null,
+    tools.length ? el('ul', {}, tools) : el('p', { class: 'hint-quiet', text: 'No tools listed yet.' }),
+    env.length ? el('div', {}, el('p', { class: 'hint-quiet', text: 'Secrets stored for this server:' }), el('ul', {}, env)) : null,
+    secretForm,
+    el('div', { class: 'row wrap' }, refresh, remove));
+}
+
+async function loadMcp() {
+  let rows;
+  try {
+    rows = await api('/mcp/servers');
+  } catch (err) {
+    $('mcp-list').replaceChildren(el('p', { class: 'error-text', text: err.message }));
+    return;
+  }
+  $('mcp-list').replaceChildren(...(rows.length ? rows.map(mcpCard) : [el('p', { class: 'hint-quiet', text: 'No MCP servers yet.' })]));
+}
+
+$('mcp-refresh').addEventListener('click', loadMcp);
+$('mcp-add').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const button = ev.target.querySelector('button');
+  act(button, async () => {
+    const args = $('mcp-args').value.split(/\r?\n/).filter((line) => line.length);
+    const saved = await api('/mcp/servers', {
+      method: 'POST',
+      body: { confirm: true, label: $('mcp-label').value, command: $('mcp-command').value, args, access: $('mcp-access').value },
+    });
+    $('mcp-label').value = '';
+    $('mcp-command').value = '';
+    $('mcp-args').value = '';
+    $('mcp-saved').textContent = saved.last_error
+      ? `${saved.label} was added, but the program did not start. ${saved.last_error}`
+      : `${saved.label} added.`;
+    await loadMcp();
+  });
+});
 
 boot();

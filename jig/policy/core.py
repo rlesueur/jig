@@ -13,6 +13,7 @@ from typing import Any
 
 from ..config import MODEL_KEY_PREFIX
 from ..connectors.base import SECRET_PREFIX as CONNECTOR_SECRET_PREFIX
+from ..mcp.store import SECRET_PREFIX as MCP_SECRET_PREFIX
 from ..constants import Decision, ToolCategory
 from ..errors import SecretNotFound
 from ..tools.registry import ToolSpec
@@ -33,8 +34,8 @@ CORE_RULES: tuple[CoreRule, ...] = (
     CoreRule("no-credential-changes", Decision.BLOCK,
              "The agent may never create, change or reveal credentials or passwords; those steps stay with the human."),
     CoreRule("secret-allowlist", Decision.BLOCK,
-             "A vault secret may only be used by the tools listed on that secret. Model API keys and the "
-             "tokens of connected accounts can't be used by any tool."),
+             "A vault secret may only be used by the tools listed on that secret. Model API keys, the "
+             "tokens of connected accounts, and MCP server secrets can't be used by any tool."),
     CoreRule("secret-outbound-needs-human", Decision.ASK,
              "Sending a vault secret to the internet always needs the user's approval."),
     CoreRule("no-local-network", Decision.BLOCK,
@@ -84,6 +85,10 @@ async def evaluate_core(spec: ToolSpec, args: dict[str, Any], vault: Vault) -> l
         if name.startswith(CONNECTOR_SECRET_PREFIX):
             findings.append(_finding("secret-allowlist", f"secret {name!r} belongs to a connected account; only "
                                                          "that connector's own code may use it"))
+            continue
+        if name.startswith(MCP_SECRET_PREFIX):
+            findings.append(_finding("secret-allowlist", f"secret {name!r} belongs to an MCP server; only that "
+                                                         "server's own process may use it"))
             continue
         try:
             allowed = vault.describe(name)["allowed_tools"]

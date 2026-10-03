@@ -206,6 +206,21 @@ CREATE TABLE IF NOT EXISTS connections (
     connected_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- MCP servers the user added in Settings. The program and its arguments are not secrets; tokens
+-- live only in the vault as mcp.<id>.env.<NAME>.
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    command TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    access TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_error TEXT,
+    tool_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 # Columns added after a table first shipped: (table, column, definition).

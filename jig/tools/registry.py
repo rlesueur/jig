@@ -226,6 +226,15 @@ class ToolRegistry:
 
         return decorator
 
+    def add(self, spec: ToolSpec) -> None:
+        """Register a tool built outside the decorator (an MCP server's tools)."""
+        if spec.name in self._tools:
+            raise ValueError(f"tool {spec.name!r} is already registered")
+        self._tools[spec.name] = spec
+
+    def discard(self, name: str) -> None:
+        self._tools.pop(name, None)
+
     def get(self, name: str) -> ToolSpec:
         try:
             return self._tools[name]
