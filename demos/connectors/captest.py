@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -900,7 +901,9 @@ async def main() -> int:
     commit = subprocess.run(["git", "-C", str(DEMOS.parent), "rev-parse", "--short", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
     if args.snapshot:
-        commit = (DEMOS / ".work" / "venv-commit.txt").read_text(encoding="utf-8").strip()
+        # DEMO_WORK: the take's own snapshot and venv (see demos/lib/util.mjs)
+        work = Path(os.environ.get("DEMO_WORK") or DEMOS / ".work")
+        commit = (work / "venv-commit.txt").read_text(encoding="utf-8").strip()
     dirty = not args.snapshot and bool(subprocess.run(["git", "-C", str(DEMOS.parent), "status", "--porcelain",
                                                        "--", "jig"], capture_output=True, text=True).stdout.strip())
     jig = JigClient(args.base, args.config, args.token)
