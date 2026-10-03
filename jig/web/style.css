@@ -443,6 +443,10 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 .reply-stopped { margin: 10px 0 0; }
 .reply-stopped p { margin: 0 0 6px; }
 .reply-stopped-text { margin: 8px 0 0; font-weight: 700; font-size: 14px; }
+/* What the reply says Jig did that it didn't: a gentle amber note under it. */
+.reply-claims { margin: 10px 0 0; display: grid; gap: 6px; }
+.reply-claim { margin: 0; display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); border: 1px solid var(--warn); color: var(--text); font-size: 14.5px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.reply-claim-mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--warn); color: var(--surface); font-size: 12px; font-weight: 900; transform: translateY(1px); }
 .typing::after { content: "\2026"; display: inline-block; animation: blink 1.2s steps(2) infinite; color: var(--muted); font-weight: 900; }
 @keyframes blink { 50% { opacity: 0.2; } }
 

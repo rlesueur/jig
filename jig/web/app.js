@@ -878,6 +878,8 @@ $('agent-toggle').addEventListener('click', () => act($('agent-toggle'), async (
 /* A finished task's own check of how it went: only some of it done, or cut short by the step limit. */
 const partlyDone = (t) => t.status === 'done' && t.outcome?.status === 'partial';
 const limitNote = (t) => (t.outcome?.step_limit ? `It stopped at its limit of ${t.outcome.step_limit} steps.` : '');
+/* A task Jig stopped because its actions kept being refused: the plain explanation. */
+const refusedNote = (t) => (t.status === 'failed' && t.outcome?.refused ? t.error || '' : '');
 
 function taskSentence(t) {
   if (t.status === 'waiting_approval') return 'Waiting for your answer';
@@ -889,6 +891,7 @@ function taskSentence(t) {
   if (t.status === 'paused') return 'Paused';
   if (t.status === 'done') return [`${partlyDone(t) ? 'Partly done' : 'Finished'} at ${clock(t.finished_at)}`, limitNote(t)].filter(Boolean).join('. ');
   if (t.status === 'cancelled') return 'Stopped';
+  if (refusedNote(t)) return refusedNote(t);
   if (t.status === 'failed' || t.status === 'blocked') return `Couldn\u2019t finish: ${t.error || t.status}`;
   return t.status;
 }
@@ -1069,8 +1072,14 @@ function stopReply() {
   if (chatAbort) chatAbort.abort();
 }
 
-/** Under a reply Jig stopped (repeating itself, or going round in circles): say so, and offer to continue it or try again. */
+/** Under a reply Jig stopped (repeating itself, or going round in circles): say so, and offer to continue it or try again.
+ *  A reply stopped because its actions kept being refused only says why: carrying on would be refused again. */
 function stoppedNote(msg, item) {
+  if (item.reason === 'refused') {
+    msg.append(el('div', { class: 'reply-stopped', role: 'status', 'data-testid': 'chat-stopped' },
+      el('p', { class: 'reply-stopped-text', text: item.message })));
+    return;
+  }
   const box = el('div', { class: 'reply-stopped', role: 'status', 'data-testid': 'chat-stopped' },
     el('p', { class: 'reply-stopped-text', text: item.message }),
     el('p', { class: 'hint-quiet', text: item.relaxed ? 'It was still repeating itself after you asked it to carry on. What it wrote is kept above.' : 'What it wrote so far is kept above.' }));
@@ -1083,6 +1092,14 @@ function stoppedNote(msg, item) {
     el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'chat-continue', text: 'Continue anyway', onclick: () => go('continue') }),
     el('button', { type: 'button', class: 'btn btn-small btn-approve', 'data-testid': 'chat-try-again', text: 'Try again', onclick: () => go('retry') })));
   msg.append(box);
+}
+
+/** Under a reply that says Jig did something its own records show it didn't (jig.claims): a plain note for each. */
+function claimNotes(notes) {
+  if (!notes || !notes.length) return null;
+  return el('div', { class: 'reply-claims', role: 'note', 'aria-label': 'What Jig actually did', 'data-testid': 'chat-claims' },
+    ...notes.map((text) => el('p', { class: 'reply-claim', 'data-testid': 'chat-claim' },
+      el('span', { class: 'reply-claim-mark', 'aria-hidden': 'true', text: '!' }), el('span', { text }))));
 }
 
 /** Send `message`, or, after a reply was stopped (`from`), continue it in place or try it again. */
@@ -1178,6 +1195,8 @@ async function sendChat(message, { action = 'send', from = null } = {}) {
         replyText = item.final;
         showReply();
       }
+      const claims = claimNotes(item.claim_check?.notes);
+      if (claims) msg.append(claims);
     } else if (item.type === 'stopped') {
       finished = true;
       stopped = true;
@@ -1782,6 +1801,7 @@ function taskItem(t) {
       !t.goal_id && TERMINAL_TASK.has(t.status) ? el('div', { class: 'item-actions' }, deleteJobButton('task', t)) : null),
     el('div', { class: 'meta', text: `${t.id} · created ${when(t.created_at)}${t.finished_at ? ` · finished ${when(t.finished_at)}` : ''}` }),
     t.status === 'done' && limitNote(t) ? el('p', { class: 'hint-quiet', 'data-testid': 'task-note', text: limitNote(t) }) : null,
+    refusedNote(t) ? el('p', { class: 'hint-quiet', 'data-testid': 'task-note', text: refusedNote(t) }) : null,
     outcome ? el('details', { class: 'body' }, el('summary', { text: t.error ? 'Error' : 'Result' }), resultBody(outcome, Boolean(t.error))) : null);
 }
 
@@ -2088,8 +2108,9 @@ function conversationItem(c) {
       read.append(...transcript.map((m) => el('div', { class: `said ${m.role}`, 'data-testid': 'conversation-said' },
         el('p', { class: 'said-who', text: m.role === 'user' ? 'You' : 'Jig' }),
         m.role === 'user' ? el('p', { class: 'said-text', text: m.text }) : el('div', { class: 'md said-text' }, renderMarkdown(m.text)),
-        m.stopped ? el('p', { class: 'hint-quiet', text: m.stopped !== 'repetition' ? 'You stopped this reply.'
-          : `Jig stopped this reply because it was ${m.stopped_reason === 'circling' ? 'going round in circles' : 'repeating itself'}.` }) : null)));
+        m.stopped && m.stopped !== 'refused' ? el('p', { class: 'hint-quiet', text: m.stopped !== 'repetition' ? 'You stopped this reply.'
+          : `Jig stopped this reply because it was ${m.stopped_reason === 'circling' ? 'going round in circles' : 'repeating itself'}.` }) : null,
+        claimNotes(m.claim_notes))));
     } catch (err) {
       read.append(el('p', { class: 'error-text', text: err.message }));
     }
@@ -2219,7 +2240,7 @@ function scheduleItem(s) {
     : agentPaused ? `Next: ${nextWhen(s.next_run_at)}, but Jig is paused, so nothing runs until you resume Jig.`
       : `Next: ${nextWhen(s.next_run_at)}`;
   const t = s.last_task;
-  const last = t ? `Last run: ${nextWhen(t.created_at)}, ${partlyDone(t) ? 'partly done' : TASK_OUTCOME[t.status] || t.status.replace(/_/g, ' ')}.${limitNote(t) ? ` ${limitNote(t)}` : ''}` : 'Hasn\u2019t run yet.';
+  const last = t ? `Last run: ${nextWhen(t.created_at)}, ${partlyDone(t) ? 'partly done' : refusedNote(t) ? 'stopped' : TASK_OUTCOME[t.status] || t.status.replace(/_/g, ' ')}.${limitNote(t) ? ` ${limitNote(t)}` : ''}${refusedNote(t) ? ` ${refusedNote(t)}` : ''}` : 'Hasn\u2019t run yet.';
   const outcome = t && (t.error || t.result);
   const toggle = el('button', { type: 'button', class: `btn btn-small${s.enabled ? '' : ' btn-approve'}`, 'data-testid': 'schedule-toggle',
     text: s.enabled ? 'Pause' : 'Resume', 'aria-label': `${s.enabled ? 'Pause' : 'Resume'} ${label}`,

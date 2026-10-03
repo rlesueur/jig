@@ -22,7 +22,7 @@ from .connectors import register_tools as register_connector_tools
 from .constants import TERMINAL_TASK_STATUSES, EventType, GoalStatus, Mode, RunStatus, TaskStatus
 from .db import Database, new_id, now_iso
 from .discovery import check_context
-from .errors import CannotDelete, JigError, ModelCapabilityError, ModelStopped, NotFound
+from .errors import CannotDelete, JigError, ModelCapabilityError, ModelStopped, NotFound, RefusedActions
 from .events import Event, EventBus, AvatarStateTracker
 from .memory import MemoryStore
 from .instance import InstanceLock
@@ -575,6 +575,11 @@ class Jig:
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"{TASK_STOPPED} {exc.stop.describe('the model')}. "
                                  "You can try it again, or continue it anyway.")
             return
+        except RefusedActions as exc:
+            outcome = {"status": "could_not", "summary": str(exc), "basis": "Jig's record of the refused actions",
+                       "refused": exc.record}
+            self.set_task_status(task_id, TaskStatus.FAILED, error=str(exc), outcome_json=json.dumps(outcome))
+            return
         except (JigError, OSError) as exc:
             self.set_task_status(task_id, TaskStatus.FAILED, error=f"{type(exc).__name__}: {exc}")
             return
@@ -768,6 +773,13 @@ class Jig:
                                  "detail": exc.stop.describe(), "stop": exc.stop.record(), "relaxed": continuing,
                                  "run_id": run_id, "session_id": session_id})
                 return
+            except RefusedActions as exc:
+                # The explanation stays in the conversation, so the model sees on the next turn why it stopped.
+                messages.append({"role": "assistant", "content": str(exc), STOPPED_KEY: {"kind": "refused"}})
+                self.store.save_session(session_id, answered_only(saved()))
+                await queue.put({"type": "stopped", "reason": "refused", "message": str(exc),
+                                 "refused": exc.record, "run_id": run_id, "session_id": session_id})
+                return
             except asyncio.CancelledError:
                 if arrived:
                     messages.append({"role": "assistant", "content": "".join(arrived),
@@ -785,7 +797,7 @@ class Jig:
             self.store.save_session(session_id, finished())
             done = {"limit_reached": True} if result.limit_reached else {}
             await queue.put({"type": "done", "final": result.final, "run_id": run_id, "session_id": session_id,
-                             "steps": result.steps, **done, **extra})
+                             "steps": result.steps, "claim_check": result.claim_check, **done, **extra})
 
         self.bus.add_listener(listener)
         runner = asyncio.create_task(drive())

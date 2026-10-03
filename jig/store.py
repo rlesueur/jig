@@ -172,9 +172,14 @@ class Store:
         row["repeat"] = rec.repeat
         row["timezone"] = rec.timezone
         row["repeat_text"] = rec.describe()
-        row["last_task"] = self.db.one(
-            "SELECT id, status, result, error, created_at, started_at, finished_at FROM tasks WHERE id = ?",
-            (row["last_task_id"],)) if row["last_task_id"] else None
+        last = self.db.one(
+            "SELECT id, status, result, error, outcome_json, created_at, started_at, finished_at "
+            "FROM tasks WHERE id = ?", (row["last_task_id"],)) if row["last_task_id"] else None
+        if last is not None:
+            # The same outcome a task carries (step limit, refused actions), so a schedule's last run can say why.
+            outcome = last.pop("outcome_json", None)
+            last["outcome"] = json.loads(outcome) if outcome else None
+        row["last_task"] = last
         return row
 
     def list_schedules(self) -> list[dict[str, Any]]:
@@ -260,6 +265,10 @@ class Store:
         row["messages"] = json.loads(row.pop("messages_json"))
         if with_steps:
             row["step_records"] = self.list_steps(run_id)
+        check = self.db.one("SELECT output_json FROM run_steps WHERE run_id = ? AND type = 'claim_check' "
+                            "ORDER BY id DESC LIMIT 1", (run_id,))
+        # What the final reply claims Jig did, compared with the run's tool records (jig.claims).
+        row["claim_check"] = json.loads(check["output_json"]) if check and check["output_json"] else None
         return row
 
     def list_runs(self, *, task_id: str | None = None, kind: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -372,7 +381,12 @@ class Store:
                "updated_at": row["updated_at"], "messages": len(said),
                "replying": any(r["status"] == RunStatus.RUNNING for r in runs)}
         if with_messages:
-            out["transcript"] = said
+            notes = {r["final"]: json.loads(r["output_json"])["notes"] for r in self.db.query(
+                "SELECT runs.final, run_steps.output_json FROM runs JOIN run_steps ON run_steps.run_id = runs.id "
+                "WHERE runs.session_id = ? AND runs.kind = 'chat' AND run_steps.type = 'claim_check' "
+                "AND run_steps.status = 'flagged' ORDER BY run_steps.id", (sid,)) if r["final"]}
+            out["transcript"] = [{**m, "claim_notes": notes[m["text"]]} if m["role"] == "assistant" and m["text"] in notes
+                                 else m for m in said]
         return out
 
     def delete_conversation(self, session_id: str) -> dict[str, Any]:

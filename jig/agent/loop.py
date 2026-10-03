@@ -9,9 +9,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .. import claims
 from ..audit import AuditLog
 from ..constants import EventType, Mode, RunStatus
-from ..errors import JigError, ModelError, ModelStopped, RepeatedActions, StepLimitExceeded
+from ..errors import JigError, ModelError, ModelStopped, RefusedActions, RepeatedActions, StepLimitExceeded
 from ..events import EventBus
 from ..model import ModelClient, ToolCall
 from ..pause import RunPaused, until_paused
@@ -19,6 +20,7 @@ from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
 from .prompts import CONTINUE_KEY, STOPPED_KEY, STEP_LIMIT_PROMPT, budget_line
+from .refusals import REFUSED_ACTION_LIMIT, refusal_kind, stop_message, stop_record
 
 DeltaSink = Callable[[str, str], Awaitable[None]]
 # A run that makes the same tool call and gets the same result this many times is stopped.
@@ -51,6 +53,8 @@ class RunResult:
     # The run used every model call it was allowed; ``final`` is its own account of what it did and what is left,
     # from one more call with no tools offered.
     limit_reached: bool = False
+    # What ``final`` claims Jig did, compared with the run's tool records (jig.claims.check).
+    claim_check: dict[str, Any] | None = None
 
 
 def _steps_taken(messages: list[dict[str, Any]]) -> int:
@@ -123,6 +127,7 @@ class Agent:
         try:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
+                self._check_refusals(run_id, steps, ids)
                 self._add_budget(messages, steps, limit, None)
                 self.store.checkpoint_run(run_id, messages, steps)
             while True:
@@ -143,6 +148,7 @@ class Agent:
                     final = result.content
                     break
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
+                self._check_refusals(run_id, steps, ids)
                 self._check_repeats(result.tool_calls, messages, actions, ids)
                 self._add_budget(messages, steps, limit, result)
                 self.store.checkpoint_run(run_id, messages, steps)
@@ -154,6 +160,13 @@ class Agent:
             self.audit.record("run.end", "run stopped: the model was repeating itself", **ids, status="stopped",
                               stop=exc.stop.record())
             self.bus.publish(EventType.RUN_END, status="stopped", reason=exc.stop.kind, **ids)
+            raise
+        except RefusedActions as exc:
+            self.store.checkpoint_run(run_id, messages, steps)
+            self.store.finish_run(run_id, status=RunStatus.FAILED, error=f"RefusedActions: {exc}")
+            self.audit.record("run.end", "run stopped: its actions kept being refused", **ids, status="stopped",
+                              reason="refused", **exc.record)
+            self.bus.publish(EventType.RUN_END, status="stopped", reason="refused", **ids)
             raise
         except RunPaused as exc:
             # The run record stays 'running' with its checkpoint, so resuming the task picks it up.
@@ -175,6 +188,7 @@ class Agent:
                               error_chars=len(error))
             self.bus.publish(EventType.RUN_END, status="failed", error=error, **ids)
             raise
+        claim_check = self._check_claims(final, spec, run_id, steps, ids)
         if limit_reached:
             note = f"stopped at the step limit of {limit} model calls; the final answer says what is left"
             self.store.finish_run(run_id, status=RunStatus.DONE, final=final, error=note)
@@ -186,7 +200,40 @@ class Agent:
             self.audit.record("run.end", "run done", **ids, status="done", steps=steps, final_chars=len(final))
             self.bus.publish(EventType.RUN_END, status="done", steps=steps, **ids)
         return RunResult(run_id=run_id, status=RunStatus.DONE, final=final, steps=steps, messages=messages,
-                         limit_reached=limit_reached)
+                         limit_reached=limit_reached, claim_check=claim_check)
+
+    def _check_claims(self, final: str, spec: RunSpec, run_id: str, idx: int, ids: dict[str, Any]) -> dict[str, Any]:
+        """Compare what the reply says Jig did with the run's tool records; kept as a run step, and in the audit
+        log as counts only."""
+        result = claims.check(final, self.store.list_steps(run_id), mode=spec.mode.value, request=spec.intent)
+        step_id = self.store.start_step(run_id, idx, "claim_check", "claims", {"reply_chars": len(final)})
+        self.store.finish_step(step_id, status="flagged" if result["notes"] else "ok", output=result)
+        self.audit.record("run.claim_check", f"{len(result['claims'])} claims checked, {len(result['notes'])} "
+                          "not done", **ids, **claims.record(result))
+        return result
+
+    def _check_refusals(self, run_id: str, idx: int, ids: dict[str, Any]) -> None:
+        """Stop the run once REFUSED_ACTION_LIMIT of its tool calls in a row were refused. Counted from the run's own
+        step records, so a run that paused (for the user, or a restart) carries on counting where it was."""
+        refused: list[tuple[str, str]] = []
+        for step in reversed(self.store.list_steps(run_id)):
+            if step["type"] != "tool_call" or step["status"] not in ("ok", "error"):
+                continue
+            if step["status"] == "ok":
+                break
+            if kind := refusal_kind(step["output"]):
+                refused.append((step["name"], kind))
+                if len(refused) == REFUSED_ACTION_LIMIT:
+                    break
+        if len(refused) < REFUSED_ACTION_LIMIT:
+            return
+        refused.reverse()
+        record = stop_record(refused)
+        step_id = self.store.start_step(run_id, idx, "stop", "refused_actions", {"limit": REFUSED_ACTION_LIMIT})
+        self.store.finish_step(step_id, status="stopped", output=record)
+        self.audit.record("run.refused_actions", f"stopped after {len(refused)} refused actions in a row", **ids,
+                          **record)
+        raise RefusedActions(stop_message(refused), record=record)
 
     def _check_repeats(self, calls: list[ToolCall], messages: list[dict[str, Any]], actions: dict[str, int],
                        ids: dict[str, Any]) -> None:

@@ -74,6 +74,15 @@ class RepeatedActions(JigError):
     """A run made the same tool call and got the same result several times, so it was stopped."""
 
 
+class RefusedActions(JigError):
+    """A run's actions were refused several times in a row (the Sentinel, the user, read-only mode or a rule), so it
+    was stopped. The message is the plain explanation; ``record`` is content-free (jig.agent.refusals.stop_record)."""
+
+    def __init__(self, message: str, *, record: dict[str, Any]):
+        super().__init__(message)
+        self.record = record
+
+
 class ToolError(JigError):
     """A tool failed while executing."""
 
