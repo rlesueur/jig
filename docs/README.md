@@ -3,6 +3,7 @@
 These are the user guides for this beta (version 0.1.0b1). The [README](../README.md) is the full reference: install details, model requirements, the safety model and the API. These pages walk through the parts you set up yourself, and link back there instead of repeating it.
 
 - [Getting started](getting-started.md): install Jig, first run, a local model server or a cloud model.
+- [Updates](updates.md): check for a new version when you ask, and install it on Windows.
 - [Approvals and safety](approvals-and-safety.md): the approval card, the Sentinel, Stop the reply, the step limit, and Continue anyway.
 - [Connecting your accounts](connecting-accounts.md): Gmail, Google Calendar, Google Drive, Outlook calendar, OneDrive, GitHub, Discord and WhatsApp. The provider steps are in [connectors-setup.md](connectors-setup.md).
 - [Search](search.md): optional web search with SearXNG.

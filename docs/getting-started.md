@@ -14,6 +14,8 @@ The installer clicks, the SmartScreen warning, the measured model and the long t
 
 Jig keeps its settings, memories and notes in `%LOCALAPPDATA%\Jig`. Closing the window leaves Jig running. To turn it off, use **Turn Jig off** on the icon by the clock. To remove it: **Settings > Apps > Installed apps > Jig > Uninstall**.
 
+A newer version is not installed on its own. In **Settings > About and updates**, choose **Check for updates**, read what is new, and, for this installer, choose **Install update**. The same check is on the icon by the clock. Details are in [Updates](updates.md).
+
 **Mac, Linux, or Windows without the installer.** You need Python 3.11 or newer and Git.
 
 ```powershell

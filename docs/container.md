@@ -306,6 +306,8 @@ A Tailscale sidecar container (the `tailscale/tailscale` image sharing Jig's net
 
 ## Updating
 
+Jig in a container does not replace itself. **Settings > About and updates** shows a newer version and these same steps when you choose **Check for updates**. It does not check in the background.
+
 ```sh
 git pull                               # compose.yaml and deploy/jig.toml for the new version
 docker compose pull                    # or: docker compose build
