@@ -1,23 +1,56 @@
-﻿; Jig's Windows installer. Built by installer\build.ps1, which passes AppVersion, Stage and Icon.
+; Jig's Windows installer. Built by installer\build.ps1, which passes AppVersion, Stage and Icon.
 ;
 ; A per-user install: no administrator rights. Jig goes in %LOCALAPPDATA%\Programs\Jig, and its settings
-; and data in %LOCALAPPDATA%\Jig (kept on uninstall unless you choose to delete them). Options for
-; testing a second install alongside another: /DIR=<program folder> /JIGHOME=<settings and data folder>
-; /PORT=<port> /ENTRY=<Task Scheduler entry for Start with Windows>.
+; and data in %LOCALAPPDATA%\Jig (kept on uninstall unless you choose to delete them). /DIR, /JIGHOME,
+; /PORT and /ENTRY choose the folder, data folder, port and Start with Windows entry for one install.
+; They do not give it a second identity: the AppId, the registry value and the jig:// protocol stay
+; this copy's. A second install beside a real one needs /DTestInstall=yes (below). installer\build.ps1
+; passes that only with -TestInstall, and scripts\publish.ps1 never does. A normal release cannot
+; produce the test installer.
+;
+; TestInstall must be "yes" or "no". Unset means "no", which is the published Jig.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef TestInstall
+  #define TestInstall "no"
+#endif
+
+#if TestInstall == "yes"
+  #define AppIdValue "{{C4E8B2A1-7D5F-4A93-9E16-2B8F0D4C6A71}"
+  #define AppNameText "Jig Update Test"
+  #define DefaultDir "{localappdata}\Programs\JigUpdateTest"
+  #define DefaultHome "{localappdata}\JigUpdateTest"
+  #define DefaultEntry "\JigUpdateTest\JigUpdateTest"
+  #define MenuName "Jig Update Test"
+  #define ModelId "Jig.UpdateTest"
+  #define RegParent "Software\JigUpdateTest"
+  #define RegKey "Software\JigUpdateTest\Install"
+#else
+  #if TestInstall != "no"
+    #error TestInstall must be "yes" or "no". The release build does not set it.
+  #endif
+  #define AppIdValue "{{95703079-D843-48C3-A6C6-5F82AC829549}"
+  #define AppNameText "Jig"
+  #define DefaultDir "{localappdata}\Programs\Jig"
+  #define DefaultHome "{localappdata}\Jig"
+  #define DefaultEntry "\Jig\Jig"
+  #define MenuName "Jig"
+  #define ModelId "Jig.App"
+  #define RegParent "Software\Jig"
+  #define RegKey "Software\Jig\Install"
+#endif
 
 [Setup]
-AppId={{95703079-D843-48C3-A6C6-5F82AC829549}
-AppName=Jig
+AppId={#AppIdValue}
+AppName={#AppNameText}
 AppVersion={#AppVersion}
-AppVerName=Jig {#AppVersion}
+AppVerName={#AppNameText} {#AppVersion}
 AppPublisher=Jig
 AppPublisherURL=https://github.com/rlesueur/jig
 AppSupportURL=https://github.com/rlesueur/jig/issues
-DefaultDirName={localappdata}\Programs\Jig
+DefaultDirName={#DefaultDir}
 DisableWelcomePage=no
 DisableDirPage=yes
 DisableProgramGroupPage=yes
@@ -28,7 +61,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=JigSetup-{#AppVersion}
 SetupIconFile={#Icon}
 UninstallDisplayIcon={app}\jig.ico
-UninstallDisplayName=Jig
+UninstallDisplayName={#AppNameText}
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
@@ -64,17 +97,20 @@ Source: "{#Stage}\jig.toml.template"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Icon}"; DestDir: "{app}"; DestName: "jig.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Jig"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; IconFilename: "{app}\jig.ico"; Comment: "Open Jig"; AppUserModelID: "Jig.App"
+Name: "{autoprograms}\{#MenuName}"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; IconFilename: "{app}\jig.ico"; Comment: "Open {#AppNameText}"; AppUserModelID: "{#ModelId}"
 
 [Registry]
+#if TestInstall != "yes"
 ; jig://start, used by the "Turn Jig on" button on Jig's "Jig is off" page.
+; The test installer does not register this. One jig:// command can exist, and it belongs to the real Jig.
 Root: HKCU; Subkey: "Software\Classes\jig"; ValueType: string; ValueName: ""; ValueData: "URL:Jig"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\jig"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\jig\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\jig.ico"
 Root: HKCU; Subkey: "Software\Classes\jig\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" -m jig.tray --config ""{code:JigHome}\jig.toml"" ""%1"""
-; Where this install keeps its settings and data, for the uninstaller.
-Root: HKCU; Subkey: "Software\Jig"; Flags: uninsdeletekeyifempty
-Root: HKCU; Subkey: "Software\Jig\Install"; ValueType: string; ValueName: "JigHome"; ValueData: "{code:JigHome}"; Flags: uninsdeletekey
+#endif
+; Where this install keeps its settings and data, for the uninstaller. The test installer uses its own key.
+Root: HKCU; Subkey: "{#RegParent}"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "{#RegKey}"; ValueType: string; ValueName: "JigHome"; ValueData: "{code:JigHome}"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:JigHome}\jig.toml"" --open"; WorkingDir: "{app}"; Description: "Open Jig now"; Flags: postinstall nowait skipifsilent
@@ -82,10 +118,16 @@ Filename: "{app}\python\pythonw.exe"; Parameters: "-m jig.tray --config ""{code:
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
+; The preprocessed script so far: AppId, registry key and protocol. build.ps1 passes IdentityFile.
+; A release build never passes TestInstall.
+#ifdef IdentityFile
+  #expr SaveToFile(IdentityFile)
+#endif
+
 [Code]
 function JigHome(Param: String): String;
 begin
-  Result := ExpandConstant('{param:JIGHOME|{localappdata}\Jig}');
+  Result := ExpandConstant('{param:JIGHOME|{#DefaultHome}}');
 end;
 
 function ConfigPath(): String;
@@ -120,7 +162,7 @@ begin
   ForceDirectories(JigHome(''));
   LoadStringFromFile(ExpandConstant('{app}\jig.toml.template'), Template);
   Text := String(Template);
-  Entry := ExpandConstant('{param:ENTRY|\Jig\Jig}');
+  Entry := ExpandConstant('{param:ENTRY|{#DefaultEntry}}');
   StringChangeEx(Entry, '\', '\\', True);
   StringChangeEx(Text, '@PORT@', ExpandConstant('{param:PORT|8766}'), True);
   StringChangeEx(Text, '@ENTRY@', Entry, True);
@@ -187,7 +229,7 @@ var
 function InitializeUninstall(): Boolean;
 begin
   { Read before the uninstaller removes the registry entries. }
-  if not RegQueryStringValue(HKCU, 'Software\Jig\Install', 'JigHome', UninstallHome) then
+  if not RegQueryStringValue(HKCU, '{#RegKey}', 'JigHome', UninstallHome) then
     UninstallHome := '';
   Result := True;
 end;

@@ -108,9 +108,15 @@ try {
     if ($running) {
       try { Wait-Process -Id $WaitPid -Timeout 180 -ErrorAction Stop }
       catch {
-        Write-Log "Jig was still running after the wait, so the installer was not started."
-        Write-Result -Code 1 -ErrorText "Jig was still running, so the installer was not started."
-        exit 1
+        # Wait-Process also throws when Jig exits in the gap after Get-Process, which is the
+        # normal case: shutdown is quick. Only a process that is still there is a real timeout.
+        $still = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+        if ($still) {
+          Write-Log "Jig was still running after the wait, so the installer was not started."
+          Write-Result -Code 1 -ErrorText "Jig was still running, so the installer was not started."
+          exit 1
+        }
+        Write-Log "Jig had already exited."
       }
     }
   }

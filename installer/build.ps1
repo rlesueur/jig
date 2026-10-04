@@ -10,7 +10,13 @@
 param(
     [Parameter(Mandatory = $true)][string]$InnoSetup,
     [string]$Python = "python",
-    [string]$Cache = "$PSScriptRoot\..\build\installer-cache"
+    [string]$Cache = "$PSScriptRoot\..\build\installer-cache",
+    # A side-by-side installer with its own AppId, registry key, Start menu name and protocol
+    # (none of the published Jig's). Never set this for a release. scripts\publish.ps1 does not,
+    # and it refuses an installer that carries the test AppId. -OutputDir is required so the test
+    # file is not written into dist\, where a release build looks.
+    [switch]$TestInstall,
+    [string]$OutputDir = ""
 )
 $ErrorActionPreference = "Stop"
 
@@ -72,7 +78,54 @@ if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig" }
 if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig's window (pywebview and pythonnet)" }
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
+$OutDir = if ($OutputDir) { $OutputDir } else { Join-Path $Root "dist" }
+if ($TestInstall) {
+    if (-not $OutputDir) { throw "-TestInstall needs -OutputDir. A test installer is not written to dist\." }
+    $releaseDir = [IO.Path]::GetFullPath((Join-Path $Root "dist"))
+    $asked = [IO.Path]::GetFullPath($OutputDir)
+    if ($asked.TrimEnd('\') -eq $releaseDir.TrimEnd('\')) {
+        throw "-TestInstall must not write into dist\. That folder is for the release installer."
+    }
+}
 $Iscc = Join-Path $InnoSetup "ISCC.exe"
-& $Iscc "/DAppVersion=$Version" "/DStage=$Stage" "/DIcon=$Root\jig\web\favicon.ico" "/O$Root\dist" "$PSScriptRoot\jig.iss"
+$isccArgs = @("/DAppVersion=$Version", "/DStage=$Stage", "/DIcon=$Root\jig\web\favicon.ico", "/O$OutDir")
+$idFile = (Join-Path $OutDir "installer-identity.txt") -replace '\\', '/'
+$isccArgs += "/DIdentityFile=$idFile"
+if ($TestInstall) { $isccArgs += "/DTestInstall=yes" }
+& $Iscc @isccArgs "$PSScriptRoot\jig.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup couldn't build the installer" }
-Write-Host "Built $Root\dist\JigSetup-$Version.exe"
+$Built = Join-Path $OutDir "JigSetup-$Version.exe"
+# The AppId is stored as text in the installer. A release build must carry the published id and
+# not the test id, and the other way round. This is the check that -TestInstall cannot sneak
+# into a normal build, and that a test build cannot carry the real identity.
+& $Python -c @"
+import pathlib, sys
+exe = pathlib.Path(sys.argv[1]).read_bytes()
+script = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8', errors='replace')
+want_test = sys.argv[3] == 'yes'
+def has(text):
+    return text.encode('utf-16le') in exe or text.encode('ascii') in exe
+prod = '95703079-D843-48C3-A6C6-5F82AC829549'
+test = 'C4E8B2A1-7D5F-4A93-9E16-2B8F0D4C6A71'
+if want_test:
+    if 'AppId={{' + test + '}' not in script:
+        sys.exit('the preprocessed script does not use the test AppId')
+    if prod in script or 'Software\\Jig\\Install' in script or 'Software\\Classes\\jig' in script:
+        sys.exit('the preprocessed test script still contains the published identity')
+    if 'Software\\JigUpdateTest\\Install' not in script:
+        sys.exit('the preprocessed test script is missing its registry key')
+    if not has('Jig Update Test'):
+        sys.exit('the test installer does not identify itself as Jig Update Test')
+else:
+    if 'AppId={{' + prod + '}' not in script:
+        sys.exit('the preprocessed script does not use the published AppId')
+    if test in script or 'JigUpdateTest' in script:
+        sys.exit('the preprocessed release script contains the test identity')
+    if 'Software\\Classes\\jig' not in script or 'Software\\Jig\\Install' not in script:
+        sys.exit('the preprocessed release script is missing the protocol or registry key')
+    if has('Jig Update Test') or has('JigUpdateTest'):
+        sys.exit('the release installer contains the test identity')
+print('installer identity ok')
+"@ $Built $idFile $(if ($TestInstall) { 'yes' } else { 'no' })
+if ($LASTEXITCODE -ne 0) { throw "The installer identity check failed" }
+Write-Host "Built $Built"

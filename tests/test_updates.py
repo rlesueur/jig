@@ -150,6 +150,7 @@ def test_silent_installer_flags_match_the_script():
         assert flag in HELPER_PS1
     assert "jig.tray" in HELPER_PS1
     assert "Wait-Process" in HELPER_PS1
+    assert "Jig had already exited." in HELPER_PS1
     # In-place upgrade: the script does not pass a different directory.
     assert "/DIR=" not in HELPER_PS1
 
@@ -157,6 +158,29 @@ def test_silent_installer_flags_match_the_script():
 def test_signing_notice_is_honest():
     assert "isn't code-signed" in SIGNING_NOTICE
     assert "SHA-256" in SIGNING_NOTICE
+
+
+def test_a_normal_build_cannot_produce_the_test_installer():
+    """The side-by-side installer is a compile flag. The release script never sets it."""
+    root = Path(__file__).resolve().parents[1]
+    iss = (root / "installer" / "jig.iss").read_text(encoding="utf-8")
+    build = (root / "installer" / "build.ps1").read_text(encoding="utf-8")
+    publish = (root / "scripts" / "publish.ps1").read_text(encoding="utf-8")
+    yes, _, rest = iss.partition('#if TestInstall == "yes"')
+    test_branch, _, prod_branch = rest.partition("#else")
+    assert "C4E8B2A1-7D5F-4A93-9E16-2B8F0D4C6A71" in test_branch
+    assert "95703079-D843-48C3-A6C6-5F82AC829549" not in test_branch
+    assert "95703079-D843-48C3-A6C6-5F82AC829549" in prod_branch
+    assert "C4E8B2A1-7D5F-4A93-9E16-2B8F0D4C6A71" not in prod_branch
+    assert "Software\\JigUpdateTest\\Install" in test_branch
+    assert "Software\\Jig\\Install" in prod_branch
+    protocol = iss.split('#if TestInstall != "yes"', 1)[1].split("#endif", 1)[0]
+    assert "Software\\Classes\\jig" in protocol
+    assert "Software\\Classes\\jig" not in test_branch
+    assert 'if ($TestInstall) { $isccArgs += "/DTestInstall=yes" }' in build
+    assert "-TestInstall must not write into dist\\" in build
+    assert "-TestInstall" not in publish
+    assert "/DTestInstall" not in publish
 
 
 @pytest.mark.network
