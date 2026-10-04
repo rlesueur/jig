@@ -604,6 +604,7 @@ button.reply-trouble:hover, button.reply-trouble:focus-visible { color: var(--te
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; font-size: 15px; }
 .kv dt { color: var(--muted); font-weight: 700; }
 .kv dd { margin: 0; word-break: break-word; }
+.updates-instructions { white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.92em; margin: 0; padding: 10px 12px; background: var(--sunk); border: 1px solid var(--line); border-radius: 10px; }
 
 .choices { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .choice { display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: var(--surface); }

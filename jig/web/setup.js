@@ -176,6 +176,7 @@ function welcome() {
   const card = el('div', { class: 'setup-card' }, problemBox(p, s.detail));
   if (s.recheck) card.append(el('p', { class: 'hint', 'data-testid': 'setup-recheck', text: 'I\u2019ll keep trying by myself every few seconds, and start as soon as it answers.' }));
   card.append(el('div', { class: 'setup-actions' }, actions));
+  card.append(updatesLink());
   show(stage('idle', 'I can\u2019t start yet.', 'Jig stays off until its model passes its checks. Here\u2019s what happened.'), card);
 }
 
@@ -185,11 +186,17 @@ function watchForStart() {
     if (page.mode !== 'setup' || page.checking) return;
     try {
       const s = await call('/status');
+      if (s.show_updates) location.hash = '#settings/updates';
       if (s.status !== 'setup') location.reload();
     } catch {
       /* Jig is restarting or unreachable: try again next time */
     }
   }, 5000);
+}
+
+function updatesLink() {
+  return el('p', { class: 'hint' },
+    el('a', { href: '#settings/updates', 'data-testid': 'setup-updates', text: 'About and updates' }));
 }
 
 function backButton(onclick) {
@@ -228,7 +235,7 @@ async function chooseScreen() {
   const intro = page.mode === 'change'
     ? stage('idle', 'Which model should I use?', 'Choose a model and I\u2019ll check it works before switching. If it doesn\u2019t pass, I\u2019ll keep using the one I have.')
     : stage('idle', 'Hi! I\u2019m Jig.', 'I need a model to think with. Choose one and I\u2019ll check it works before I start.');
-  show(...[cancelButton(), intro, form, help, elsewhere, cloud].filter(Boolean));
+  show(...[cancelButton(), intro, form, help, elsewhere, cloud, updatesLink()].filter(Boolean));
 
   let picked = null;
   form.addEventListener('submit', (e) => {

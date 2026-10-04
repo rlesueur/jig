@@ -64,7 +64,7 @@ IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x10, 0x40
 ERROR_ALREADY_EXISTS = 183
 CREATE_NO_WINDOW = 0x08000000
 
-CMD_OPEN, CMD_ON, CMD_OFF, CMD_QUIT, CMD_BROWSER = 1, 2, 3, 4, 5
+CMD_OPEN, CMD_ON, CMD_OFF, CMD_QUIT, CMD_BROWSER, CMD_UPDATES = 1, 2, 3, 4, 5, 6
 
 LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
@@ -145,6 +145,7 @@ class Tray:
         self.stopping = False  # we asked Jig to turn off
         self.quitting = False
         self.open_when_up = False
+        self.open_updates = False  # the next open goes to About and updates
         self.start_when_off = False  # asked to start while the last Jig was still turning off
         self.waiting_approvals: set[str] = set()  # pending approvals already notified
         self.state = "starting"  # starting | running | setup | stopping | off | problem
@@ -217,17 +218,29 @@ class Tray:
         self._set_state("stopping")
         return True
 
-    def open_jig(self) -> None:
-        """Open Jig's window (it signs itself in), or bring it to the front. Waits for Jig if it's starting."""
+    def open_jig(self, *, updates: bool = False) -> None:
+        """Open Jig's window (it signs itself in), or bring it to the front. Waits for Jig if it's starting.
+
+        With ``updates``, the window opens on About and updates. That is the tray's Check for updates.
+        It does not ask GitHub itself: the page does, when the person clicks there.
+        """
+        if updates:
+            self.open_updates = True
         status = self._answering()
         if status is None:
             self.open_when_up = True
             if self.state in ("off", "problem"):
                 self.start_jig()
             return
+        if self.open_updates:
+            try:
+                httpx.post(f"{self.base}/updates/show", headers=self._headers(), timeout=10)
+            except (httpx.HTTPError, OSError) as exc:
+                log.info("could not ask the open window to show updates: %s", exc)
         from .desktop import open_window
 
-        open_window(self.config_path, self.data_dir, self.port)
+        open_window(self.config_path, self.data_dir, self.port, open_updates=self.open_updates)
+        self.open_updates = False
 
     def open_in_browser(self) -> None:
         """Open the web UI in the default browser, signed in, as 'jig ui --browser' does."""
@@ -369,6 +382,8 @@ class Tray:
             u.AppendMenuW(menu, MF_STRING | (MF_GRAYED if self.state in ("starting", "stopping") else 0), CMD_ON,
                           "Turn Jig on")
         u.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        u.AppendMenuW(menu, MF_STRING, CMD_UPDATES, "Check for updates")
+        u.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         u.AppendMenuW(menu, MF_STRING, CMD_QUIT, "Quit (turns Jig off)" if running else "Quit")
         u.SetMenuDefaultItem(menu, CMD_OPEN, 0)
         pt = wintypes.POINT()
@@ -389,6 +404,8 @@ class Tray:
             self.start_jig()
         elif cmd == CMD_OFF:
             threading.Thread(target=self.stop_jig, daemon=True).start()
+        elif cmd == CMD_UPDATES:
+            threading.Thread(target=self.open_jig, kwargs={"updates": True}, daemon=True).start()
         elif cmd == CMD_QUIT:
             threading.Thread(target=self.quit, daemon=True).start()
 

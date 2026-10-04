@@ -242,6 +242,7 @@ async function windowSignIn() {
 }
 
 async function boot() {
+  pendingUpdates = takeOpenUpdates();
   let loginError = '';
   const m = location.hash.match(/^#code=([A-Za-z0-9_-]+)$/);
   const p = location.hash.match(/^#pair=([A-Za-z0-9-]+)$/);
@@ -412,12 +413,18 @@ async function start() {
   started = true;
   $('logout').hidden = IN_WINDOW; // the window signs itself in, so signing out there would only sign it back in
   // Set-up mode: the agent is off until a model passes its checks, so show the set-up page instead.
-  if (await showSetupIfNeeded()) {
+  // About and updates stays reachable, including before a model is chosen.
+  inSetup = await showSetupIfNeeded();
+  const wantUpdates = pendingUpdates || currentSection() === 'updates';
+  pendingUpdates = false;
+  if (inSetup) {
     setConn('Setting up', 'warn');
+    if (wantUpdates) openUpdatesFromSetup();
     return;
   }
   $('app').hidden = false;
-  route(false);
+  if (wantUpdates && currentSection() !== 'updates') location.hash = '#settings/updates';
+  else route(false);
   connectEvents();
   refreshAll();
 }
@@ -437,7 +444,7 @@ function refreshAll() {
 
 /* ---------- main screen and Settings (hash routes) ---------- */
 
-const SECTIONS = ['model', 'rules', 'connections', 'search', 'mcp', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat'];
+const SECTIONS = ['model', 'rules', 'connections', 'search', 'mcp', 'memory', 'conversations', 'schedules', 'history', 'startup', 'devices', 'power', 'appearance', 'chat', 'updates'];
 
 function currentSection() {
   const m = location.hash.match(/^#settings(?:\/([a-z]+))?(?:\/[a-z-]+)?$/);
@@ -447,9 +454,50 @@ function currentSection() {
 /** #settings/connections/<provider>: that account's guided set-up. */
 const walkthroughProvider = () => (location.hash.match(/^#settings\/connections\/([a-z-]+)$/) || [])[1] || null;
 
+let inSetup = false;
+let setupBehindSettings = false;
+let pendingUpdates = false;
+
+function takeOpenUpdates() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('open') !== 'updates') return false;
+  params.delete('open');
+  const search = params.toString();
+  history.replaceState(null, '', location.pathname + (search ? `?${search}` : '') + location.hash);
+  return true;
+}
+
+function revealSettingsOverSetup() {
+  setupBehindSettings = true;
+  const setup = $('setup');
+  if (setup) setup.hidden = true;
+  $('app').hidden = false;
+  $('open-settings').hidden = false;
+}
+
+function restoreSetup() {
+  setupBehindSettings = false;
+  $('app').hidden = true;
+  $('settings').hidden = true;
+  $('main').hidden = false;
+  $('open-settings').hidden = true;
+  const setup = $('setup');
+  if (setup) setup.hidden = false;
+}
+
+function openUpdatesFromSetup() {
+  revealSettingsOverSetup();
+  if (currentSection() !== 'updates') location.hash = '#settings/updates';
+  else route(true);
+}
+
 function route(moveFocus = true) {
   if (offState) return;
   const section = currentSection();
+  if (!section && inSetup && setupBehindSettings) {
+    restoreSetup();
+    return;
+  }
   if (section && !SECTIONS.includes(section)) {
     showError(`There\u2019s no Settings section called ${q(section)}.`);
     history.replaceState(null, '', '#settings');
@@ -478,6 +526,7 @@ function route(moveFocus = true) {
     if (section === 'schedules') loadSchedules();
     if (section === 'devices') loadRemote();
     if (section === 'power') loadPower();
+    if (section === 'updates') loadUpdates();
     if (moveFocus) {
       const heading = document.querySelector(`.set-section[data-section="${section}"] h3`);
       heading.tabIndex = -1;
@@ -488,7 +537,10 @@ function route(moveFocus = true) {
   }
   renderCorner();
 }
-window.addEventListener('hashchange', () => route(true));
+window.addEventListener('hashchange', () => {
+  if (inSetup && currentSection()) revealSettingsOverSetup();
+  route(true);
+});
 
 /* ---------- health: one quiet dot, and a banner that explains any problem ---------- */
 
@@ -702,6 +754,12 @@ function handleEvent(event) {
     setAgentPaused(d.paused);
     refreshSoon('status');
   }
+  if (t === 'show-updates') {
+    if (inSetup) revealSettingsOverSetup();
+    if (location.hash !== '#settings/updates') location.hash = '#settings/updates';
+    else route(true);
+    return;
+  }
   if (t === 'power.stopping') {
     showOff({ scope: d.scope, fromElsewhere: !ownStop });
     return;
@@ -794,6 +852,7 @@ async function loadStatus() {
     renderHealth();
     return;
   }
+  if (s.show_updates && location.hash !== '#settings/updates') location.hash = '#settings/updates';
   if (s.status === 'setup') { // the agent was turned off (for example, cloud consent withdrawn elsewhere)
     location.reload();
     return;
@@ -3084,6 +3143,110 @@ $('model-start').addEventListener('click', () => act($('model-start'), async () 
   await loadPower();
   loadStatus();
 }));
+
+/* ---------- about and updates (only when you click) ---------- */
+
+const UPDATE_KIND = {
+  installer: 'Installed with the Windows installer.',
+  checkout: 'Installed from a copy of the source code.',
+  container: 'Running in a container.',
+};
+let updatesOffer = null;
+
+async function loadUpdates() {
+  let info;
+  try {
+    info = await api('/updates');
+  } catch (err) {
+    if (err.status !== 401) $('updates-version').textContent = `Jig couldn\u2019t load this: ${err.message}`;
+    return;
+  }
+  $('updates-version').textContent = info.prerelease ? `${info.version} (beta)` : info.version;
+  $('updates-kind').textContent = UPDATE_KIND[info.kind] || info.kind;
+  $('updates-notice').textContent = info.notice;
+  if (info.prerelease) {
+    $('updates-intro').textContent = 'Jig checks for a new version only when you click. It doesn\u2019t check in the background, and it never installs one unless you agree. This copy is a beta, so a check includes other beta releases. Jig never offers an older version.';
+  }
+}
+
+function releaseLink(url, repo) {
+  const box = $('updates-link');
+  box.replaceChildren();
+  const prefix = `https://github.com/${repo}/releases/`;
+  if (typeof url !== 'string' || !url.startsWith(prefix)) return;
+  box.append('Release page: ', el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: url }));
+}
+
+function renderOffer(result) {
+  updatesOffer = result.update;
+  $('updates-available').hidden = !result.update;
+  $('updates-install').hidden = true;
+  $('updates-instructions').hidden = true;
+  if (!result.update) {
+    let text = `Jig ${result.current} is the latest release.`;
+    if (result.ignored_prerelease) {
+      text += ' A newer beta was published. This copy is a full release, so Jig doesn\u2019t offer betas.';
+    }
+    $('updates-result').textContent = text;
+    return;
+  }
+  const update = result.update;
+  $('updates-result').textContent = result.includes_prereleases
+    ? `Jig ${update.version} is available. Beta releases are included because this copy is a beta.`
+    : `Jig ${update.version} is available.`;
+  $('updates-new').textContent = update.prerelease ? `${update.version} (beta)` : update.version;
+  $('updates-date').textContent = update.published;
+  releaseLink(update.page_url, result.repo);
+  const notes = $('updates-notes');
+  notes.replaceChildren(...(update.notes ? renderMarkdown(update.notes) : [el('p', { text: 'This release has no notes.' })]));
+  if (update.can_install) {
+    $('updates-install').hidden = false;
+    $('updates-install').textContent = 'Install update\u2026';
+  } else if (update.instructions) {
+    $('updates-instructions').hidden = false;
+    $('updates-instructions').textContent = update.instructions;
+  }
+}
+
+async function checkForUpdates() {
+  $('updates-result').textContent = 'Checking GitHub\u2026';
+  $('updates-available').hidden = true;
+  try {
+    renderOffer(await api('/updates/check', { method: 'POST' }));
+  } catch (err) {
+    $('updates-result').textContent = '';
+    throw err;
+  }
+}
+
+$('updates-check').addEventListener('click', () => act($('updates-check'), checkForUpdates));
+
+$('updates-install').addEventListener('click', async () => {
+  const update = updatesOffer;
+  if (!update) return;
+  const ok = await askConfirm({
+    title: `Install Jig ${update.version}?`,
+    body: [bullets([
+      'Jig finishes what it\u2019s in the middle of, saves where it got to, and turns off.',
+      'The installer upgrades this copy in place. Your settings, memories and notes stay where they are.',
+      'Jig downloads the installer and checks its SHA-256 and size against the files published with this GitHub release. If they don\u2019t match, Jig stays as it is and doesn\u2019t install anything.',
+      'The installer isn\u2019t code-signed yet. The check is that published SHA-256, not a certificate.',
+      'When the installer has finished, Jig opens again.',
+    ])],
+    ok: 'Download and install',
+  });
+  if (!ok) return;
+  $('updates-install').textContent = 'Downloading and checking\u2026';
+  const result = await act($('updates-install'), () => api('/updates/install', {
+    method: 'POST', body: { confirm: true, version: update.version },
+  }));
+  if (!result) {
+    $('updates-install').textContent = 'Install update\u2026';
+    return;
+  }
+  ownStop = true;
+  showOff({ scope: 'jig', startAgain: result.message });
+});
 
 /* ---------- "Jig is off" ---------- */
 

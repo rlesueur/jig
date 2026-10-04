@@ -244,12 +244,16 @@ class Jig:
         r.raise_for_status()
         return r.json()["code"]
 
-    def window_url(self) -> str:
+    def window_url(self, *, open_updates: bool = False) -> str:
         # ?app=desktop tells the page it is in Jig's window; it survives reloads, unlike the one-time code.
-        return f"{self.base}/?app=desktop#code={self.login_code()}"
+        # open=updates is only set when the person chose Check for updates. The page does not ask GitHub
+        # until they click the button there.
+        query = "app=desktop&open=updates" if open_updates else "app=desktop"
+        return f"{self.base}/?{query}#code={self.login_code()}"
 
-    def browser_url(self) -> str:
-        return f"{self.base}/#code={self.login_code()}"
+    def browser_url(self, *, open_updates: bool = False) -> str:
+        query = "?open=updates" if open_updates else ""
+        return f"{self.base}/{query}#code={self.login_code()}"
 
 
 class WindowApi:
@@ -277,7 +281,8 @@ def _set_app_id() -> None:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
 
-def run_window(jig: Jig, state_path: Path, *, activate: bool = True, debug_port: int | None = None) -> int:
+def run_window(jig: Jig, state_path: Path, *, activate: bool = True, debug_port: int | None = None,
+               open_updates: bool = False) -> int:
     import webview
     from webview import settings as webview_settings
 
@@ -298,7 +303,7 @@ def run_window(jig: Jig, state_path: Path, *, activate: bool = True, debug_port:
     geometry = load_geometry(state_path, screens)
     api = WindowApi(jig)
     window = webview.create_window(
-        "Jig", jig.window_url(), js_api=api, width=geometry["width"], height=geometry["height"],
+        "Jig", jig.window_url(open_updates=open_updates), js_api=api, width=geometry["width"], height=geometry["height"],
         x=geometry.get("x"), y=geometry.get("y"), maximized=geometry.get("maximized", False), min_size=MIN_SIZE,
         text_select=True, zoomable=True, focus=activate, background_color="#FBFAF7")
     current = dict(geometry)
@@ -387,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-activate", action="store_true", help="show the window without bringing it to the front")
     p.add_argument("--debug-port", type=int, help="let DevTools connect to the window on this port (diagnostics)")
     p.add_argument("--close", action="store_true", help="close the open window (for the uninstaller)")
+    p.add_argument("--open-updates", action="store_true",
+                   help="open About and updates (the person chose Check for updates)")
     args = p.parse_args(argv)
 
     config = load_config(args.config, **({"data_dir": args.data_dir} if args.data_dir else {}))
@@ -403,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         if not jig.answering():
             print(f"Jig isn't running at {jig.base}. Start it with: jig serve", file=sys.stderr)
             return 1
-        return 0 if webbrowser.open(jig.browser_url()) else 1
+        return 0 if webbrowser.open(jig.browser_url(open_updates=args.open_updates)) else 1
 
     state_path = data_dir / GEOMETRY_FILE
     if args.close:
@@ -425,12 +432,14 @@ def main(argv: list[str] | None = None) -> int:
             log.warning("WebView2 isn't installed; asked whether to get it or use the browser")
             return offer_browser_instead(jig)
         _set_app_id()
-        return run_window(jig, state_path, activate=not args.no_activate, debug_port=args.debug_port)
+        return run_window(jig, state_path, activate=not args.no_activate, debug_port=args.debug_port,
+                          open_updates=args.open_updates)
     finally:
         kernel32.CloseHandle(ctypes.c_void_p(mutex))
 
 
-def open_window(config_path: str | None, data_dir: Path, port: int, *, browser: bool = False) -> None:
+def open_window(config_path: str | None, data_dir: Path, port: int, *, browser: bool = False,
+                open_updates: bool = False) -> None:
     """Open (or bring to the front) Jig's window from another process, without a console."""
     import subprocess
 
@@ -442,6 +451,8 @@ def open_window(config_path: str | None, data_dir: Path, port: int, *, browser: 
     cmd += ["--data-dir", str(data_dir), "--port", str(port)]
     if browser:
         cmd.append("--browser")
+    if open_updates:
+        cmd.append("--open-updates")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if sys.platform == "win32":
         ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY: the new window may come to the front

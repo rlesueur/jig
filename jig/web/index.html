@@ -126,6 +126,7 @@
             <li><a href="#settings/power" data-section="power" data-testid="settings-nav-power">Turn Jig off</a></li>
             <li><a href="#settings/appearance" data-section="appearance" data-testid="settings-nav-appearance">Appearance</a></li>
             <li><a href="#settings/chat" data-section="chat" data-testid="settings-nav-chat">In the conversation</a></li>
+            <li><a href="#settings/updates" data-section="updates" data-testid="settings-nav-updates">About and updates</a></li>
           </ul>
         </nav>
 
@@ -534,6 +535,33 @@ C:\Users\you\Notes</pre>
               <input type="checkbox" role="switch" id="show-working" aria-describedby="show-working-hint" data-testid="setting-show-working">
               <div><label for="show-working">Show Jig's working</label>
                 <p class="hint-quiet" id="show-working-hint">Shows Jig's thinking and each tool it uses under its replies. Problems are always shown, whatever you choose.</p></div>
+            </div>
+          </section>
+
+          <!-- About and updates -->
+          <section class="set-section" id="set-updates" data-section="updates" aria-labelledby="updates-heading" data-testid="settings-updates" hidden>
+            <h3 id="updates-heading">About and updates</h3>
+            <p class="hint" id="updates-intro" data-testid="updates-intro">Jig checks for a new version only when you click. It doesn't check in the background, and it never installs one unless you agree.</p>
+            <dl class="kv" data-testid="updates-about">
+              <dt>Version</dt><dd id="updates-version">—</dd>
+              <dt>This copy</dt><dd id="updates-kind">—</dd>
+            </dl>
+            <p class="hint" id="updates-notice" data-testid="updates-notice"></p>
+            <div class="row wrap">
+              <button type="button" class="btn" id="updates-check" data-testid="updates-check">Check for updates</button>
+            </div>
+            <p class="saved" id="updates-result" data-testid="updates-result" aria-live="polite"></p>
+            <div id="updates-available" data-testid="updates-available" hidden>
+              <dl class="kv">
+                <dt>New version</dt><dd id="updates-new">—</dd>
+                <dt>Released</dt><dd id="updates-date">—</dd>
+              </dl>
+              <p class="hint" id="updates-link" data-testid="updates-link"></p>
+              <div class="md" id="updates-notes" data-testid="updates-notes"></div>
+              <pre class="updates-instructions" id="updates-instructions" data-testid="updates-instructions" hidden></pre>
+              <div class="row wrap">
+                <button type="button" class="btn btn-primary" id="updates-install" data-testid="updates-install" hidden>Install update…</button>
+              </div>
             </div>
           </section>
         </div>
