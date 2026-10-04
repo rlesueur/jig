@@ -1,10 +1,10 @@
 """Files attached to a chat message.
 
-Jig accepts PNG, JPEG, Word (.docx), plain text and Markdown. The type is decided from the bytes,
+Jig accepts PNG, JPEG, Word (.docx), PDF, plain text and Markdown. The type is decided from the bytes,
 not the name. Pictures go to the model as image input when vision is on, and the turn stops with a
 clear error when it is not. Documents are read as text, labelled untrusted (the same rule as mail,
 pages and connected-account files) and, when they are long, given one part at a time through
-``jig.tools.paging``.
+``jig.tools.paging``. A PDF that is only a scan is refused: Jig does not OCR it or turn pages into images.
 
 Bytes live under ``<data_dir>/attachments/<session_id>/<attachment_id>/``, which file tools cannot
 reach. ``read_attachment`` is the only tool that reads them, and only for the conversation that
@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
+
 from .db import new_id
 from .errors import JigError, ToolError, VisionUnavailable
 from .model import ATTACHMENTS_KEY
@@ -34,6 +37,8 @@ from .vision import image_part
 ATTACHMENT_PAGE = 20_000
 IMAGE_MAX_BYTES = 8 * 1024 * 1024
 DOCX_MAX_BYTES = 8 * 1024 * 1024
+PDF_MAX_BYTES = 8 * 1024 * 1024
+PDF_MAX_PAGES = 100
 TEXT_MAX_BYTES = 1 * 1024 * 1024
 MAX_PER_MESSAGE = 8
 MAX_PER_SESSION = 40
@@ -41,11 +46,15 @@ MAX_PER_SESSION = 40
 DOCX_EXPAND_MAX = 32 * 1024 * 1024
 
 IMAGE_KINDS = frozenset({"png", "jpeg"})
-_EXT = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".docx": "docx", ".txt": "txt", ".md": "md"}
+_EXT = {
+    ".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".docx": "docx", ".pdf": "pdf",
+    ".txt": "txt", ".md": "md",
+}
 _MEDIA = {
     "png": "image/png",
     "jpeg": "image/jpeg",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
     "txt": "text/plain",
     "md": "text/markdown",
 }
@@ -53,6 +62,7 @@ KIND_LABEL = {
     "png": "PNG image",
     "jpeg": "JPEG image",
     "docx": "Word document",
+    "pdf": "PDF",
     "txt": "plain text",
     "md": "Markdown",
 }
@@ -60,6 +70,7 @@ _LIMIT_WHAT = {
     "png": "an image",
     "jpeg": "an image",
     "docx": "a Word document",
+    "pdf": "a PDF",
     "txt": "a text file",
     "md": "a Markdown file",
 }
@@ -75,8 +86,14 @@ _SESSION = re.compile(r"sess_[0-9a-f]{12}\Z")
 _ATT = re.compile(r"att_[0-9a-f]{12}\Z")
 _MARKER = re.compile(r"\[\[jig-image:(att_[0-9a-f]{12})\]\]")
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _VAL = f"{_W}val"
 _HEADING = re.compile(r"heading\s*([1-6])\Z", re.IGNORECASE)
+_HEADER_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+_FOOTER_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+_NOTE_SKIP = {"separator", "continuationSeparator"}
 
 
 class AttachmentError(JigError):
@@ -98,13 +115,13 @@ def clean_name(filename: str) -> tuple[str, str]:
     name = Path(str(filename or "")).name.replace("\x00", "").strip()
     if not name or name in {".", ".."}:
         raise AttachmentError(
-            "Choose a file with a name ending in .png, .jpg, .jpeg, .docx, .txt or .md."
+            "Choose a file with a name ending in .png, .jpg, .jpeg, .docx, .pdf, .txt or .md."
         )
     kind = _EXT.get(Path(name).suffix.lower())
     if kind is None:
         raise AttachmentError(
-            f"Jig can't use {name}. Attach a PNG, JPEG, Word document (.docx), plain text (.txt) "
-            "or Markdown (.md) file."
+            f"Jig can't use {name}. Attach a PNG, JPEG, Word document (.docx), PDF (.pdf), "
+            "plain text (.txt) or Markdown (.md) file."
         )
     if len(name) > 180:
         name = name[: 180 - len(Path(name).suffix)] + Path(name).suffix.lower()
@@ -175,6 +192,219 @@ def _require_text(data: bytes, name: str) -> str:
         raise AttachmentError(f"{name} isn't valid UTF-8, so Jig can't read it.") from None
 
 
+def _reject_unsafe_xml(data: bytes, name: str) -> None:
+    if b"<!DOCTYPE" in data[:800].upper() or b"<!ENTITY" in data.upper():
+        raise AttachmentError(f"{name} contains a document type Jig will not read.")
+
+
+def _xml_root(data: bytes, name: str) -> ElementTree.Element:
+    _reject_unsafe_xml(data, name)
+    try:
+        return ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        raise AttachmentError(f"Jig couldn't read the text in {name}.") from None
+
+
+def _labelled(label: str, text: str) -> str:
+    text = text.strip()
+    if "\n" in text:
+        return f"{label}\n{text}"
+    return f"{label} {text}"
+
+
+def _chosen(node: Any) -> Any | None:
+    """The branch of alternate content to read: Choice when it is there, otherwise Fallback."""
+    chosen = node.find(f"{_MC}Choice")
+    if chosen is None:
+        chosen = node.find(f"{_MC}Fallback")
+    return chosen
+
+
+def _collect_text(node: Any) -> str:
+    """Visible paragraph text. Text boxes are left out here so they are not written twice."""
+    parts: list[str] = []
+
+    def walk(current: Any) -> None:
+        for child in list(current):
+            if child.tag == f"{_MC}AlternateContent":
+                chosen = _chosen(child)
+                if chosen is not None:
+                    walk(chosen)
+                continue
+            if child.tag == f"{_W}sdt":
+                content = child.find(f"{_W}sdtContent")
+                if content is not None:
+                    walk(content)
+                continue
+            if child.tag in {f"{_W}del", f"{_W}txbxContent"}:
+                continue
+            if child.tag == f"{_W}t":
+                if child.text:
+                    parts.append(child.text)
+                if child.tail:
+                    parts.append(child.tail)
+            elif child.tag == f"{_W}tab":
+                parts.append("\t")
+            elif child.tag == f"{_W}br":
+                parts.append("\n")
+            else:
+                walk(child)
+
+    walk(node)
+    return "".join(parts).strip()
+
+
+def _block_children(parent: Any):
+    for child in list(parent):
+        if child.tag == f"{_MC}AlternateContent":
+            chosen = _chosen(child)
+            if chosen is not None:
+                yield from _block_children(chosen)
+            continue
+        if child.tag == f"{_W}sdt":
+            content = child.find(f"{_W}sdtContent")
+            if content is not None:
+                yield from _block_children(content)
+            continue
+        if child.tag == f"{_W}del":
+            continue
+        yield child
+
+
+def _blocks_text(parent: Any, *, boxes: bool) -> str:
+    blocks: list[str] = []
+    for child in _block_children(parent):
+        if child.tag == f"{_W}p":
+            line = _format_paragraph(child)
+            if line:
+                blocks.append(line)
+            if boxes:
+                blocks.extend(_text_boxes(child))
+        elif child.tag == f"{_W}tbl":
+            table = _table_text(child)
+            if table:
+                blocks.append(table)
+        elif boxes and child.tag == f"{_W}txbxContent":
+            text = _blocks_text(child, boxes=False)
+            if text:
+                blocks.append(_labelled("Text box:", text))
+    return "\n\n".join(blocks)
+
+
+def _text_boxes(node: Any) -> list[str]:
+    found: list[str] = []
+
+    def walk(current: Any) -> None:
+        for child in list(current):
+            if child.tag == f"{_MC}AlternateContent":
+                chosen = _chosen(child)
+                if chosen is not None:
+                    walk(chosen)
+                continue
+            if child.tag == f"{_W}sdt":
+                content = child.find(f"{_W}sdtContent")
+                if content is not None:
+                    walk(content)
+                continue
+            if child.tag == f"{_W}del":
+                continue
+            if child.tag == f"{_W}txbxContent":
+                text = _blocks_text(child, boxes=False)
+                if text:
+                    found.append(_labelled("Text box:", text))
+                walk(child)
+                continue
+            walk(child)
+
+    walk(node)
+    return found
+
+
+def _relationships(zf: zipfile.ZipFile, name: str) -> dict[str, tuple[str, str]]:
+    path = "word/_rels/document.xml.rels"
+    if path not in set(zf.namelist()):
+        return {}
+    root = _xml_root(zf.read(path), name)
+    found: dict[str, tuple[str, str]] = {}
+    for rel in list(root):
+        if rel.tag != f"{_REL}Relationship":
+            continue
+        rid = rel.get("Id")
+        if rid:
+            found[rid] = (rel.get("Type") or "", rel.get("Target") or "")
+    return found
+
+
+def _part_path(target: str) -> str:
+    target = target.replace("\\", "/").split("#", 1)[0].split("?", 1)[0].lstrip("/")
+    if target.startswith("word/"):
+        bits = target.split("/")
+    else:
+        bits = ["word", *target.split("/")]
+    parts: list[str] = []
+    for bit in bits:
+        if bit == "..":
+            if parts:
+                parts.pop()
+        elif bit and bit != ".":
+            parts.append(bit)
+    return "/".join(parts)
+
+
+def _section_targets(body: Any, rels: dict[str, tuple[str, str]], type_url: str) -> list[str]:
+    tag = f"{_W}headerReference" if type_url == _HEADER_TYPE else f"{_W}footerReference"
+    ids: list[str] = []
+    for ref in body.iter(tag):
+        rid = ref.get(f"{_R}id")
+        if rid and rid not in ids:
+            ids.append(rid)
+    if ids:
+        return ids
+    return [rid for rid, (typ, _target) in rels.items() if typ == type_url]
+
+
+def _part_text(zf: zipfile.ZipFile, names: set[str], target: str, name: str) -> str:
+    path = _part_path(target)
+    if path not in names:
+        return ""
+    return _blocks_text(_xml_root(zf.read(path), name), boxes=True)
+
+
+def _labelled_parts(zf: zipfile.ZipFile, names: set[str], body: Any, rels: dict[str, tuple[str, str]],
+                    type_url: str, label: str, name: str) -> list[str]:
+    blocks: list[str] = []
+    for rid in _section_targets(body, rels, type_url):
+        typ, target = rels.get(rid, ("", ""))
+        if typ != type_url or not target:
+            continue
+        text = _part_text(zf, names, target, name)
+        if text:
+            blocks.append(_labelled(label, text))
+    return blocks
+
+
+def _note_blocks(root: Any, tag: str, label: str) -> list[str]:
+    blocks: list[str] = []
+    for note in root.findall(tag):
+        if note.get(f"{_W}type") in _NOTE_SKIP:
+            blocks_text = ""
+        else:
+            blocks_text = _blocks_text(note, boxes=True)
+        if blocks_text:
+            blocks.append(_labelled(label, blocks_text))
+    return blocks
+
+
+def _comment_blocks(root: Any) -> list[str]:
+    blocks: list[str] = []
+    for comment in root.findall(f"{_W}comment"):
+        author = " ".join((comment.get(f"{_W}author") or "").split()) or "someone"
+        text = _blocks_text(comment, boxes=True)
+        if text:
+            blocks.append(_labelled(f"Comment by {author}:", text))
+    return blocks
+
+
 def _require_docx(data: bytes, name: str) -> str:
     if not data.startswith(b"PK"):
         raise _not_this(name, "Word document")
@@ -189,49 +419,39 @@ def _require_docx(data: bytes, name: str) -> str:
             ctypes = zf.read("[Content_Types].xml")
             if b"wordprocessingml.document.main+xml" not in ctypes:
                 raise _not_this(name, "Word document")
-            xml = zf.read("word/document.xml")
+            root = _xml_root(zf.read("word/document.xml"), name)
+            body = root.find(f"{_W}body")
+            if body is None:
+                raise AttachmentError("That Word document has no body Jig can read.")
+            rels = _relationships(zf, name)
+            parts: list[str] = []
+            parts.extend(_labelled_parts(zf, names, body, rels, _HEADER_TYPE, "Header:", name))
+            body_text = _blocks_text(body, boxes=True)
+            if body_text:
+                parts.append(body_text)
+            if "word/footnotes.xml" in names:
+                parts.extend(_note_blocks(_xml_root(zf.read("word/footnotes.xml"), name), f"{_W}footnote", "Footnote:"))
+            if "word/endnotes.xml" in names:
+                parts.extend(_note_blocks(_xml_root(zf.read("word/endnotes.xml"), name), f"{_W}endnote", "Endnote:"))
+            if "word/comments.xml" in names:
+                parts.extend(_comment_blocks(_xml_root(zf.read("word/comments.xml"), name)))
+            parts.extend(_labelled_parts(zf, names, body, rels, _FOOTER_TYPE, "Footer:", name))
+            return "\n\n".join(parts)
     except zipfile.BadZipFile:
         raise _not_this(name, "Word document") from None
-    if b"<!DOCTYPE" in xml[:800].upper() or b"<!ENTITY" in xml.upper():
-        raise AttachmentError(f"{name} contains a document type Jig will not read.")
-    try:
-        return extract_docx_xml(xml)
-    except ElementTree.ParseError:
-        raise AttachmentError(f"Jig couldn't read the text in {name}.") from None
 
 
 def extract_docx_xml(xml: bytes) -> str:
-    """Paragraphs, headings, lists and tables from ``word/document.xml``, in document order."""
-    root = ElementTree.fromstring(xml)
+    """Paragraphs, headings, lists, tables and text boxes from ``word/document.xml``, in document order."""
+    root = _xml_root(xml, "That Word document")
     body = root.find(f"{_W}body")
     if body is None:
         raise AttachmentError("That Word document has no body Jig can read.")
-    blocks: list[str] = []
-    for child in list(body):
-        if child.tag == f"{_W}p":
-            line = _format_paragraph(child)
-            if line:
-                blocks.append(line)
-        elif child.tag == f"{_W}tbl":
-            table = _table_text(child)
-            if table:
-                blocks.append(table)
-    return "\n\n".join(blocks)
+    return _blocks_text(body, boxes=True)
 
 
 def _para_text(p: Any) -> str:
-    parts: list[str] = []
-    for node in p.iter():
-        if node.tag == f"{_W}t":
-            if node.text:
-                parts.append(node.text)
-            if node.tail:
-                parts.append(node.tail)
-        elif node.tag == f"{_W}tab":
-            parts.append("\t")
-        elif node.tag == f"{_W}br":
-            parts.append("\n")
-    return "".join(parts).strip()
+    return _collect_text(p)
 
 
 def _style_id(p: Any) -> str:
@@ -277,11 +497,12 @@ def _format_paragraph(p: Any) -> str:
 
 def _cell_text(tc: Any) -> str:
     lines: list[str] = []
-    for child in list(tc):
+    for child in _block_children(tc):
         if child.tag == f"{_W}p":
             text = _para_text(child)
             if text:
                 lines.append(text)
+            lines.extend(_text_boxes(child))
         elif child.tag == f"{_W}tbl":
             nested = _table_text(child)
             if nested:
@@ -308,12 +529,48 @@ def _table_text(tbl: Any) -> str:
     return "\n".join([head, sep, *(line(row) for row in rows[1:])])
 
 
+def _require_pdf(data: bytes, name: str) -> str:
+    if not data.startswith(b"%PDF-"):
+        raise _not_this(name, "PDF")
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            try:
+                opened = reader.decrypt("")
+            except PyPdfError:
+                opened = 0
+            if not opened:
+                raise AttachmentError(
+                    f"{name} is protected by a password, so Jig can't read it. "
+                    "Save a copy without a password and attach that."
+                )
+        page_count = len(reader.pages)
+        if page_count > PDF_MAX_PAGES:
+            raise AttachmentError(
+                f"{name} has {page_count} pages. Jig reads up to {PDF_MAX_PAGES} pages of a PDF."
+            )
+        blocks: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                blocks.append(f"[Page {index}]\n{text}")
+    except AttachmentError:
+        raise
+    except (PyPdfError, ValueError, KeyError, TypeError):
+        raise AttachmentError(f"{name} doesn't look like a valid PDF.") from None
+    if not blocks:
+        raise AttachmentError(
+            f"Jig couldn't find any text in {name}. If it's a scan or a picture, Jig can't read it."
+        )
+    return "\n\n".join(blocks)
+
+
 def validate(filename: str, data: bytes) -> dict[str, Any]:
     """Check the name, the size and the bytes. Returns kind, media type, text (documents) and char count."""
     name, kind = clean_name(filename)
     if not data:
         raise AttachmentError(f"{name} is empty.")
-    limit = {"png": IMAGE_MAX_BYTES, "jpeg": IMAGE_MAX_BYTES, "docx": DOCX_MAX_BYTES,
+    limit = {"png": IMAGE_MAX_BYTES, "jpeg": IMAGE_MAX_BYTES, "docx": DOCX_MAX_BYTES, "pdf": PDF_MAX_BYTES,
              "txt": TEXT_MAX_BYTES, "md": TEXT_MAX_BYTES}[kind]
     if len(data) > limit:
         raise AttachmentError(
@@ -326,6 +583,8 @@ def validate(filename: str, data: bytes) -> dict[str, Any]:
         _require_jpeg(data, name)
     elif kind == "docx":
         text = _require_docx(data, name)
+    elif kind == "pdf":
+        text = _require_pdf(data, name)
     else:
         text = _require_text(data, name)
     return {"name": name, "kind": kind, "media_type": _MEDIA[kind], "bytes": len(data),
@@ -382,6 +641,8 @@ class AttachmentStore:
         data = self.read_bytes(session_id, attachment_id)
         if meta["kind"] == "docx":
             return _require_docx(data, meta["name"])
+        if meta["kind"] == "pdf":
+            return _require_pdf(data, meta["name"])
         return _require_text(data, meta["name"])
 
     def delete(self, session_id: str, attachment_id: str) -> None:
