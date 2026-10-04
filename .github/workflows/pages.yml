@@ -34,7 +34,7 @@ jobs:
           cp -R site/. _site/
           cp avatar/jig-avatar.js _site/jig-avatar.js
           cp jig/web/fonts/Nunito-Variable.ttf jig/web/fonts/OFL.txt _site/fonts/
-          for f in index.html main.js theme.js styles.css site.webmanifest jig-avatar.js fonts/Nunito-Variable.ttf fonts/OFL.txt media/jig-promo.mp4 media/jig-promo-cover.jpg media/og-image.jpg media/favicon.ico media/favicon.png media/icon-192.png media/icon-512.png media/apple-touch-icon.png; do
+          for f in index.html main.js theme.js styles.css site.webmanifest jig-avatar.js fonts/Nunito-Variable.ttf fonts/OFL.txt media/jig-promo.mp4 media/jig-promo-cover.jpg media/og-image.jpg media/og-image-v2.png media/favicon.ico media/favicon.png media/icon-192.png media/icon-512.png media/apple-touch-icon.png; do
             test -s "_site/$f" || { echo "::error::missing _site/$f"; exit 1; }
           done
 

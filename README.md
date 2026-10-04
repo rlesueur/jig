@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://rlesueur.github.io/jig/"><strong>Website and live avatar</strong></a> ·
-  <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 28-second video</a> ·
+  <a href="https://rlesueur.github.io/jig/media/jig-promo.mp4">Watch the 47-second video</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="docs/README.md">Guides</a> ·
   <a href="#run-with-docker">Docker</a> ·
@@ -38,7 +38,7 @@ Jig needs two things: Jig itself, and a model to think with. The model can run o
 
 ### On Windows: the installer
 
-1. Download `JigSetup-<version>.exe` from the [latest release](https://github.com/rlesueur/jig/releases/latest).
+1. Download `JigSetup-<version>.exe` from the [v0.1.0b1 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b1).
 2. Open it. **Windows will probably warn you**, because the installer isn't code-signed (a signing certificate is expensive and Jig is a free project):
    - your browser may say the file "isn't commonly downloaded": choose **Keep**;
    - Windows may show **"Windows protected your PC"** (SmartScreen): click **More info**, then **Run anyway**.
@@ -150,7 +150,7 @@ Reasoning text (`reasoning_content` or `reasoning`) is optional. When a server s
 
 At start-up Jig runs a **real capability check** against the configured model. It requests a specific tool call and checks the name and arguments, and it requests a JSON-schema answer and checks the value. If either check fails, the agent stays off (Jig serves only its set-up page, in set-up mode) and Jig explains why. Run the same checks any time with `jig health`.
 
-Jig was developed and tested with **Ternary Bonsai 2 27B** on the PrismML llama.cpp fork (`profiles/llamacpp-bonsai.toml`). That is one example setup, not a requirement.
+Jig was developed on **Ternary Bonsai 2 27B** (PrismML fork), and this release was tested (the full test suite, demos, vision and attachments) with **Qwen 3.8 27B** (Q6_K with MTP heads) on a llama.cpp fork with its vision projector (mmproj). That is one example setup, not a requirement.
 
 ### Vision (optional)
 
@@ -167,8 +167,8 @@ In chat you can attach a PNG or JPEG. Jig sends it as image input when vision is
 
 How to serve a vision model:
 
-- **llama.cpp** (and forks): download the model's vision projector (`mmproj-*.gguf`) and add `--mmproj <file>` to `llama-server`. For the test model that is `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (about 0.63 GB) from `prism-ml/Ternary-Bonsai-2-27B-gguf`:
-  `llama-server -m Ternary-Bonsai-2-27B-PTQ1_0.gguf --mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --jinja ...`
+- **llama.cpp** (and forks): download the model's vision projector (`mmproj-*.gguf`) and add `--mmproj <file>` to `llama-server`. The release test used Qwen 3.8 27B (Q6_K with MTP heads). Its projector file is `mmproj-Qwen3.8-27B-F16.gguf`:
+  `llama-server -m <model>.gguf --mmproj mmproj-Qwen3.8-27B-F16.gguf --jinja ...`
 - **Ollama** and **LM Studio** ship their own vision models (for example Gemma 3 or Qwen2.5-VL); pick one of those as `name`. Their OpenAI-compatible endpoints accept the same image parts.
 - **vLLM** serves multimodal models directly.
 
@@ -255,7 +255,7 @@ Run `jig ui` to open it signed in (see [Access and the API token](#access-and-th
 
 | Profile | Server |
 | --- | --- |
-| `profiles/llamacpp-bonsai.toml` | llama.cpp / forks (`llama-server --jinja --parallel 4`); the tested setup |
+| `profiles/llamacpp-bonsai.toml` | llama.cpp / forks (`llama-server --jinja --parallel 4`); the development example |
 | `profiles/ollama.toml` | Ollama (`http://127.0.0.1:11434/v1`); set a tool-capable model and a context of 32K or more |
 | `profiles/lmstudio.toml` | LM Studio local server (`http://127.0.0.1:1234/v1`) |
 | `profiles/vllm.toml` | vLLM with `--enable-auto-tool-choice --tool-call-parser ...` |

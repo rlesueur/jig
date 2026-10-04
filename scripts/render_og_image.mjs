@@ -1,6 +1,8 @@
-// Renders the landing page's social card, site/media/og-image.jpg (1200 x 630), in the site's dark theme:
-// the wordmark, the hero headline and the real <jig-avatar> rig from avatar/jig-avatar.js, in headless
-// Chromium on the manual clock with a fixed seed, so every run gives the same picture.
+// Renders the landing page's social card, site/media/og-image-v2.png (1200 x 627, LinkedIn's
+// recommended size), in the site's dark theme: the wordmark, the hero headline and the real
+// <jig-avatar> rig from avatar/jig-avatar.js, in headless Chromium on the manual clock with a fixed
+// seed, so every run gives the same picture. PNG keeps the type sharp; the earlier JPEG was small
+// enough that LinkedIn's preview looked pixelated.
 //
 //   node scripts/render_og_image.mjs [--out FILE]
 //
@@ -23,12 +25,12 @@ try {
 const args = process.argv.slice(2);
 const outIdx = args.indexOf('--out');
 if (outIdx >= 0 && !args[outIdx + 1]) throw new Error('--out needs a file');
-const OUT = outIdx >= 0 ? path.resolve(args[outIdx + 1]) : path.join(ROOT, 'site', 'media', 'og-image.jpg');
+const OUT = outIdx >= 0 ? path.resolve(args[outIdx + 1]) : path.join(ROOT, 'site', 'media', 'og-image-v2.png');
 
 const SEED = 7;
 const IDLE_SECONDS = 4;
 const WIDTH = 1200;
-const HEIGHT = 630;
+const HEIGHT = 627;
 
 const PAGE = `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
 <style>
@@ -112,11 +114,11 @@ try {
     for (let i = 0; i < 120 && el._blink !== 0; i++) el.step(1 / 60);
     if (el._blink !== 0) throw new Error('the eyes were still mid-blink two seconds after the chosen moment');
   }, IDLE_SECONDS);
-  const jpg = await page.locator('#card').screenshot({ type: 'jpeg', quality: 90 });
+  const png = await page.locator('#card').screenshot({ type: 'png' });
   if (errors.length) throw new Error(`the page reported errors: ${errors.join('; ')}`);
   await mkdir(path.dirname(OUT), { recursive: true });
-  await writeFile(OUT, jpg);
-  console.log(`wrote ${OUT} (${jpg.length} bytes)`);
+  await writeFile(OUT, png);
+  console.log(`wrote ${OUT} (${png.length} bytes)`);
 } finally {
   await browser.close();
   server.close();

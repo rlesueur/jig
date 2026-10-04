@@ -1,4 +1,4 @@
-# Example: llama.cpp (or a fork) serving Ternary Bonsai 2 27B. This is the setup Jig was tested with.
+# Example: llama.cpp (or a fork) serving Ternary Bonsai 2 27B. Jig was developed with this setup.
 # Start llama-server with --jinja so tool calling uses the model's chat template, and
 # --parallel N so several tasks can run at once.
 #   jig --config profiles/llamacpp-bonsai.toml serve

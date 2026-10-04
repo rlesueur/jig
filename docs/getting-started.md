@@ -10,7 +10,7 @@ The installer clicks, the SmartScreen warning, the measured model and the long t
 
 **Do not run `pip install jig`.** That name on PyPI is an unrelated project. Use the installer, or install from this repository.
 
-**Windows installer.** Download `JigSetup-<version>.exe` from the [latest release](https://github.com/rlesueur/jig/releases/latest) and open it. It needs no administrator rights and no Python. The exact clicks when Windows warns you, because the installer is not code-signed, are in the README under [On Windows: the installer](../README.md#on-windows-the-installer). Only do that for a file from this repository's releases page. At the end, Jig opens on its set-up page.
+**Windows installer.** Download `JigSetup-<version>.exe` from the [v0.1.0b1 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b1) and open it. It needs no administrator rights and no Python. The exact clicks when Windows warns you, because the installer is not code-signed, are in the README under [On Windows: the installer](../README.md#on-windows-the-installer). Only do that for a file from this repository's releases page. At the end, Jig opens on its set-up page.
 
 Jig keeps its settings, memories and notes in `%LOCALAPPDATA%\Jig`. Closing the window leaves Jig running. To turn it off, use **Turn Jig off** on the icon by the clock. To remove it: **Settings > Apps > Installed apps > Jig > Uninstall**.
 
@@ -54,7 +54,7 @@ From a terminal, start Jig with a profile instead of editing `jig.toml`:
 .\.venv\Scripts\jig --config profiles/vllm.toml serve
 ```
 
-`profiles/llamacpp-bonsai.toml` is the llama.cpp setup Jig was tested with. It is an example, not a requirement. vLLM needs its tool-calling flags; see that profile and [Choosing a model server](../README.md#choosing-a-model-server).
+`profiles/llamacpp-bonsai.toml` is a llama.cpp example (Ternary Bonsai 2 27B on the PrismML fork, which Jig was developed on). It is an example, not a requirement. vLLM needs its tool-calling flags; see that profile and [Choosing a model server](../README.md#choosing-a-model-server).
 
 Common set-up messages, in Jig's own words, are listed in the README under [If something goes wrong](../README.md#if-something-goes-wrong). If port 8766 is taken, start with `jig serve --port 8767`. If Jig is already running for this data folder, open it with `jig ui`.
 
