@@ -186,6 +186,14 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class UpdatesConfig:
+    """``[updates]``: which GitHub repository Check for updates reads. Jig asks only when you click."""
+
+    # owner/name. Tests point this at a private repository. The app never sends a token.
+    repo: str = "rlesueur/jig"
+
+
+@dataclass(frozen=True)
 class AutostartConfig:
     """``[autostart]``: how 'Start with Windows' (or login, on macOS and Linux) is registered for this install."""
 
@@ -254,6 +262,7 @@ class Config:
     vault: VaultConfig = field(default_factory=VaultConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
     autostart: AutostartConfig = field(default_factory=AutostartConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
     connectors: dict[str, ConnectorLimits] = field(default_factory=dict)
     # "host" (default) or "container": set explicitly by the container image and deploy/jig.toml
     # (top-level ``deployment`` key or JIG_DEPLOYMENT), never guessed. Autostart is off in a container.
@@ -413,6 +422,7 @@ def load_config(path: str | os.PathLike[str] | None = None, **overrides: Any) ->
         vault=_vault_config(_section(raw, "vault")),
         remote=_remote_config(_section(raw, "remote"), deployment),
         autostart=_autostart_config(_section(raw, "autostart")),
+        updates=_updates_config(_section(raw, "updates")),
         connectors=_connectors_config(_section(raw, "connectors")),
         deployment=deployment,
         settings_file=settings_path if settings else None,
@@ -574,6 +584,20 @@ def _remote_config(values: dict[str, Any], deployment: str) -> RemoteConfig:
     if hostname and (not hostname.endswith(".ts.net") or "*" in hostname):
         raise ConfigError(f"[remote] hostname must be the exact tailnet name ending in .ts.net, not {hostname!r}")
     return replace(cfg, allowed_logins=logins, hostname=hostname)
+
+
+def _updates_config(values: dict[str, Any]) -> UpdatesConfig:
+    from .updates import UpdateError, check_repo
+
+    values = dict(values)
+    if v := os.environ.get("JIG_UPDATES_REPO"):
+        values["repo"] = v
+    cfg = _build(UpdatesConfig, values, "updates")
+    try:
+        repo = check_repo(cfg.repo)
+    except UpdateError as exc:
+        raise ConfigError(str(exc)) from exc
+    return replace(cfg, repo=repo)
 
 
 def _autostart_config(values: dict[str, Any]) -> AutostartConfig:

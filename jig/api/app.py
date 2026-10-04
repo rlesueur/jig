@@ -247,6 +247,15 @@ def _require_local(request: Request, what: str) -> None:
         raise HTTPException(403, f"{what} only works on the host computer itself, not over the tailnet")
 
 
+def _take_show_updates(app: FastAPI) -> bool:
+    """True once, when the tray has asked the window to open About and updates."""
+    event = getattr(app.state, "show_updates", None)
+    if event is not None and event.is_set():
+        event.clear()
+        return True
+    return False
+
+
 def _require_confirm(body: ConfirmIn, what: str) -> None:
     if body.confirm is not True:
         raise HTTPException(400, f'{what}: send "confirm": true once the user has confirmed')
@@ -321,6 +330,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             raise
         for kind, summary, data in remote_records:
             controller.current.audit.record(kind, summary, actor="runtime", **data)
+        from ..updates import note_finished_update
+        note_finished_update(controller.current)
         on_started = getattr(app.state, "on_started", None)
         if on_started:
             on_started(controller)
@@ -337,6 +348,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     app.state.remote = remote
     app.state.stop_request = None
     app.state.closing = asyncio.Event()  # set by run_server as shutdown begins; ends live event streams
+    app.state.show_updates = asyncio.Event()  # the tray asks the open window to show About and updates
+    app.state.update_in_progress = False
     app.add_middleware(AuthMiddleware, auth=auth, remote=remote)
     if config.sandbox.backend == "compose":
         from ..sandbox_compose import SandboxPeerGuard
@@ -358,6 +371,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
         return controller.current.audit
 
     app.include_router(autostart_router(config))
+    from ..updates import register_update_routes
+    register_update_routes(app, controller, _require_local, _who)
     app.include_router(setup_router(controller, _who))
     from ..searxng import search_router
     app.include_router(search_router(J, _require_local, _require_confirm))
@@ -509,13 +524,16 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     async def status(request: Request) -> dict[str, Any]:
         if controller.setup is not None:
             st = controller.setup
-            return {"status": "setup", "version": __version__, "setup": st.as_dict(), "connection": st.connection(),
-                    "model_endpoint": st.config.model.base_url, "start_reason": st.start_reason,
-                    "vault_backend": st.vault.backend, "desktop": DESKTOP, "timezone": timezone_state(st.config)}
+            out = {"status": "setup", "version": __version__, "setup": st.as_dict(), "connection": st.connection(),
+                   "model_endpoint": st.config.model.base_url, "start_reason": st.start_reason,
+                   "vault_backend": st.vault.backend, "desktop": DESKTOP, "timezone": timezone_state(st.config)}
+            if _take_show_updates(request.app):
+                out["show_updates"] = True
+            return out
         jig = J(request)
         model = await jig.model.health()
         sentinel = await jig.sentinel_model.health()
-        return {
+        out = {
             "status": "ok",
             "version": __version__,
             "desktop": DESKTOP,
@@ -535,6 +553,9 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
             "avatar": jig.tracker.current,
             "start_reason": jig.start_reason,
         }
+        if _take_show_updates(request.app):
+            out["show_updates"] = True
+        return out
 
     @app.get("/state")
     async def state(request: Request) -> dict[str, Any]:
@@ -571,6 +592,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
                 # Set-up mode: nothing happens until the agent starts; then the page reconnects to its events.
                 await ws.send_json({"type": "setup", "snapshot": True, "data": {}})
                 while ws.app.state.jig is None:
+                    if _take_show_updates(ws.app):
+                        await ws.send_json({"type": "show-updates"})
                     if (await asyncio.wait({gone}, timeout=1))[0]:
                         return
                 await ws.close(code=1012, reason="Jig started")
@@ -587,6 +610,8 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
                         return
                     if not getter.done():
                         getter.cancel()
+                        if _take_show_updates(ws.app):
+                            await ws.send_json({"type": "show-updates"})
                         if ws.app.state.jig is not jig:  # the model was changed: this runtime has stopped
                             await ws.close(code=1012, reason="Jig restarted")
                             return

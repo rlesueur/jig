@@ -24,6 +24,7 @@ dependencies = [
     "pillow>=12.3.0",
     "pypdf>=6.1.1",
     "pypdfium2>=5.13.0",
+    "packaging>=24",
 ]
 
 [project.optional-dependencies]

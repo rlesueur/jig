@@ -7,7 +7,7 @@
 #
 # Relative paths are resolved against this file's folder.
 # Environment overrides: JIG_CONFIG, JIG_MODEL_BASE_URL, JIG_MODEL_NAME,
-# JIG_DATA_DIR, JIG_SANDBOX_DIR, JIG_HOST, JIG_PORT.
+# JIG_DATA_DIR, JIG_SANDBOX_DIR, JIG_HOST, JIG_PORT, JIG_UPDATES_REPO.
 
 [model]
 base_url = "http://127.0.0.1:8080/v1"
@@ -86,3 +86,7 @@ max_redirects = 5
 [server]
 host = "127.0.0.1"
 port = 8766
+
+# Check for updates reads this repository, and only when you click. It never checks in the background.
+[updates]
+repo = "rlesueur/jig"
