@@ -217,7 +217,7 @@ class Jig:
                                      config=config)
         self.agent = Agent(model=self.model, registry=self.registry, executor=self.executor, store=self.store,
                            bus=self.bus, audit=self.audit, max_steps=config.runtime.max_steps,
-                           context_tokens=self.context_tokens)
+                           context_tokens=self.context_tokens, searxng=self.searxng)
         self.agent.prepare_outgoing = self._prepare_outgoing
         self.planner = Planner(model=self.model, registry=self.registry, store=self.store, bus=self.bus,
                                audit=self.audit)

@@ -19,6 +19,7 @@ from ..pause import RunPaused, until_paused
 from ..policy.gate import CallContext, ToolExecutor
 from ..store import Store
 from ..tools.registry import ToolRegistry
+from .fetch_nudge import note_guessed_pages, search_hint
 from .prompts import CONTINUE_KEY, STOPPED_KEY, STEP_LIMIT_PROMPT, budget_line
 from .refusals import REFUSED_ACTION_LIMIT, refusal_kind, stop_message, stop_record
 
@@ -112,7 +113,7 @@ def _action_key(call: ToolCall, result: str) -> str:
 class Agent:
     def __init__(self, *, model: ModelClient, registry: ToolRegistry, executor: ToolExecutor, store: Store,
                  bus: EventBus, audit: AuditLog, max_steps: int,
-                 context_tokens: Callable[[], int | None] | None = None):
+                 context_tokens: Callable[[], int | None] | None = None, searxng: Any = None):
         self.model = model
         self.registry = registry
         self.executor = executor
@@ -120,6 +121,9 @@ class Agent:
         self.bus = bus
         self.audit = audit
         self.max_steps = max_steps
+        self.searxng = searxng
+        # HTTP 404s from guessed addresses, by run and site, so a repeated miss can be pointed out once.
+        self._page_misses: dict[str, dict[str, int]] = {}
         # The model's context window, for the budget line (None when unknown).
         self.context_tokens = context_tokens or (lambda: model.server_info.get("context_tokens"))
         # Turns attached pictures into image parts on a copy of the messages, just before they are sent.
@@ -146,6 +150,7 @@ class Agent:
             if pending := _pending_tool_calls(messages):
                 await self._run_tools(pending, messages, call_ctx, steps)
                 self._check_refusals(run_id, steps, ids)
+                self._note_guessed_pages(messages, run_id)
                 self._add_budget(messages, steps, limit, None)
                 self.store.checkpoint_run(run_id, messages, steps)
             while True:
@@ -179,6 +184,7 @@ class Agent:
                 await self._run_tools(result.tool_calls, messages, call_ctx, steps)
                 self._check_refusals(run_id, steps, ids)
                 self._check_repeats(result.tool_calls, messages, actions, ids)
+                self._note_guessed_pages(messages, run_id)
                 self._add_budget(messages, steps, limit, result)
                 self.store.checkpoint_run(run_id, messages, steps)
         except ModelStopped as exc:
@@ -217,6 +223,8 @@ class Agent:
                               error_chars=len(error))
             self.bus.publish(EventType.RUN_END, status="failed", error=error, **ids)
             raise
+        finally:
+            self._page_misses.pop(run_id, None)
         claim_check = self._check_claims(final, spec, run_id, steps, ids)
         if limit_reached:
             note = f"stopped at the step limit of {limit} model calls; the final answer says what is left"
@@ -281,6 +289,10 @@ class Agent:
                     f"Jig stopped this run because it made the same call ({call.name}, with the same arguments) and "
                     f"got the same result {actions[key]} times, so it was not getting anywhere. What it did up to "
                     "then is kept.")
+
+    def _note_guessed_pages(self, messages: list[dict[str, Any]], run_id: str) -> None:
+        """After repeated HTTP 404s for one site, say so on the latest tool result. The error itself is unchanged."""
+        note_guessed_pages(messages, self._page_misses.setdefault(run_id, {}), lambda: search_hint(self.searxng))
 
     def _add_budget(self, messages: list[dict[str, Any]], step: int, limit: int, result: Any) -> None:
         """End the step's last tool result with the budget line (kept, so the prompt stays a stable prefix)."""
