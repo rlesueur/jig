@@ -79,6 +79,8 @@ if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig's window 
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
 $OutDir = if ($OutputDir) { $OutputDir } else { Join-Path $Root "dist" }
+# Inno writes the preprocessed script here before it creates the output folder itself.
+New-Item -ItemType Directory -Force $OutDir | Out-Null
 if ($TestInstall) {
     if (-not $OutputDir) { throw "-TestInstall needs -OutputDir. A test installer is not written to dist\." }
     $releaseDir = [IO.Path]::GetFullPath((Join-Path $Root "dist"))
