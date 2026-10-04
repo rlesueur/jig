@@ -493,21 +493,40 @@ function Test-AnonymousDownload([string]$Version, $Installer) {
 }
 
 function Test-AnonymousImages([string]$Version) {
-    Step 'Pulling the container images with no registry credentials'
-    $config = Join-Path ([IO.Path]::GetTempPath()) "jig-docker-anon-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
-    New-Item -ItemType Directory -Path $config | Out-Null
-    $previous = $env:DOCKER_CONFIG
-    $had = Test-Path Env:DOCKER_CONFIG
-    $env:DOCKER_CONFIG = $config
-    try {
-        foreach ($image in 'jig', 'jig-sandbox') {
-            $ref = "ghcr.io/$Owner/${image}:$Version"
-            Run docker pull $ref | Out-Null
-            Ok "pulled $ref with an empty Docker config"
+    # The same unauthenticated token request a pull uses. No Docker config and no GitHub token.
+    # PowerShell 5.1 throws on the 401 challenge, so the challenge is read from that error.
+    Step 'Pulling the container manifests with no registry credentials'
+    $accept = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+    foreach ($image in 'jig', 'jig-sandbox') {
+        $ref = "ghcr.io/$Owner/${image}:$Version"
+        $url = "https://ghcr.io/v2/$Owner/${image}/manifests/$Version"
+        $challenge = $null
+        try {
+            $probe = Invoke-WebRequest -UseBasicParsing -Uri $url -Headers @{ Accept = $accept }
+            if ($probe.StatusCode -eq 200) { Ok "$ref is anonymously readable"; continue }
+            Fail "$ref returned HTTP $($probe.StatusCode) before a token was requested."
+        } catch {
+            $response = $_.Exception.Response
+            $code = 0
+            if ($response) { $code = [int]$response.StatusCode }
+            if ($code -ne 401) { Fail "$ref could not be requested (HTTP $code): $($_.Exception.Message)" }
+            $challenge = $response.Headers['WWW-Authenticate']
+            if ($challenge -is [array]) { $challenge = $challenge[0] }
         }
-    } finally {
-        if ($had) { $env:DOCKER_CONFIG = $previous } else { Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue }
-        Remove-Item -Recurse -Force $config
+        if ("$challenge" -notmatch 'realm="([^"]+)"') { Fail "$ref did not offer a token realm ($challenge)." }
+        $realm = $Matches[1]
+        $service = if ("$challenge" -match 'service="([^"]+)"') { $Matches[1] } else { 'ghcr.io' }
+        $scope = if ("$challenge" -match 'scope="([^"]+)"') { $Matches[1] } else { "repository:$Owner/${image}:pull" }
+        $tokenUrl = "${realm}?service=$([uri]::EscapeDataString($service))&scope=$([uri]::EscapeDataString($scope))"
+        $tokenResponse = Invoke-RestMethod -UseBasicParsing -Uri $tokenUrl
+        if (-not $tokenResponse.token) { Fail "the anonymous token for $ref was empty." }
+        $manifest = Invoke-WebRequest -UseBasicParsing -Uri $url -Headers @{
+            Accept = $accept
+            Authorization = "Bearer $($tokenResponse.token)"
+        }
+        if ($manifest.StatusCode -ne 200) { Fail "$ref returned HTTP $($manifest.StatusCode) with an anonymous token." }
+        if (-not $manifest.Content) { Fail "$ref returned an empty manifest." }
+        Ok "anonymous pull of $ref returned a manifest ($($manifest.RawContentLength) bytes)"
     }
 }
 
