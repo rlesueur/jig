@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import os
+import posixpath
 import shutil
 import socket
 import subprocess
@@ -45,6 +46,9 @@ PINNED_SHA256 = "ac050643014cf3db1b3ae171a4b21fc4b29c5d9f572255c1a903e51cc2094e5
 PINNED_URL = f"https://github.com/searxng/searxng/archive/{PINNED_COMMIT}.tar.gz"
 PINNED_COMMIT_URL = f"https://api.github.com/repos/searxng/searxng/commits/{PINNED_COMMIT}"
 LICENCE = "AGPL-3.0-or-later"
+# The Windows installer ships embeddable Python, which has no venv module and no pip. Pip is fetched
+# from this official bootstrap when that is the interpreter creating SearXNG's environment.
+GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 
 BIND = "127.0.0.1"
 DEFAULT_PORT = 8090
@@ -185,23 +189,162 @@ def _python_for_venv() -> Path:
     )
 
 
+def _can_import_venv(python: Path) -> bool:
+    """Whether ``python`` can run ``python -m venv``. The Windows embeddable build cannot."""
+    flags = {"creationflags": _NO_WINDOW} if sys.platform == "win32" else {}
+    try:
+        proc = subprocess.run([str(python), "-s", "-c", "import venv"], capture_output=True, timeout=60, **flags)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _create_embedded_venv(python: Path, venv: Path) -> None:
+    """A separate interpreter for Windows embeddable Python, which ships without ``venv`` or pip.
+
+    The interpreter and its DLL are copied into ``venv``. A path file points that copy at the
+    embeddable standard library and at this environment's own site-packages, not at Jig's packages.
+    Nothing in Jig's install folder is changed. Windows will not load some other ``python3.dll``
+    from ``PATH``, because the matching DLL sits beside the copied ``python.exe``.
+    """
+    base = python.resolve().parent
+    zips = sorted(path for path in base.glob("python3*.zip") if path.is_file())
+    if len(zips) != 1:
+        raise SearxngError(
+            "Couldn't install SearXNG: this Python has no venv module, and its standard library could not be found. "
+            "Nothing was installed."
+        )
+    tag = zips[0].stem
+    dll = base / f"{tag}.dll"
+    if not dll.is_file() or not (base / "python.exe").is_file():
+        raise SearxngError(
+            "Couldn't install SearXNG: this Python has no venv module, and its interpreter files could not be found. "
+            "Nothing was installed."
+        )
+    scripts = venv / "Scripts"
+    site = venv / "Lib" / "site-packages"
+    scripts.mkdir(parents=True)
+    site.mkdir(parents=True)
+    for name in ("python.exe", "pythonw.exe", dll.name, "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        src = base / name
+        if src.is_file():
+            shutil.copy2(src, scripts / name)
+    if not (scripts / "python.exe").is_file() or not (scripts / dll.name).is_file():
+        raise SearxngError(
+            "Couldn't install SearXNG: Jig couldn't copy Python into SearXNG's environment. Nothing was installed."
+        )
+    lines = [str(zips[0]), str(base), str(site), "import site"]
+    (scripts / f"{tag}._pth").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _unpack_error(archive: Path, reason: str) -> SearxngError:
+    return SearxngError(f"Couldn't unpack SearXNG: {archive.name} {reason} Nothing was installed.")
+
+
+def _absolute_archive_path(name: str) -> bool:
+    """True for a POSIX absolute path, a UNC path, or a Windows drive path. Tar names use ``/``."""
+    text = name.replace("\\", "/")
+    if text.startswith("/"):
+        return True
+    return len(text) >= 2 and text[1] == ":"
+
+
+def _archive_parts(archive: Path, name: str) -> list[str]:
+    """Lexical parts of an archive member name. Raises when the name is absolute or climbs out."""
+    if _absolute_archive_path(name) or "\x00" in name:
+        raise _unpack_error(archive, "has a file outside its folder.")
+    parts: list[str] = []
+    for part in name.replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise _unpack_error(archive, "has a file outside its folder.")
+        parts.append(part)
+    if not parts:
+        raise _unpack_error(archive, "has a file outside its folder.")
+    return parts
+
+
+def _link_target_parts(archive: Path, member: tarfile.TarInfo) -> list[str]:
+    """Where a symlink or hardlink points, as parts inside the archive. Outside targets are refused.
+
+    Symlink targets are relative to the link's own directory. Hardlink targets name another member.
+    Absolute targets are refused even when the absolute path would land inside the folder.
+    """
+    link = member.linkname.replace("\\", "/").rstrip("/")
+    if not link or _absolute_archive_path(link) or "\x00" in member.linkname:
+        raise _unpack_error(archive, "contains a link to an absolute path.")
+    if member.issym():
+        base = posixpath.dirname(member.name.replace("\\", "/"))
+        combined = posixpath.normpath(posixpath.join(base, link))
+    else:
+        combined = posixpath.normpath(link)
+    if _absolute_archive_path(combined) or combined == ".." or combined.startswith("../"):
+        raise _unpack_error(archive, "contains a link that points outside its folder.")
+    return _archive_parts(archive, combined)
+
+
+def _materialise_links(archive: Path, dest: Path, links: list[tarfile.TarInfo]) -> None:
+    """Copy each in-folder link's target into place. Windows symlinks need privileges, so the
+    unpacked tree holds real files and folders. A link is never left as a link."""
+    pending = list(links)
+    for _ in range(len(links) + 1):
+        if not pending:
+            return
+        still: list[tarfile.TarInfo] = []
+        for member in pending:
+            link_path = dest.joinpath(*_archive_parts(archive, member.name))
+            target = dest.joinpath(*_link_target_parts(archive, member))
+            # Copying a folder onto a path inside itself would loop. That is refused with the
+            # outside-link error: the link does not name a separate file in the archive.
+            if target == link_path or target in link_path.parents:
+                raise _unpack_error(archive, "contains a link that points outside its folder.")
+            if link_path.exists():
+                raise _unpack_error(archive, "contains a link that points outside its folder.")
+            if not target.exists():
+                still.append(member)
+                continue
+            link_path.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_dir():
+                shutil.copytree(target, link_path)
+            elif target.is_file():
+                shutil.copyfile(target, link_path)
+            else:
+                raise _unpack_error(archive, "contains a device or special file.")
+        if len(still) == len(pending):
+            raise _unpack_error(archive, "contains a link whose target is not in the download.")
+        pending = still
+
+
 def _safe_extract(archive: Path, dest: Path) -> Path:
-    """Unpack one top-level folder. Refuse links and paths that climb out of ``dest``."""
+    """Unpack one top-level folder.
+
+    A symlink or hardlink whose target stays inside ``dest`` is copied into place (materialised).
+    Links that point outside, absolute paths, names that climb with ``..``, and device files are
+    refused before anything is written.
+    """
     dest.mkdir(parents=True, exist_ok=True)
-    root = dest.resolve()
     with tarfile.open(archive) as tar:
+        regular: list[tarfile.TarInfo] = []
+        links: list[tarfile.TarInfo] = []
         for member in tar.getmembers():
-            target = (dest / member.name).resolve()
-            if target != root and root not in target.parents:
-                raise SearxngError(f"Couldn't unpack SearXNG: {archive.name} has a file outside its folder. "
-                                   "Nothing was installed.")
+            _archive_parts(archive, member.name)
             if member.issym() or member.islnk():
-                raise SearxngError(f"Couldn't unpack SearXNG: {archive.name} contains a link. Nothing was installed.")
-        if hasattr(tarfile, "data_filter"):
-            tar.extractall(dest, filter="data")
-        else:
-            tar.extractall(dest)
-    tops = [p for p in dest.iterdir() if p.is_dir()]
+                _link_target_parts(archive, member)
+                links.append(member)
+            elif member.isdir() or member.isreg():
+                regular.append(member)
+            else:
+                raise _unpack_error(archive, "contains a device or special file.")
+        try:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(dest, members=regular, filter="data")
+            else:
+                tar.extractall(dest, members=regular)
+        except (tarfile.TarError, OSError):
+            raise _unpack_error(archive, "could not be unpacked.") from None
+        _materialise_links(archive, dest, links)
+    tops = [path for path in dest.iterdir() if path.is_dir()]
     if len(tops) != 1:
         raise SearxngError("Couldn't unpack SearXNG: the download doesn't hold a single folder. Nothing was installed.")
     return tops[0]
@@ -479,8 +622,10 @@ class Searxng:
             if not had:
                 shutil.rmtree(self.root, ignore_errors=True)
             raise
-        return {"using": "installed", "port": self._read_state().get("port"), "version": PINNED_VERSION,
-                "summary": "Search is installed. Jig will start it when you look something up."}
+        result = {"using": "installed", "port": self._read_state().get("port"), "version": PINNED_VERSION,
+                  "summary": "Search is installed. Jig will start it when you look something up."}
+        self.install_state = {"status": "done", **result}
+        return result
 
     def _step(self, text: str) -> None:
         self.install_state = {"status": "running", "step": text}
@@ -613,11 +758,66 @@ class Searxng:
         if venv.exists():
             shutil.rmtree(venv)
         self._step("Creating SearXNG's own Python environment")
-        await self._run_checked([str(python), "-m", "venv", str(venv)], "creating its Python environment")
-        pip = [str(self._venv_python), "-m", "pip", "install", "--disable-pip-version-check",
-               "-r", str(self._src / "requirements.txt")]
+        if await asyncio.to_thread(_can_import_venv, python):
+            await self._run_checked([str(python), "-m", "venv", str(venv)], "creating its Python environment")
+        else:
+            # The installed Jig uses embeddable Python: no venv module, and no pip. Copying the
+            # interpreter leaves Jig's own Python untouched.
+            await asyncio.to_thread(_create_embedded_venv, python, venv)
+            await self._bootstrap_pip()
+        pip = [str(self._venv_python), "-s", "-m", "pip", "install", "--disable-pip-version-check",
+               "--no-warn-script-location"]
+        site = self._embedded_site()
+        if site is not None:
+            pip.append(f"--target={site}")
+        pip.extend(["-r", str(self._src / "requirements.txt")])
         self._step("Installing SearXNG's Python libraries")
         await self._run_checked(pip, "installing its Python libraries")
+
+    def _embedded_site(self) -> Path | None:
+        """Site-packages for an embeddable-Python environment, whose prefix is the interpreter folder.
+        None when ``python -m venv`` created this environment and pip already knows where to install."""
+        scripts = self._venv_python.parent
+        if any(scripts.glob("python*._pth")):
+            return self.root / "venv" / "Lib" / "site-packages"
+        return None
+
+    async def _bootstrap_pip(self) -> None:
+        """Install pip into an embeddable-Python environment. A normal virtual environment already has pip."""
+        folder = self.root / ".download"
+        folder.mkdir(parents=True, exist_ok=True)
+        script = folder / "get-pip.py"
+        self._step("Downloading pip")
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, trust_env=False,
+                                         timeout=httpx.Timeout(120, connect=20),
+                                         headers={"User-Agent": "Jig"}) as http:
+                try:
+                    response = await http.get(GET_PIP_URL)
+                except httpx.HTTPError as exc:
+                    raise SearxngError(
+                        f"Couldn't install SearXNG: pip could not be downloaded ({type(exc).__name__}). "
+                        "Nothing was installed."
+                    ) from None
+        except SearxngError:
+            script.unlink(missing_ok=True)
+            raise
+        if response.status_code != 200 or not response.content:
+            script.unlink(missing_ok=True)
+            raise SearxngError(
+                f"Couldn't install SearXNG: the pip download returned HTTP {response.status_code}. "
+                "Nothing was installed."
+            )
+        script.write_bytes(response.content)
+        site = self.root / "venv" / "Lib" / "site-packages"
+        self._step("Installing pip into SearXNG's Python environment")
+        try:
+            await self._run_checked(
+                [str(self._venv_python), "-s", str(script), "--no-warn-script-location", f"--target={site}"],
+                "installing pip",
+            )
+        finally:
+            script.unlink(missing_ok=True)
 
     async def _run_checked(self, argv: list[str], what: str) -> None:
         try:
@@ -696,7 +896,7 @@ class Searxng:
         if await self.is_searxng(port) and not self._owned_pid():
             # Somebody else's SearXNG is on our port. Do not start a second one, and do not stop theirs.
             return
-        argv = [str(self._venv_python), str(self.root / "launch.py")]
+        argv = [str(self._venv_python), "-s", str(self.root / "launch.py")]
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=str(self.root), env=self._child_env(port), stdin=asyncio.subprocess.DEVNULL,
