@@ -4,7 +4,8 @@ Jig accepts PNG, JPEG, Word (.docx), PDF, plain text and Markdown. The type is d
 not the name. Pictures go to the model as image input when vision is on, and the turn stops with a
 clear error when it is not. Documents are read as text, labelled untrusted (the same rule as mail,
 pages and connected-account files) and, when they are long, given one part at a time through
-``jig.tools.paging``. A PDF that is only a scan is refused: Jig does not OCR it or turn pages into images.
+``jig.tools.paging``. A scanned PDF page, and pictures in a PDF or a Word document, are sent as images
+when the model can see them. Jig does not OCR them.
 
 Bytes live under ``<data_dir>/attachments/<session_id>/<attachment_id>/``, which file tools cannot
 reach. ``read_attachment`` is the only tool that reads them, and only for the conversation that
@@ -13,18 +14,23 @@ owns them.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
 import shutil
 import struct
 import zipfile
+from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
+import pypdfium2 as pdfium
 
 from .db import new_id
 from .errors import JigError, ToolError, VisionUnavailable
@@ -40,6 +46,13 @@ DOCX_MAX_BYTES = 8 * 1024 * 1024
 PDF_MAX_BYTES = 8 * 1024 * 1024
 PDF_MAX_PAGES = 100
 TEXT_MAX_BYTES = 1 * 1024 * 1024
+# Pictures taken from a PDF or a Word document (a scanned page, or a picture on a page) that one
+# message or one read_attachment result may send to the model. Shared across every file in the turn.
+DOCUMENT_IMAGE_CAP = 4
+# Longest side, in pixels, of a picture sent to the model.
+DOCUMENT_IMAGE_MAX_EDGE = 1280
+# A picture smaller than this on both sides is decoration (a bullet or a line) and is not sent.
+DOCUMENT_IMAGE_MIN_SIDE = 64
 MAX_PER_MESSAGE = 8
 MAX_PER_SESSION = 40
 # Uncompressed size of a docx Jig will open. Stops a tiny zip that expands without limit.
@@ -85,6 +98,13 @@ UNTRUSTED = (
 _SESSION = re.compile(r"sess_[0-9a-f]{12}\Z")
 _ATT = re.compile(r"att_[0-9a-f]{12}\Z")
 _MARKER = re.compile(r"\[\[jig-image:(att_[0-9a-f]{12})\]\]")
+_ANY_MARKER = re.compile(
+    r"\[\[jig-image:(att_[0-9a-f]{12})\]\]"
+    r"|\[\[jig-picture:(sess_[0-9a-f]{12}):(att_[0-9a-f]{12}):([0-9]{1,4})\]\]"
+)
+_PICTURE_LABEL = re.compile(r"\[Picture ([0-9]{1,4})\]")
+_A_BLIP = "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+_V_IMAGEDATA = "{urn:schemas-microsoft-com:vml}imagedata"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
@@ -271,27 +291,31 @@ def _block_children(parent: Any):
         yield child
 
 
-def _blocks_text(parent: Any, *, boxes: bool) -> str:
+def _blocks_text(parent: Any, *, boxes: bool, gallery: "_Gallery | None" = None) -> str:
     blocks: list[str] = []
     for child in _block_children(parent):
         if child.tag == f"{_W}p":
             line = _format_paragraph(child)
             if line:
                 blocks.append(line)
+            if gallery is not None:
+                blocks.extend(gallery.labels_for(child, enter_boxes=False))
             if boxes:
-                blocks.extend(_text_boxes(child))
+                blocks.extend(_text_boxes(child, gallery))
         elif child.tag == f"{_W}tbl":
             table = _table_text(child)
             if table:
                 blocks.append(table)
+            if gallery is not None:
+                blocks.extend(gallery.labels_for(child, enter_boxes=True))
         elif boxes and child.tag == f"{_W}txbxContent":
-            text = _blocks_text(child, boxes=False)
+            text = _blocks_text(child, boxes=False, gallery=gallery)
             if text:
                 blocks.append(_labelled("Text box:", text))
     return "\n\n".join(blocks)
 
 
-def _text_boxes(node: Any) -> list[str]:
+def _text_boxes(node: Any, gallery: "_Gallery | None" = None) -> list[str]:
     found: list[str] = []
 
     def walk(current: Any) -> None:
@@ -309,7 +333,7 @@ def _text_boxes(node: Any) -> list[str]:
             if child.tag == f"{_W}del":
                 continue
             if child.tag == f"{_W}txbxContent":
-                text = _blocks_text(child, boxes=False)
+                text = _blocks_text(child, boxes=False, gallery=gallery)
                 if text:
                     found.append(_labelled("Text box:", text))
                 walk(child)
@@ -320,8 +344,7 @@ def _text_boxes(node: Any) -> list[str]:
     return found
 
 
-def _relationships(zf: zipfile.ZipFile, name: str) -> dict[str, tuple[str, str]]:
-    path = "word/_rels/document.xml.rels"
+def _relationships_at(zf: zipfile.ZipFile, path: str, name: str) -> dict[str, tuple[str, str]]:
     if path not in set(zf.namelist()):
         return {}
     root = _xml_root(zf.read(path), name)
@@ -333,6 +356,15 @@ def _relationships(zf: zipfile.ZipFile, name: str) -> dict[str, tuple[str, str]]
         if rid:
             found[rid] = (rel.get("Type") or "", rel.get("Target") or "")
     return found
+
+
+def _relationships(zf: zipfile.ZipFile, name: str) -> dict[str, tuple[str, str]]:
+    return _relationships_at(zf, "word/_rels/document.xml.rels", name)
+
+
+def _rels_for_part(part: str) -> str:
+    parent, _, filename = part.rpartition("/")
+    return f"{parent}/_rels/{filename}.rels" if parent else f"_rels/{filename}.rels"
 
 
 def _part_path(target: str) -> str:
@@ -363,49 +395,192 @@ def _section_targets(body: Any, rels: dict[str, tuple[str, str]], type_url: str)
     return [rid for rid, (typ, _target) in rels.items() if typ == type_url]
 
 
-def _part_text(zf: zipfile.ZipFile, names: set[str], target: str, name: str) -> str:
+def _part_text(zf: zipfile.ZipFile, names: set[str], target: str, name: str,
+               gallery: "_Gallery | None" = None) -> str:
     path = _part_path(target)
     if path not in names:
         return ""
-    return _blocks_text(_xml_root(zf.read(path), name), boxes=True)
+    if gallery is not None:
+        gallery.bind(path, _relationships_at(zf, _rels_for_part(path), name))
+    return _blocks_text(_xml_root(zf.read(path), name), boxes=True, gallery=gallery)
 
 
 def _labelled_parts(zf: zipfile.ZipFile, names: set[str], body: Any, rels: dict[str, tuple[str, str]],
-                    type_url: str, label: str, name: str) -> list[str]:
+                    type_url: str, label: str, name: str, gallery: "_Gallery | None" = None) -> list[str]:
     blocks: list[str] = []
     for rid in _section_targets(body, rels, type_url):
         typ, target = rels.get(rid, ("", ""))
         if typ != type_url or not target:
             continue
-        text = _part_text(zf, names, target, name)
+        text = _part_text(zf, names, target, name, gallery)
         if text:
             blocks.append(_labelled(label, text))
     return blocks
 
 
-def _note_blocks(root: Any, tag: str, label: str) -> list[str]:
+def _note_blocks(root: Any, tag: str, label: str, gallery: "_Gallery | None" = None) -> list[str]:
     blocks: list[str] = []
     for note in root.findall(tag):
         if note.get(f"{_W}type") in _NOTE_SKIP:
             blocks_text = ""
         else:
-            blocks_text = _blocks_text(note, boxes=True)
+            blocks_text = _blocks_text(note, boxes=True, gallery=gallery)
         if blocks_text:
             blocks.append(_labelled(label, blocks_text))
     return blocks
 
 
-def _comment_blocks(root: Any) -> list[str]:
+def _comment_blocks(root: Any, gallery: "_Gallery | None" = None) -> list[str]:
     blocks: list[str] = []
     for comment in root.findall(f"{_W}comment"):
         author = " ".join((comment.get(f"{_W}author") or "").split()) or "someone"
-        text = _blocks_text(comment, boxes=True)
+        text = _blocks_text(comment, boxes=True, gallery=gallery)
         if text:
             blocks.append(_labelled(f"Comment by {author}:", text))
     return blocks
 
 
-def _require_docx(data: bytes, name: str) -> str:
+class _Pic:
+    """One picture from a document. A scanned page is drawn only when this picture is actually sent."""
+
+    def __init__(self, page: int | None, png: bytes | None, load: Callable[[], bytes] | None):
+        self.page = page
+        self.png = png
+        self.load = load
+
+    def bytes(self) -> bytes:
+        if self.png is None:
+            if self.load is None:
+                raise AttachmentError("Jig couldn't read that picture.")
+            try:
+                self.png = self.load()
+            except AttachmentError:
+                raise
+            except Exception:
+                raise AttachmentError("Jig couldn't read that picture.") from None
+            self.load = None
+        return self.png
+
+
+class _Reading:
+    def __init__(self, kind: str, text: str, page_text: dict[int, str], pictures: list[_Pic]):
+        self.kind = kind
+        self.text = text
+        self.page_text = page_text
+        self.pictures = pictures
+
+
+class _Gallery:
+    """Pictures in one Word document, numbered in the order the text walk meets them."""
+
+    def __init__(self, zf: zipfile.ZipFile, names: set[str]):
+        self.zf = zf
+        self.names = names
+        self.part = "word/document.xml"
+        self.rels: dict[str, tuple[str, str]] = {}
+        self.pictures: list[_Pic] = []
+
+    def bind(self, part: str, rels: dict[str, tuple[str, str]]) -> None:
+        self.part = part
+        self.rels = rels
+
+    def labels_for(self, element: Any, *, enter_boxes: bool) -> list[str]:
+        lines: list[str] = []
+        seen: set[str] = set()
+        for rid in _image_rids(element, enter_boxes=enter_boxes):
+            if rid in seen:
+                continue
+            seen.add(rid)
+            lines.extend(self._consume(rid))
+        return lines
+
+    def _consume(self, rid: str) -> list[str]:
+        _typ, target = self.rels.get(rid, ("", ""))
+        if not target:
+            return []
+        if target.startswith(("http://", "https://")):
+            return ["A picture wasn't sent because it is linked from outside the document."]
+        path = _join_part(self.part.rpartition("/")[0], target)
+        filename = path.rsplit("/", 1)[-1] or "picture"
+        if Path(filename).suffix.lower() in {".emf", ".wmf"}:
+            return [f"A picture ({filename}) wasn't sent. Jig can't read EMF or WMF pictures."]
+        if path not in self.names:
+            return [f"A picture ({filename}) wasn't sent because it is missing from the document."]
+        png, note = _raster_png(self.zf.read(path), filename)
+        if note:
+            return [note]
+        if png is None:
+            return []
+        self.pictures.append(_Pic(page=None, png=png, load=None))
+        return [f"[Picture {len(self.pictures)}]"]
+
+
+def _image_rids(node: Any, *, enter_boxes: bool):
+    for child in list(node):
+        if child.tag == f"{_MC}AlternateContent":
+            chosen = _chosen(child)
+            if chosen is not None:
+                yield from _image_rids(chosen, enter_boxes=enter_boxes)
+            continue
+        if child.tag == f"{_W}sdt":
+            content = child.find(f"{_W}sdtContent")
+            if content is not None:
+                yield from _image_rids(content, enter_boxes=enter_boxes)
+            continue
+        if child.tag == f"{_W}del":
+            continue
+        if child.tag == f"{_W}txbxContent" and not enter_boxes:
+            continue
+        if child.tag == _A_BLIP:
+            rid = child.get(f"{_R}embed")
+            if rid:
+                yield rid
+            continue
+        if child.tag == _V_IMAGEDATA:
+            rid = child.get(f"{_R}id")
+            if rid:
+                yield rid
+            continue
+        yield from _image_rids(child, enter_boxes=enter_boxes)
+
+
+def _join_part(base_dir: str, target: str) -> str:
+    target = target.replace("\\", "/").split("#", 1)[0].split("?", 1)[0]
+    bits = [bit for bit in target.split("/") if bit] if target.startswith("/") else [
+        *(base_dir.split("/") if base_dir else []), *target.split("/")]
+    out: list[str] = []
+    for bit in bits:
+        if bit == "..":
+            if out:
+                out.pop()
+        elif bit and bit != ".":
+            out.append(bit)
+    return "/".join(out)
+
+
+def _pil_png(img: Image.Image) -> bytes:
+    image = img.copy()
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    image.thumbnail((DOCUMENT_IMAGE_MAX_EDGE, DOCUMENT_IMAGE_MAX_EDGE), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _raster_png(data: bytes, filename: str) -> tuple[bytes | None, str | None]:
+    """PNG bytes to send, or a sentence when the picture cannot be sent. Tiny pictures return neither."""
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img.load()
+            if img.width < DOCUMENT_IMAGE_MIN_SIDE and img.height < DOCUMENT_IMAGE_MIN_SIDE:
+                return None, None
+            return _pil_png(img), None
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None, f"A picture ({filename}) wasn't sent because Jig couldn't read it."
+
+
+def _docx_reading(data: bytes, name: str) -> _Reading:
     if not data.startswith(b"PK"):
         raise _not_this(name, "Word document")
     try:
@@ -424,21 +599,32 @@ def _require_docx(data: bytes, name: str) -> str:
             if body is None:
                 raise AttachmentError("That Word document has no body Jig can read.")
             rels = _relationships(zf, name)
+            gallery = _Gallery(zf, names)
             parts: list[str] = []
-            parts.extend(_labelled_parts(zf, names, body, rels, _HEADER_TYPE, "Header:", name))
-            body_text = _blocks_text(body, boxes=True)
+            parts.extend(_labelled_parts(zf, names, body, rels, _HEADER_TYPE, "Header:", name, gallery))
+            gallery.bind("word/document.xml", rels)
+            body_text = _blocks_text(body, boxes=True, gallery=gallery)
             if body_text:
                 parts.append(body_text)
-            if "word/footnotes.xml" in names:
-                parts.extend(_note_blocks(_xml_root(zf.read("word/footnotes.xml"), name), f"{_W}footnote", "Footnote:"))
-            if "word/endnotes.xml" in names:
-                parts.extend(_note_blocks(_xml_root(zf.read("word/endnotes.xml"), name), f"{_W}endnote", "Endnote:"))
+            for part_name, tag, label in (
+                ("word/footnotes.xml", f"{_W}footnote", "Footnote:"),
+                ("word/endnotes.xml", f"{_W}endnote", "Endnote:"),
+            ):
+                if part_name not in names:
+                    continue
+                gallery.bind(part_name, _relationships_at(zf, _rels_for_part(part_name), name))
+                parts.extend(_note_blocks(_xml_root(zf.read(part_name), name), tag, label, gallery))
             if "word/comments.xml" in names:
-                parts.extend(_comment_blocks(_xml_root(zf.read("word/comments.xml"), name)))
-            parts.extend(_labelled_parts(zf, names, body, rels, _FOOTER_TYPE, "Footer:", name))
-            return "\n\n".join(parts)
+                gallery.bind("word/comments.xml", _relationships_at(zf, _rels_for_part("word/comments.xml"), name))
+                parts.extend(_comment_blocks(_xml_root(zf.read("word/comments.xml"), name), gallery))
+            parts.extend(_labelled_parts(zf, names, body, rels, _FOOTER_TYPE, "Footer:", name, gallery))
+            return _Reading("docx", "\n\n".join(parts), {}, gallery.pictures)
     except zipfile.BadZipFile:
         raise _not_this(name, "Word document") from None
+
+
+def _require_docx(data: bytes, name: str) -> str:
+    return document_reading(data, "docx", name).text
 
 
 def extract_docx_xml(xml: bytes) -> str:
@@ -529,7 +715,7 @@ def _table_text(tbl: Any) -> str:
     return "\n".join([head, sep, *(line(row) for row in rows[1:])])
 
 
-def _require_pdf(data: bytes, name: str) -> str:
+def _open_pdf(data: bytes, name: str) -> PdfReader:
     if not data.startswith(b"%PDF-"):
         raise _not_this(name, "PDF")
     try:
@@ -549,20 +735,260 @@ def _require_pdf(data: bytes, name: str) -> str:
             raise AttachmentError(
                 f"{name} has {page_count} pages. Jig reads up to {PDF_MAX_PAGES} pages of a PDF."
             )
-        blocks: list[str] = []
-        for index, page in enumerate(reader.pages, start=1):
-            text = (page.extract_text() or "").strip()
-            if text:
-                blocks.append(f"[Page {index}]\n{text}")
+        return reader
     except AttachmentError:
         raise
     except (PyPdfError, ValueError, KeyError, TypeError):
         raise AttachmentError(f"{name} doesn't look like a valid PDF.") from None
-    if not blocks:
-        raise AttachmentError(
-            f"Jig couldn't find any text in {name}. If it's a scan or a picture, Jig can't read it."
+
+
+def _content_length(page: Any) -> int:
+    try:
+        contents = page.get_contents()
+    except Exception:
+        return 0
+    if contents is None:
+        return 0
+    streams = contents if isinstance(contents, list) else [contents]
+    total = 0
+    for stream in streams:
+        try:
+            raw = stream.get_data() if hasattr(stream, "get_data") else b""
+        except Exception:
+            return DOCUMENT_IMAGE_MIN_SIDE
+        if isinstance(raw, str):
+            raw = raw.encode("latin-1", "replace")
+        total += len(raw or b"")
+    return total
+
+
+def _page_worth_rendering(page: Any) -> bool:
+    """A page with no text still counts when it draws something. A blank page does not."""
+    try:
+        if len(page.images):
+            return True
+    except Exception:
+        return True
+    return _content_length(page) > 32
+
+
+def _embedded_on_page(page: Any) -> tuple[list[bytes], list[str]]:
+    pngs: list[bytes] = []
+    notes: list[str] = []
+    try:
+        images = list(page.images)
+    except Exception:
+        return [], ["A picture on this page wasn't sent because Jig couldn't read it."]
+    for image in images:
+        label = getattr(image, "name", None) or "on this page"
+        pil = getattr(image, "image", None)
+        if pil is None:
+            notes.append(f"A picture ({label}) wasn't sent because Jig couldn't read it.")
+            continue
+        if pil.width < DOCUMENT_IMAGE_MIN_SIDE and pil.height < DOCUMENT_IMAGE_MIN_SIDE:
+            continue
+        try:
+            pngs.append(_pil_png(pil))
+        except Exception:
+            notes.append(f"A picture ({label}) wasn't sent because Jig couldn't read it.")
+    return pngs, notes
+
+
+def _render_page(data: bytes, index: int) -> bytes:
+    """Draw one PDF page. A scan is the page as it looks, which may not be a single image pypdf can lift out,
+    so this uses pdfium (Apache-2.0 or BSD-3-Clause) rather than guessing at the embedded image."""
+    doc = pdfium.PdfDocument(data)
+    try:
+        page = doc[index]
+        try:
+            width, height = page.get_size()
+            scale = DOCUMENT_IMAGE_MAX_EDGE / max(width, height, 1)
+            bitmap = page.render(scale=scale)
+            try:
+                image = bitmap.to_pil()
+            finally:
+                bitmap.close()
+            return _pil_png(image)
+        finally:
+            page.close()
+    finally:
+        doc.close()
+
+
+def _page_loader(data: bytes, index: int) -> Callable[[], bytes]:
+    def load() -> bytes:
+        return _render_page(data, index)
+    return load
+
+
+def _pdf_reading(data: bytes, name: str) -> _Reading:
+    reader = _open_pdf(data, name)
+    page_text: dict[int, str] = {}
+    pictures: list[_Pic] = []
+    blocks: list[str] = []
+    for index, page in enumerate(reader.pages):
+        number = index + 1
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""
+        lines: list[str] = []
+        if text:
+            lines.append(f"[Page {number}]")
+            lines.append(text)
+            pngs, notes = _embedded_on_page(page)
+            lines.extend(notes)
+            for png in pngs:
+                pictures.append(_Pic(page=number, png=png, load=None))
+                lines.append(f"[Picture {len(pictures)}]")
+        elif _page_worth_rendering(page):
+            lines.append(f"[Page {number}]")
+            pictures.append(_Pic(page=number, png=None, load=_page_loader(data, index)))
+            lines.append(f"[Picture {len(pictures)}]")
+        if lines:
+            chunk = "\n".join(lines)
+            page_text[number] = chunk
+            blocks.append(chunk)
+    return _Reading("pdf", "\n\n".join(blocks), page_text, pictures)
+
+
+def _require_pdf(data: bytes, name: str) -> str:
+    return document_reading(data, "pdf", name).text
+
+
+_READINGS: OrderedDict[str, _Reading] = OrderedDict()
+
+
+def document_reading(data: bytes, kind: str, name: str) -> _Reading:
+    key = kind + ":" + hashlib.sha256(data).hexdigest()
+    cached = _READINGS.get(key)
+    if cached is not None:
+        _READINGS.move_to_end(key)
+        return cached
+    reading = _pdf_reading(data, name) if kind == "pdf" else _docx_reading(data, name)
+    _READINGS[key] = reading
+    while len(_READINGS) > 8:
+        _READINGS.popitem(last=False)
+    return reading
+
+
+def _parse_span(spec: str, what: str) -> set[int]:
+    found: set[int] = set()
+    for bit in spec.split(","):
+        bit = bit.strip()
+        if not bit:
+            continue
+        try:
+            if "-" in bit:
+                left, right = bit.split("-", 1)
+                start, end = int(left), int(right)
+                if start < 1 or end < start or end - start > 40:
+                    raise ValueError
+                found.update(range(start, end + 1))
+            else:
+                number = int(bit)
+                if number < 1:
+                    raise ValueError
+                found.add(number)
+        except ValueError:
+            raise ToolError(f"Give {what} as a number or a range, for example 5-8.") from None
+    if not found:
+        raise ToolError(f"Give {what} as a number or a range, for example 5-8.")
+    return found
+
+
+def _more_message(reading: _Reading, omitted: list[int], sent_here: int) -> str:
+    first, last = omitted[0], omitted[-1]
+    if reading.kind == "pdf":
+        pages = sorted({reading.pictures[n - 1].page for n in omitted if reading.pictures[n - 1].page})
+        if len(pages) >= 2:
+            example = f"{pages[0]}-{pages[-1]}"
+        elif pages:
+            example = str(pages[0])
+        else:
+            example = f"{first}-{last}"
+        how = f"with pages set to the later pages (for example {example})"
+    else:
+        how = f"with pictures set to {first}-{last}"
+    if sent_here:
+        lead = f"Only the first {sent_here} pictures were sent."
+    else:
+        lead = (
+            f"Only the first {DOCUMENT_IMAGE_CAP} pictures were sent, from an earlier file in this message."
         )
-    return "\n\n".join(blocks)
+    return (
+        f"{lead} Pictures {first} to {last} were not sent. "
+        f"To see more, ask Jig to read them with read_attachment, {how}. "
+        f"At most {DOCUMENT_IMAGE_CAP} pictures are sent at a time."
+    )
+
+
+def _annotate(reading: _Reading, session_id: str, att_id: str, body: str, budget: int, *,
+              page_set: set[int] | None, picture_set: set[int] | None) -> tuple[str, int]:
+    """Put a hidden marker after each [Picture N] that this turn is actually sending."""
+    omitted: list[int] = []
+    failed: list[str] = []
+    sent_here = 0
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal budget, sent_here
+        number = int(match.group(1))
+        if number < 1 or number > len(reading.pictures):
+            return match.group(0)
+        pic = reading.pictures[number - 1]
+        if picture_set is not None and number not in picture_set:
+            return match.group(0)
+        if page_set is not None and pic.page not in page_set:
+            return match.group(0)
+        if budget <= 0:
+            omitted.append(number)
+            return match.group(0)
+        try:
+            pic.bytes()
+        except AttachmentError:
+            failed.append(f"Picture {number} wasn't sent because Jig couldn't read it.")
+            return match.group(0)
+        budget -= 1
+        sent_here += 1
+        return f"{match.group(0)}\n[[jig-picture:{session_id}:{att_id}:{number}]]"
+
+    shown = _PICTURE_LABEL.sub(repl, body)
+    extras = [*failed]
+    if omitted:
+        extras.append(_more_message(reading, omitted, sent_here))
+    elif sent_here == 0 and picture_set is None and page_set is None:
+        later = [n for n in range(1, len(reading.pictures) + 1) if f"[Picture {n}]" not in body]
+        if later:
+            extras.append(_more_message(reading, later, 0).replace(
+                f"Only the first {DOCUMENT_IMAGE_CAP} pictures were sent, from an earlier file in this message. ",
+                "Pictures further on in this file were not in this part. ",
+            ))
+    if extras:
+        shown = shown.rstrip() + "\n\n" + "\n\n".join(extras)
+    return shown, budget
+
+
+def present_document(reading: _Reading, session_id: str, att_id: str, *, budget: int,
+                     pages: str = "", pictures: str = "") -> tuple[str, int]:
+    page_set = _parse_span(pages, "pages") if pages.strip() else None
+    picture_set = _parse_span(pictures, "pictures") if pictures.strip() else None
+    if reading.kind == "pdf" and page_set is not None:
+        chunks = [reading.page_text[n] for n in sorted(page_set) if n in reading.page_text]
+        body = "\n\n".join(chunks) if chunks else "Those pages have no text and no pictures Jig can send."
+    elif reading.kind == "docx" and picture_set is not None and page_set is None:
+        labels = [f"[Picture {n}]" for n in sorted(picture_set) if 1 <= n <= len(reading.pictures)]
+        body = "\n\n".join(labels) if labels else "Those picture numbers are not in this document."
+    else:
+        body = reading.text
+    if not body.strip() and not reading.pictures:
+        return "Jig couldn't find any text or pictures in this file.", budget
+    return _annotate(reading, session_id, att_id, body, budget, page_set=page_set, picture_set=picture_set)
+
+
+def picture_bytes(reading: _Reading, number: int) -> bytes:
+    if number < 1 or number > len(reading.pictures):
+        raise AttachmentError(f"This file has no picture {number}.")
+    return reading.pictures[number - 1].bytes()
 
 
 def validate(filename: str, data: bytes) -> dict[str, Any]:
@@ -722,17 +1148,38 @@ def _preface(meta: dict[str, Any], body: str) -> str:
 
 def text_block(store: AttachmentStore, session_id: str, meta: dict[str, Any]) -> str:
     """The first part of a document, labelled, or a clear line when the file is gone."""
+    shown, _budget = _document_body(store, session_id, meta, DOCUMENT_IMAGE_CAP)
+    return _preface(meta, shown)
+
+
+def _document_body(store: AttachmentStore, session_id: str, meta: dict[str, Any], budget: int, *,
+                   pages: str = "", pictures: str = "") -> tuple[str, int]:
+    if meta["kind"] not in {"pdf", "docx"}:
+        try:
+            text = store.read_text(session_id, meta["id"])
+        except AttachmentError as exc:
+            return str(exc), budget
+        if not text.strip():
+            return "This file has no text Jig can read.", budget
+        page = text_page(text, tool="read_attachment", limit=ATTACHMENT_PAGE, offset=0, what="file")
+        body = page["text"]
+        if page.get("truncated"):
+            body += "\n" + page["note"]
+        return body, budget
     try:
-        text = store.read_text(session_id, meta["id"])
+        data = store.read_bytes(session_id, meta["id"])
+        reading = document_reading(data, meta["kind"], meta["name"])
     except AttachmentError as exc:
-        return _preface(meta, str(exc))
-    if not text.strip():
-        return _preface(meta, "This file has no text Jig can read.")
-    page = text_page(text, tool="read_attachment", limit=ATTACHMENT_PAGE, offset=0, what="file")
-    body = page["text"]
+        return str(exc), budget
+    if pages.strip() or pictures.strip():
+        return present_document(reading, session_id, meta["id"], budget=budget, pages=pages, pictures=pictures)
+    if not reading.text.strip() and not reading.pictures:
+        return "Jig couldn't find any text or pictures in this file.", budget
+    page = text_page(reading.text, tool="read_attachment", limit=ATTACHMENT_PAGE, offset=0, what="file")
+    shown, budget = _annotate(reading, session_id, meta["id"], page["text"], budget, page_set=None, picture_set=None)
     if page.get("truncated"):
-        body += "\n" + page["note"]
-    return _preface(meta, body)
+        shown += "\n" + page["note"]
+    return shown, budget
 
 
 def render_turn(user_text: str, metas: list[dict[str, Any]], context: str, store: AttachmentStore,
@@ -740,13 +1187,18 @@ def render_turn(user_text: str, metas: list[dict[str, Any]], context: str, store
     """What the model reads: the user's words, then each file, then Jig's context block last.
 
     Pictures are a marker here. ``expand_message`` swaps each marker for image input at send time,
-    so the saved run never holds the image bytes."""
+    so the saved run never holds the image bytes. Scanned pages and pictures inside a PDF or Word
+    document share one limit per turn."""
     parts: list[str] = []
     if user_text.strip():
         parts.append(user_text.strip())
+    budget = DOCUMENT_IMAGE_CAP
     for meta in metas:
         if meta["kind"] in IMAGE_KINDS:
             parts.append(_preface(meta, f"[[jig-image:{meta['id']}]]"))
+        elif meta["kind"] in {"pdf", "docx"}:
+            shown, budget = _document_body(store, session_id, meta, budget)
+            parts.append(_preface(meta, shown))
         else:
             parts.append(text_block(store, session_id, meta))
     body = "\n\n".join(parts)
@@ -768,19 +1220,8 @@ def for_model_message(message: dict[str, Any], store: AttachmentStore, session_i
     return out
 
 
-def expand_message(message: dict[str, Any], store: AttachmentStore) -> dict[str, Any]:
-    """Replace image markers with image parts. Raises if a picture is missing: Jig does not send the
-    turn as though the model could see it."""
-    content = message.get("content")
-    if not isinstance(content, str) or "[[jig-image:" not in content:
-        return message
-    metas = {m["id"]: m for m in (message.get(ATTACHMENTS_KEY) or []) if isinstance(m, dict) and m.get("id")}
-    parts: list[dict[str, Any]] = []
-    pos = 0
-    for found in _MARKER.finditer(content):
-        before = content[pos:found.start()]
-        if before.strip():
-            parts.append({"type": "text", "text": before})
+def _image_part_for_marker(store: AttachmentStore, found: re.Match[str], metas: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if found.group(1):
         meta = metas.get(found.group(1))
         if meta is None or meta.get("kind") not in IMAGE_KINDS:
             raise AttachmentError(
@@ -797,7 +1238,37 @@ def expand_message(message: dict[str, Any], store: AttachmentStore) -> dict[str,
             _require_png(data, meta["name"])
         else:
             _require_jpeg(data, meta["name"])
-        parts.append(image_part(data, meta["media_type"]))
+        return image_part(data, meta["media_type"])
+    session_id, att_id, raw_number = found.group(2), found.group(3), found.group(4)
+    try:
+        meta = store.get(session_id, att_id)
+        data = store.read_bytes(session_id, att_id)
+    except AttachmentError as exc:
+        raise AttachmentError(
+            "A picture from an attached file is no longer available, so Jig won't send this message "
+            "as if the model could see it."
+        ) from exc
+    if meta.get("kind") not in {"pdf", "docx"}:
+        raise AttachmentError("A picture marker does not belong to a document Jig can read.")
+    reading = document_reading(data, meta["kind"], meta["name"])
+    png = picture_bytes(reading, int(raw_number))
+    return image_part(png, "image/png")
+
+
+def expand_message(message: dict[str, Any], store: AttachmentStore) -> dict[str, Any]:
+    """Replace image markers with image parts. Raises if a picture is missing: Jig does not send the
+    turn as though the model could see it. Works for a user message or a tool result."""
+    content = message.get("content")
+    if not isinstance(content, str) or ("[[jig-image:" not in content and "[[jig-picture:" not in content):
+        return message
+    metas = {m["id"]: m for m in (message.get(ATTACHMENTS_KEY) or []) if isinstance(m, dict) and m.get("id")}
+    parts: list[dict[str, Any]] = []
+    pos = 0
+    for found in _ANY_MARKER.finditer(content):
+        before = content[pos:found.start()]
+        if before.strip():
+            parts.append({"type": "text", "text": before})
+        parts.append(_image_part_for_marker(store, found, metas))
         pos = found.end()
     tail = content[pos:]
     if tail.strip():
@@ -807,29 +1278,63 @@ def expand_message(message: dict[str, Any], store: AttachmentStore) -> dict[str,
     return out
 
 
-async def ensure_vision(vision: Any, metas: list[dict[str, Any]]) -> None:
-    """Stop the turn, before any model call, when a picture is attached and the model cannot see it."""
+def expand_outgoing(messages: list[dict[str, Any]], store: AttachmentStore) -> list[dict[str, Any]]:
+    """Expand picture markers on the way to the model, including a tool result. The stored tool result
+    keeps the markers, not the image bytes."""
+    return [expand_message(message, store) for message in messages]
+
+
+def _names_with_document_pictures(store: AttachmentStore, session_id: str, metas: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for meta in metas:
+        if meta.get("kind") not in {"pdf", "docx"}:
+            continue
+        data = store.read_bytes(session_id, meta["id"])
+        if document_reading(data, meta["kind"], meta["name"]).pictures:
+            names.append(meta["name"])
+    return names
+
+
+async def ensure_vision(vision: Any, metas: list[dict[str, Any]], store: AttachmentStore | None = None,
+                        session_id: str = "") -> None:
+    """Stop the turn, before any model call, when a picture would be sent and the model cannot see it."""
     images = [m["name"] for m in metas if m.get("kind") in IMAGE_KINDS]
-    if not images:
+    pictured: list[str] = []
+    if store is not None and session_id:
+        pictured = _names_with_document_pictures(store, session_id, metas)
+    if not images and not pictured:
         return
-    names = ", ".join(images)
     if not vision.enabled:
+        if pictured:
+            extra = f" It also can't look at {', '.join(images)}." if images else ""
+            raise AttachmentError(
+                f"Vision is turned off, so Jig can't read the scanned pages or pictures in {', '.join(pictured)}."
+                f"{extra} It will not pretend to. Turn pictures on with [vision] enabled = true and a model "
+                "that can see them, or remove the file and send again."
+            )
         raise AttachmentError(
-            f"Vision is turned off, so Jig can't look at {names}. It will not pretend to. "
+            f"Vision is turned off, so Jig can't look at {', '.join(images)}. It will not pretend to. "
             "Turn pictures on with [vision] enabled = true and a model that can see them, "
             "or remove the image and send again."
         )
     if vision.probe_result is None:
+        names = ", ".join([*images, *pictured])
         try:
             await vision.require()
         except VisionUnavailable as exc:
+            if pictured:
+                raise AttachmentError(
+                    f"This model can't see images, so Jig can't read the scanned pages or pictures in {names}. "
+                    f"It will not pretend to. {exc}"
+                ) from exc
             raise AttachmentError(
                 f"This model can't see images, so Jig won't send {names} as if it could. {exc}"
             ) from exc
 
 
 def read_attachment_result(store: AttachmentStore, session_id: str, *, name: str = "", attachment_id: str = "",
-                           offset: int = 0, find: str = "", max_chars: int = ATTACHMENT_PAGE) -> dict[str, Any]:
+                           offset: int = 0, find: str = "", max_chars: int = ATTACHMENT_PAGE,
+                           pages: str = "", pictures: str = "") -> dict[str, Any]:
     """One bound file in this conversation, or the list of them. Never another conversation's files."""
     if not session_id:
         raise ToolError("read_attachment only reads files attached in a conversation, and this run has none.")
@@ -860,6 +1365,14 @@ def read_attachment_result(store: AttachmentStore, session_id: str, *, name: str
         return {"name": meta["name"], "kind": meta["kind"], "untrusted": UNTRUSTED,
                 "note": "This is an image. It is included as image input on the message where it was attached, "
                         "and only when vision is on. There is no text to read."}
+    if meta["kind"] in {"pdf", "docx"} and (pages.strip() or pictures.strip()):
+        if meta["kind"] != "pdf" and pages.strip():
+            raise ToolError(
+                "pages is for a PDF. For a Word document, set pictures to the picture numbers, for example 5-8."
+            )
+        shown, _budget = _document_body(store, session_id, meta, DOCUMENT_IMAGE_CAP, pages=pages, pictures=pictures)
+        return {"name": meta["name"], "kind": meta["kind"], "untrusted": UNTRUSTED, "content": shown,
+                "truncated": False}
     text = store.read_text(session_id, meta["id"])
     limit = min(max_chars or ATTACHMENT_PAGE, ATTACHMENT_PAGE)
     page = text_page(text, tool="read_attachment", limit=limit, offset=offset, find=find, what="file")

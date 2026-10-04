@@ -65,7 +65,7 @@ Copy-Item "$PSScriptRoot\jig.toml" "$Stage\jig.toml.template"
 Set-Content -Path "$Stage\app\installed.json" -Encoding utf8 -Value "{`"installer`": `"$Version`"}"
 
 # A quick check that the bundled Python can load Jig before packaging it.
-& "$Stage\python\python.exe" -c "import jig.cli, jig.tray, fastapi, uvicorn, cryptography, pypdf; from jig.api.app import AVATAR_JS, WEB_DIR; assert AVATAR_JS.is_file() and (WEB_DIR / 'index.html').is_file(), 'web UI files missing'; print('Jig loads')"
+& "$Stage\python\python.exe" -c "import jig.cli, jig.tray, fastapi, uvicorn, cryptography, pypdf, PIL, pypdfium2; from jig.api.app import AVATAR_JS, WEB_DIR; assert AVATAR_JS.is_file() and (WEB_DIR / 'index.html').is_file(), 'web UI files missing'; print('Jig loads')"
 if ($LASTEXITCODE -ne 0) { throw "The bundled Python couldn't load Jig" }
 # Jig's window: pywebview, and through pythonnet the .NET Framework that Windows includes.
 & "$Stage\python\python.exe" -c "import jig.desktop, tzlocal, webview; import webview.platforms.winforms as w; from System.Windows.Forms import Form; print('The window loads (engine on this computer: ' + w.renderer + ')')"

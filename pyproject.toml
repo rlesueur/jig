@@ -21,7 +21,9 @@ dependencies = [
     "segno>=1.6",
     "pywebview>=6.2; sys_platform == 'win32'",
     "python-multipart>=0.0.9",
+    "pillow>=12.3.0",
     "pypdf>=6.1.1",
+    "pypdfium2>=5.13.0",
 ]
 
 [project.optional-dependencies]

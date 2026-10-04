@@ -15,15 +15,20 @@ from xml.sax.saxutils import escape
 
 import pytest
 from fastapi.testclient import TestClient
-from pypdf import PdfWriter
+from PIL import Image, ImageDraw, ImageFont
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
 from jig.api import create_app
 from jig.attachments import (
     ATTACHMENT_PAGE,
+    DOCUMENT_IMAGE_CAP,
     UNTRUSTED,
     AttachmentError,
     AttachmentStore,
+    ensure_vision,
+    expand_message,
+    expand_outgoing,
     read_attachment_result,
     render_turn,
     validate,
@@ -122,6 +127,122 @@ def _pdf_with_pages(texts: list[str | None]) -> bytes:
         page[NameObject("/Contents")] = stream
     buf = io.BytesIO()
     writer.write(buf)
+    return buf.getvalue()
+
+
+def _labelled_png(word: str, size: tuple[int, int] = (900, 240)) -> bytes:
+    """A real PNG with a word drawn in it, large enough to read and not treated as decoration."""
+    image = Image.new("RGB", size, "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 72 if size[1] >= 120 else 16)
+    draw.text((24, max(8, size[1] // 3)), word, fill="black", font=font)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _scan_pdf(word: str) -> bytes:
+    """A one-page PDF whose page is a picture of ``word``, with no text layer."""
+    buf = io.BytesIO()
+    Image.open(io.BytesIO(_labelled_png(word))).save(buf, format="PDF")
+    return buf.getvalue()
+
+
+def _merged_page(text_pdf: bytes, picture_pdf: bytes) -> bytes:
+    page = PdfReader(io.BytesIO(text_pdf)).pages[0]
+    page.merge_page(PdfReader(io.BytesIO(picture_pdf)).pages[0])
+    writer = PdfWriter()
+    writer.add_page(page)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _text_and_picture_pdf(sentence: str, word: str) -> bytes:
+    return _merged_page(_pdf_with_pages([sentence]), _scan_pdf(word))
+
+
+def _text_with_tiny_picture() -> bytes:
+    tiny = io.BytesIO()
+    Image.new("RGB", (32, 32), "red").save(tiny, format="PDF")
+    return _merged_page(_pdf_with_pages(["The sentence remains birch."]), tiny.getvalue())
+
+
+def _many_image_pages(count: int) -> bytes:
+    writer = PdfWriter()
+    one = _image_only_pdf()
+    for _ in range(count):
+        writer.append(io.BytesIO(one))
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _picture_docx(png: bytes, *, name: str = "image1.png", header: bytes | None = None) -> bytes:
+    """A real OOXML package whose body (and optional header) embeds ``png``."""
+    drawing = '<w:p><w:r><w:drawing><a:blip r:embed="rIdPic"/></w:drawing></w:r></w:p>'
+    header_xml = ""
+    header_rel = ""
+    if header is not None:
+        header_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            + drawing + "</w:hdr>"
+        )
+        header_rel = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rIdPic" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            'Target="media/header.png"/>'
+            "</Relationships>"
+        )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>The picture is below.</w:t></w:r></w:p>"
+        + drawing
+        + ("<w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdHdr\"/></w:sectPr>" if header is not None else "<w:sectPr/>")
+        + "</w:body></w:document>"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + ('<Relationship Id="rIdHdr" '
+           'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" '
+           'Target="header1.xml"/>' if header is not None else "")
+        + '<Relationship Id="rIdPic" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        f'Target="media/{name}"/>'
+        "</Relationships>"
+    )
+    types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Default Extension="png" ContentType="image/png"/>'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        + ('<Override PartName="/word/header1.xml" '
+           'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
+           if header is not None else "")
+        + "</Types>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", types)
+        archive.writestr("word/document.xml", document)
+        archive.writestr("word/_rels/document.xml.rels", rels)
+        archive.writestr(f"word/media/{name}", png)
+        if header is not None:
+            archive.writestr("word/header1.xml", header_xml)
+            archive.writestr("word/_rels/header1.xml.rels", header_rel)
+            archive.writestr("word/media/header.png", header)
     return buf.getvalue()
 
 
@@ -365,8 +486,9 @@ def test_pdf_text_is_read_page_by_page_and_bad_pdfs_are_refused():
     locked.write(locked_buf)
     with pytest.raises(AttachmentError, match="protected by a password"):
         validate("secret.pdf", locked_buf.getvalue())
-    with pytest.raises(AttachmentError, match="couldn't find any text"):
-        validate("scan.pdf", _image_only_pdf())
+    scanned = validate("scan.pdf", _image_only_pdf())
+    assert "[Page 1]" in scanned["text"] and "[Picture 1]" in scanned["text"]
+    assert "wasn't sent" not in validate("notes.pdf", _pdf_with_pages(["Just the words."]))["text"]
 
 
 def test_long_pdf_is_taken_in_parts(tmp_path):
@@ -618,6 +740,168 @@ async def test_instructions_inside_a_pdf_do_not_change_files(jig):
     assert not writes, writes
     assert not any(item["type"] == "event" and item["event"]["type"] == "tool.start"
                    and item["event"]["data"].get("tool") == "write_file" for item in items)
+
+
+class _VisionOff:
+    enabled = False
+    probe_result = None
+
+
+def test_scanned_pages_and_embedded_pictures_are_marked_and_capped(tmp_path):
+    store = AttachmentStore(tmp_path)
+    saved = store.save(None, "scans.pdf", _many_image_pages(6))
+    store.take(saved["session_id"], [saved["id"]])
+    meta = store.get(saved["session_id"], saved["id"])
+    rendered = render_turn("Read the scans.", [meta], "", store, saved["session_id"])
+    assert rendered.count("[[jig-picture:") == DOCUMENT_IMAGE_CAP
+    assert "[Picture 1]" in rendered and "[Picture 4]" in rendered
+    assert "Only the first 4 pictures were sent." in rendered
+    assert "Pictures 5 to 6 were not sent." in rendered
+    assert "read_attachment" in rendered and "pages" in rendered
+    later = read_attachment_result(store, saved["session_id"], name="scans.pdf", pages="5-6")
+    assert later["content"].count("[[jig-picture:") == 2
+    assert "[Picture 5]" in later["content"] and "[Picture 6]" in later["content"]
+    assert "Only the first" not in later["content"]
+    with pytest.raises(ToolError, match="5-8"):
+        read_attachment_result(store, saved["session_id"], name="scans.pdf", pages="nope")
+    expanded = expand_message({"role": "user", "content": rendered}, store)
+    images = [part for part in expanded["content"] if part["type"] == "image_url"]
+    assert len(images) == DOCUMENT_IMAGE_CAP
+    assert images[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_text_page_keeps_words_and_sends_a_real_picture_not_a_tiny_one(tmp_path):
+    illustrated = validate("label.pdf", _text_and_picture_pdf("The label says birch.", "hazelnut"))
+    assert "The label says birch." in illustrated["text"]
+    assert "[Picture 1]" in illustrated["text"]
+    assert illustrated["text"].index("birch") < illustrated["text"].index("[Picture 1]")
+    tiny = validate("tiny.pdf", _text_with_tiny_picture())
+    assert "The sentence remains birch." in tiny["text"]
+    assert "[Picture" not in tiny["text"]
+    store = AttachmentStore(tmp_path)
+    saved = store.save(None, "tiny.pdf", _text_with_tiny_picture())
+    meta = store.get(saved["session_id"], saved["id"])
+
+    async def check() -> None:
+        await ensure_vision(_VisionOff(), [meta], store, saved["session_id"])
+
+    asyncio.run(check())
+
+
+def test_word_pictures_are_labelled_in_order_and_odd_formats_are_named(tmp_path):
+    png = _labelled_png("marigold")
+    text = validate("photos.docx", _picture_docx(png, header=_labelled_png("seaglass")))["text"]
+    assert text.index("[Picture 1]") < text.index("The picture is below.")
+    assert text.index("The picture is below.") < text.index("[Picture 2]")
+    assert "Header:" in text
+    gif = io.BytesIO()
+    Image.open(io.BytesIO(png)).save(gif, format="GIF")
+    gif_text = validate("gif.docx", _picture_docx(gif.getvalue(), name="image1.gif"))["text"]
+    assert "[Picture 1]" in gif_text
+    emf = validate("chart.docx", _picture_docx(b"not a metafile", name="chart.emf"))["text"]
+    assert "[Picture" not in emf
+    assert "chart.emf" in emf and "EMF or WMF" in emf
+    store = AttachmentStore(tmp_path)
+    saved = store.save(None, "chart.docx", _picture_docx(b"not a metafile", name="chart.emf"))
+    meta = store.get(saved["session_id"], saved["id"])
+
+    async def check() -> None:
+        await ensure_vision(_VisionOff(), [meta], store, saved["session_id"])
+
+    asyncio.run(check())
+    one = store.save(saved["session_id"], "photos.docx", _picture_docx(png))
+    store.take(one["session_id"], [one["id"]])
+    asked = read_attachment_result(store, one["session_id"], name="photos.docx", pictures="1")
+    assert "[[jig-picture:" in asked["content"] and "[Picture 1]" in asked["content"]
+    missing = read_attachment_result(store, one["session_id"], name="photos.docx", pictures="9")
+    assert "not in this document" in missing["content"]
+    with pytest.raises(ToolError, match="pages is for a PDF"):
+        read_attachment_result(store, one["session_id"], name="photos.docx", pages="1-2")
+    tool = {"role": "tool", "content": asked["content"], "tool_call_id": "call_1"}
+    outgoing = expand_outgoing([tool], store)
+    assert len(outgoing) == 1
+    assert isinstance(outgoing[0]["content"], list)
+    assert any(part["type"] == "image_url" for part in outgoing[0]["content"])
+
+
+async def test_scanned_pdf_is_refused_when_vision_is_off(jig):
+    assert jig.vision.enabled is False
+    saved = jig.attachments.save(None, "scan.pdf", _scan_pdf("cinnamon"))
+    with pytest.raises(AttachmentError, match="scanned pages or pictures"):
+        async for _item in jig.chat("What word is on page 1?", session_id=saved["session_id"],
+                                    attachment_ids=[saved["id"]]):
+            raise AssertionError("the model was asked even though vision is off")
+    assert jig.attachments.get(saved["session_id"], saved["id"])["bound"] is False
+    pictured = jig.attachments.save(None, "photos.docx", _picture_docx(_labelled_png("marigold")))
+    with pytest.raises(AttachmentError, match="scanned pages or pictures"):
+        async for _item in jig.chat("What word is in the picture?", session_id=pictured["session_id"],
+                                    attachment_ids=[pictured["id"]]):
+            raise AssertionError("the model was asked even though vision is off")
+
+
+async def test_scanned_pdf_is_read_by_the_model(jig):
+    jig.vision.enabled = True
+    probed = await jig.vision.probe()
+    assert probed["vision"] is True
+    saved = jig.attachments.save(None, "scan.pdf", _scan_pdf("cinnamon"))
+    done, _items = await _turn(
+        jig,
+        "What word is written on page 1 of the attached PDF? Reply with that word only.",
+        session_id=saved["session_id"], attachment_ids=[saved["id"]],
+    )
+    assert done is not None, "the scan turn did not finish"
+    assert "cinnamon" in done["final"].lower(), done["final"]
+    run = jig.store.get_run(done["run_id"])
+    stored = json.dumps(run["messages"])
+    assert "[[jig-picture:" in stored
+    assert "data:image" not in stored
+
+
+async def test_mixed_pdf_uses_text_and_a_page_image(jig):
+    jig.vision.enabled = True
+    await jig.vision.probe()
+    writer = PdfWriter()
+    writer.append(io.BytesIO(_pdf_with_pages(["Page one code word pinecone"])))
+    writer.append(io.BytesIO(_scan_pdf("cardamom")))
+    buf = io.BytesIO()
+    writer.write(buf)
+    saved = jig.attachments.save(None, "mixed.pdf", buf.getvalue())
+    done, _items = await _turn(
+        jig,
+        "In the attached PDF, what is the code word on page 1, and what word is written on the picture "
+        "on page 2? Reply with those two words.",
+        session_id=saved["session_id"], attachment_ids=[saved["id"]],
+    )
+    assert done is not None, "the mixed PDF turn did not finish"
+    answer = done["final"].lower()
+    assert "pinecone" in answer and "cardamom" in answer, done["final"]
+
+
+async def test_pdf_text_page_picture_is_read_by_the_model(jig):
+    jig.vision.enabled = True
+    await jig.vision.probe()
+    saved = jig.attachments.save(None, "label.pdf", _text_and_picture_pdf("The label says birch.", "hazelnut"))
+    done, _items = await _turn(
+        jig,
+        "The attached PDF has a sentence and a picture. What word is written in the picture? "
+        "Reply with that word only.",
+        session_id=saved["session_id"], attachment_ids=[saved["id"]],
+    )
+    assert done is not None, "the picture PDF turn did not finish"
+    assert "hazelnut" in done["final"].lower(), done["final"]
+
+
+async def test_docx_picture_is_read_by_the_model(jig):
+    jig.vision.enabled = True
+    await jig.vision.probe()
+    saved = jig.attachments.save(None, "photos.docx", _picture_docx(_labelled_png("marigold")))
+    done, _items = await _turn(
+        jig,
+        "What word is written in the picture in the attached Word document? Reply with that word only.",
+        session_id=saved["session_id"], attachment_ids=[saved["id"]],
+    )
+    assert done is not None, "the Word picture turn did not finish"
+    assert "marigold" in done["final"].lower(), done["final"]
 
 
 def test_prompt_mentions_attached_files():

@@ -14,7 +14,7 @@ from .agent.planner import Planner
 from .agent.prompts import (CONTEXT_KEY, CONTINUE_KEY, CONTINUE_PROMPT, OUTCOME_PROMPT, OUTCOME_SCHEMA, STOPPED_KEY,
                             agent_system_prompt, chosen_memories, kept_apart, shown_memories,
                             turn_context)
-from .attachments import (ATTACHMENT_PAGE, IMAGE_KINDS, AttachmentStore, ensure_vision, expand_message,
+from .attachments import (ATTACHMENT_PAGE, IMAGE_KINDS, AttachmentStore, ensure_vision, expand_outgoing,
                           for_model_message, render_turn)
 from .audit import AuditLog, text_size
 from .cloud import connection_summary, require_consent, resolve_api_key
@@ -250,7 +250,7 @@ class Jig:
         return turn_context(self.config.runtime.timezone, memories, max_steps=self.agent.max_steps)
 
     def _prepare_outgoing(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [expand_message(m, self.attachments) for m in messages]
+        return expand_outgoing(messages, self.attachments)
 
     def _tool_context(self, ctx: CallContext) -> ToolContext:
         return ToolContext(sandbox=self.sandbox, memory=self.memory, store=self.store, config=self.config,
@@ -762,12 +762,12 @@ class Jig:
                     asked = "Attached: " + ", ".join(m["name"] for m in metas)
         elif attachment_ids:
             metas = self.attachments.resolve(session_id, attachment_ids)
-            await ensure_vision(self.vision, metas)
+            await ensure_vision(self.vision, metas, self.attachments, session_id)
             metas = self.attachments.take(session_id, attachment_ids)
             if not message.strip():
                 asked = "Attached: " + ", ".join(m["name"] for m in metas)
         if action != "send" and metas:
-            await ensure_vision(self.vision, metas)
+            await ensure_vision(self.vision, metas, self.attachments, session_id)
         continuing = action == "continue"
         shown, left_out = trimmed_history(history, self.context_tokens())
         if left_out:
