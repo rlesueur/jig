@@ -1059,7 +1059,7 @@ function welcome() {
       EXAMPLES.map((text) => el('button', { type: 'button', class: 'btn btn-small', 'data-testid': 'chat-example', text, onclick: () => tryIt(text) }))));
 }
 
-const KIND_LABEL = { png: 'PNG', jpeg: 'JPEG', docx: 'Word', txt: 'Text', md: 'Markdown' };
+const KIND_LABEL = { png: 'PNG', jpeg: 'JPEG', docx: 'Word', pdf: 'PDF', txt: 'Text', md: 'Markdown' };
 
 function attachmentUrl(a) {
   return `/attachments/${encodeURIComponent(a.session_id)}/${encodeURIComponent(a.id)}`;
@@ -3446,10 +3446,15 @@ function mcpEffect(tool) {
   return tool.outbound ? `${effect}, reviewed by the safety checker` : effect;
 }
 
-function mcpNote(text, problem) {
-  const node = $('mcp-saved');
+/** A Settings status line. Success stays green; a problem uses the error colour, including on Search. */
+function setSaved(id, text, problem) {
+  const node = $(id);
   node.textContent = text;
   node.classList.toggle('error-text', Boolean(problem));
+}
+
+function mcpNote(text, problem) {
+  setSaved('mcp-saved', text, problem);
 }
 
 function mcpDetail(err) {
@@ -3570,14 +3575,14 @@ function renderSearch(body) {
   $('search-remove').hidden = !body.installed;
   $('search-install').disabled = Boolean(installing);
   if (body.install && body.install.status === 'failed' && body.install.error) {
-    $('search-saved').textContent = body.install.error;
+    setSaved('search-saved', body.install.error, true);
   } else if (body.install && body.install.status === 'done' && body.install.summary) {
-    $('search-saved').textContent = body.install.summary;
+    setSaved('search-saved', body.install.summary, false);
   } else if (!installing && $('search-saved').textContent.startsWith('Installing')) {
-    $('search-saved').textContent = '';
+    setSaved('search-saved', '', false);
   }
   if (installing) {
-    $('search-saved').textContent = body.install.step || 'Installing search…';
+    setSaved('search-saved', body.install.step || 'Installing search…', false);
     if (!searchTimer) searchTimer = setInterval(loadSearch, 1000);
   } else {
     stopSearchPoll();
@@ -3590,15 +3595,22 @@ async function loadSearch() {
     body = await api('/search');
   } catch (err) {
     $('search-summary').textContent = err.message;
+    $('search-summary').classList.add('error-text');
     return;
   }
+  $('search-summary').classList.remove('error-text');
   renderSearch(body);
 }
 
 $('search-install').addEventListener('click', () => {
   act($('search-install'), async () => {
-    $('search-saved').textContent = 'Installing search…';
-    await api('/search/install', { method: 'POST', body: { confirm: true } });
+    setSaved('search-saved', 'Installing search…', false);
+    try {
+      await api('/search/install', { method: 'POST', body: { confirm: true } });
+    } catch (err) {
+      setSaved('search-saved', '', false);
+      throw err;
+    }
     await loadSearch();
   });
 });
@@ -3607,7 +3619,7 @@ $('search-remove').addEventListener('click', () => {
   const button = $('search-remove');
   act(button, async () => {
     const body = await api('/search/remove', { method: 'POST', body: { confirm: true } });
-    $('search-saved').textContent = body.summary || 'Removed.';
+    setSaved('search-saved', body.summary || 'Removed.', false);
     await loadSearch();
   });
 });
