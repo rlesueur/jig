@@ -52,7 +52,7 @@ ENV PATH=/opt/venv/bin:$PATH \
 # Byte-compile once at build time; the container's root filesystem is read-only at run time.
 RUN find /opt/jig -name '__pycache__' -prune -exec rm -rf {} + \
     && python -m compileall -q /opt/jig/jig /opt/venv/lib \
-    && python -c "import jig.cli, jig.api, jig.sandbox_compose, jig.vault_backends.keyfile"
+    && python -c "import jig.cli, jig.api, jig.sandbox_compose, jig.vault_backends.keyfile, jig.updates"
 
 USER 10001:10001
 WORKDIR /var/lib/jig
