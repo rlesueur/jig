@@ -49,4 +49,4 @@ A plan or a Sentinel review that fails the same check is asked once more. If tha
 
 ## Files you attach
 
-A file you attach in chat is untrusted data, the same as a web page or a message from someone else. Jig labels it with its file name and type and tells the model not to follow instructions inside it. Asking the model to delete or send something because a document says so does not skip the Sentinel or the approval card. Pictures are only sent when vision is on. If it is off, Jig says so instead of answering as if it had seen the picture.
+A file you attach in chat, including a picture, a Word document or a PDF, is untrusted data, the same as a web page or a message from someone else. Jig labels it with its file name and type and tells the model not to follow instructions inside it. Asking the model to delete or send something because a document says so does not skip the Sentinel or the approval card. Pictures are only sent when vision is on. If it is off, Jig says so instead of answering as if it had seen the picture.
