@@ -447,6 +447,15 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 .msg.error { border-color: var(--bad); border-width: 2px; }
 .msg .error-text { margin-top: 6px; }
 .reply-problem { margin: 8px 0 0; color: var(--bad); font-weight: 700; font-size: 14px; }
+button.reply-problem, button.reply-trouble {
+  display: block; width: fit-content; max-width: 100%; padding: 0; border: 0; background: none; font: inherit;
+  text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+button.reply-problem { font-weight: 700; font-size: 14px; color: var(--bad); }
+/* A tool failure the reply got past: one quiet line, not a red stack. The steps still hold each one. */
+.reply-trouble { margin: 8px 0 0; color: var(--muted); font-weight: 600; font-size: 13.5px; }
+button.reply-trouble { font-weight: 600; font-size: 13.5px; color: var(--muted); }
+button.reply-trouble:hover, button.reply-trouble:focus-visible { color: var(--text); }
 .reply-stopped { margin: 10px 0 0; }
 .reply-stopped p { margin: 0 0 6px; }
 .reply-stopped-text { margin: 8px 0 0; font-weight: 700; font-size: 14px; }

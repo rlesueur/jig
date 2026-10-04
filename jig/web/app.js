@@ -1189,6 +1189,23 @@ function stoppedNote(msg, item) {
   msg.append(box);
 }
 
+/* Reading a page, as opposed to any other tool. A run of those is "pages couldn't be read". */
+const PAGE_READS = new Set(['web_fetch', 'browser_read']);
+
+/** One line for tool failures under a reply. Page reads say so; a mix, or anything else, is a step. */
+function troubleLine(problems) {
+  if (problems.length && problems.every((p) => PAGE_READS.has(p.tool))) {
+    return `${plural(problems.length, 'page')} couldn\u2019t be read`;
+  }
+  return problems.length === 1 ? '1 step had a problem' : `${problems.length} steps had problems`;
+}
+
+/** The run did not get past these failures: it failed, was stopped, ran out of steps, or its checked outcome is only partly done or could not be done. */
+function failureSettled(item) {
+  const status = item.outcome && item.outcome.status;
+  return Boolean(item.limit_reached) || status === 'partial' || status === 'could_not';
+}
+
 /** Under a reply that says Jig did something its own records show it didn't (jig.claims): a plain note for each. */
 function claimNotes(notes) {
   if (!notes || !notes.length) return null;
@@ -1218,6 +1235,9 @@ async function sendChat(message, { action = 'send', from = null, attachments = [
   let stopped = false;
   let runId = null;
   let work = null; // what Jig did for this reply, once it uses a tool
+  const problems = []; // tool failures this reply got, shown once at the end rather than a line each
+  let troubleShown = false;
+  let settled = false; // a failure that decided the outcome stays visible; one the reply got past is quiet
   chatAbort = new AbortController();
   if (view.work && view.work.status !== 'running') showWork(null);
   renderDoing();
@@ -1233,7 +1253,28 @@ async function sendChat(message, { action = 'send', from = null, attachments = [
     if (work.handle(ev)) workChanged(work);
   };
 
+  /** One line under the reply. The Steps view keeps each failure. Quiet when the reply carried on; plainly visible when it did not. */
+  const showTrouble = (determined) => {
+    if (troubleShown || !problems.length || !msg.isConnected) return;
+    troubleShown = true;
+    const line = troubleLine(problems);
+    const button = el('button', {
+      type: 'button', class: determined ? 'reply-problem' : 'reply-trouble',
+      'data-testid': determined ? 'chat-problem' : 'chat-trouble', 'data-count': String(problems.length),
+      'data-settled': determined ? 'true' : 'false', 'aria-label': `${line}. Show the steps`,
+      onclick: () => {
+        if (!work) return;
+        view.work = work;
+        openSteps(true);
+      },
+    }, line);
+    const steps = msg.querySelector('[data-testid="chat-steps"]');
+    if (steps) steps.before(button);
+    else msg.append(button);
+  };
   const fail = (text) => {
+    settled = true;
+    showTrouble(true);
     msg.classList.add('error');
     msg.append(el('p', { class: 'error-text', text: `Jig couldn\u2019t finish this reply: ${text}` }));
     showError(`Chat: ${text}`);
@@ -1274,11 +1315,7 @@ async function sendChat(message, { action = 'send', from = null, attachments = [
         const text = describeWorking(ev);
         if (text) note(text);
       } else if (ev.type === 'tool.end') {
-        if (!ev.data.ok) {
-          const detail = ev.data.error ? `: ${ev.data.error}` : '';
-          msg.append(el('p', { class: 'reply-problem', 'data-testid': 'chat-problem',
-            text: `Something went wrong while ${TOOL_DOING[ev.data.tool] || `using ${ev.data.tool}`} (${ev.data.tool})${detail}, so Jig carried on without it.` }));
-        }
+        if (!ev.data.ok) problems.push({ tool: ev.data.tool });
       } else if (ev.type === 'tool.summary') {
         /* shown in the work view */
       } else {
@@ -1292,12 +1329,16 @@ async function sendChat(message, { action = 'send', from = null, attachments = [
         replyText = item.final;
         showReply();
       }
+      settled = failureSettled(item);
+      showTrouble(settled);
       const claims = claimNotes(item.claim_check?.notes);
       if (claims) msg.append(claims);
     } else if (item.type === 'stopped') {
       finished = true;
       stopped = true;
+      settled = true;
       sessionId = item.session_id;
+      showTrouble(true);
       stoppedNote(msg, item);
     } else if (item.type === 'error') {
       finished = true;
@@ -1366,11 +1407,14 @@ async function sendChat(message, { action = 'send', from = null, attachments = [
   } catch (err) {
     if (err.name === 'AbortError') {
       stopped = true;
+      settled = true;
+      showTrouble(true);
       msg.append(el('p', { class: 'reply-stopped-text', 'data-testid': 'chat-stopped-by-you', text: 'You stopped this reply. What it wrote so far is kept.' }));
     } else {
       fail(err.message);
     }
   } finally {
+    if (msg.isConnected) showTrouble(settled);
     content.classList.remove('typing');
     if (runId) liveChatRuns.delete(runId);
     chatBusy = false;
