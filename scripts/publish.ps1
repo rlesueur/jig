@@ -416,9 +416,10 @@ function Publish-Release([string]$Version, $Installer) {
 
     $notes = Join-Path $Installer.Dir 'release-notes.md'
     [IO.File]::WriteAllText($notes, (Get-ReleaseNotes $Version $Installer), (New-Object Text.UTF8Encoding $false))
+    # GitHub refuses to mark a pre-release as Latest. A final release is Latest. A beta is a pre-release.
     $releaseArgs = @('release', 'create', $tag, $Installer.Exe, $Installer.SumFile, '--repo', "$Owner/$Repo",
-        '--title', "Jig $Version", '--notes-file', $notes, '--verify-tag', '--latest')
-    if (Test-PreRelease $Version) { $releaseArgs += '--prerelease' }
+        '--title', "Jig $Version", '--notes-file', $notes, '--verify-tag')
+    if (Test-PreRelease $Version) { $releaseArgs += '--prerelease' } else { $releaseArgs += '--latest' }
     Run $script:Gh @releaseArgs | Out-Null
 
     $check = Join-Path $Installer.Dir 'downloaded'
