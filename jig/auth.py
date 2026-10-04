@@ -304,6 +304,19 @@ class Auth:
                 return Principal("device", device)
         return None
 
+    def had_session_cookie(self, headers: dict[str, str]) -> bool:
+        """True when the request carried a session or device cookie, whether or not it still signs anyone in.
+
+        A browser that has never signed in sends neither. A cookie that no longer validates means a session
+        existed and has ended (it expired, or the API token was rotated).
+        """
+        jar = SimpleCookie()
+        try:
+            jar.load(headers.get("cookie", ""))
+        except Exception:
+            return False
+        return any(name in jar and jar[name].value for name in (SESSION_COOKIE, DEVICE_COOKIE))
+
 
 def is_public(method: str, path: str) -> bool:
     return (method, path) in PUBLIC_EXACT or (method in SAFE_METHODS and path.startswith(PUBLIC_PREFIXES))
@@ -370,7 +383,8 @@ class AuthMiddleware:
             await self._reject(scope, receive, send, 401, "authentication required: send 'Authorization: Bearer "
                                "<token>' (see 'jig token show') or sign in to the web UI" if source.kind == "local"
                                else "authentication required: pair this device first (Settings > Use Jig from your "
-                               "other devices > Add a device, on the host)")
+                               "other devices > Add a device, on the host)",
+                               prior_session=self.auth.had_session_cookie(headers))
             return
         if principal.via != "bearer" and method not in SAFE_METHODS and headers.get("origin") != source.origin:
             await self._reject(scope, receive, send, 403, "cross-origin request refused")
@@ -380,12 +394,16 @@ class AuthMiddleware:
         await self.app(scope, receive, send)
 
     @staticmethod
-    async def _reject(scope: dict[str, Any], receive: Any, send: Any, status: int, message: str) -> None:
+    async def _reject(scope: dict[str, Any], receive: Any, send: Any, status: int, message: str,
+                      *, prior_session: bool = False) -> None:
         if scope["type"] == "websocket":
             await receive()  # websocket.connect
             await send({"type": "websocket.close", "code": 1008, "reason": message[:120]})
             return
-        body = json.dumps({"error": message}).encode()
+        payload: dict[str, Any] = {"error": message}
+        if status == 401:
+            payload["prior_session"] = prior_session
+        body = json.dumps(payload).encode()
         headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
         if status == 401:
             headers.append((b"www-authenticate", b'Bearer realm="jig"'))

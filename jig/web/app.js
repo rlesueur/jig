@@ -99,7 +99,12 @@ async function api(path, { method = 'GET', body } = {}) {
     throw new ApiError(0, `Cannot reach Jig (${method} ${path}): ${err.message}`);
   }
   if (r.status === 401) {
-    signedOut('Your session has ended. Please sign in again.');
+    // A 401 only means "not signed in". "Your session has ended" is for someone who had a session.
+    let prior = false;
+    try {
+      prior = JSON.parse(await r.clone().text()).prior_session === true;
+    } catch { /* the body is not the JSON this client understands */ }
+    signedOut(sessionEnded(prior));
     throw new ApiError(401, 'Signed out');
   }
   if (r.status === 204) return null;
@@ -194,6 +199,14 @@ if (window.jigAppearance.problem) showError(window.jigAppearance.problem);
 /* ---------- sign-in ---------- */
 
 let started = false;
+let sawSession = false; // this page was signed in, or the server saw a session cookie that no longer works
+const SESSION_ENDED = 'Your session has ended. Please sign in again.';
+
+/** The alert for the sign-in dialog. Blank when this browser has never signed in (the dialog explains how). */
+function sessionEnded(prior) {
+  if (prior) sawSession = true;
+  return sawSession ? SESSION_ENDED : '';
+}
 // What GET /auth/session said: source is "local" (this computer) or "tailnet" (another device, via Tailscale).
 let session = { authenticated: false, source: 'local', device: null };
 let pendingPairCode = ''; // from a #pair= link, until it is used
@@ -249,13 +262,14 @@ async function boot() {
     return;
   }
   if (session.authenticated) {
+    sawSession = true;
     if (pendingPairCode) {
       pendingPairCode = '';
       showError('This browser is already signed in to Jig, so the pairing code was not used. It expires by itself within 5 minutes.');
     }
     start();
   } else {
-    signedOut(loginError || session.reason || '');
+    signedOut(loginError || session.reason || sessionEnded(session.prior_session === true));
   }
 }
 
@@ -565,7 +579,7 @@ function connectEvents() {
     try {
       session = await api('/auth/session');
       if (!session.authenticated) {
-        signedOut('Your session has ended. Please sign in again.');
+        signedOut(sessionEnded(session.prior_session === true));
         return;
       }
     } catch {

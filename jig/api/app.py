@@ -401,14 +401,19 @@ def create_app(config: Config, *, start_reason: str = "manual") -> FastAPI:
     @app.get("/auth/session")
     async def get_session(request: Request) -> dict[str, Any]:
         source = _source(request)
+        headers = {k.lower(): v for k, v in request.headers.items()}
         try:
-            principal = auth.authenticate({k.lower(): v for k, v in request.headers.items()}, source)
+            principal = auth.authenticate(headers, source)
         except Refused as exc:
-            return {"authenticated": False, "via": None, "source": source.kind, "reason": exc.message}
+            return {"authenticated": False, "via": None, "source": source.kind, "reason": exc.message,
+                    "prior_session": auth.had_session_cookie(headers)}
         out: dict[str, Any] = {"authenticated": principal is not None, "via": principal.via if principal else None,
                                "source": source.kind}
         if principal and principal.device:
             out["device"] = {"id": principal.device["id"], "name": principal.device["name"]}
+        elif principal is None:
+            # Absent when signed in, so existing clients that compare the whole signed-in body stay valid.
+            out["prior_session"] = auth.had_session_cookie(headers)
         return out
 
     @app.post("/auth/logout")

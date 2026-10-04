@@ -125,6 +125,17 @@ def test_bearer_token_works_and_approvals_need_it(app, anon):
     assert anon.get("/auth/session", headers=h).json() == {"authenticated": True, "via": "bearer", "source": "local"}
 
 
+def test_a_missing_session_is_not_one_that_ended(anon):
+    """No cookie: the browser has never signed in. A cookie that does not validate: a session ended."""
+    fresh = anon.get("/auth/session").json()
+    assert fresh["authenticated"] is False and fresh["prior_session"] is False
+    assert anon.get("/memory").json()["prior_session"] is False
+    anon.cookies.set(SESSION_COOKIE, "not-a-real-session")
+    ended = anon.get("/auth/session").json()
+    assert ended["authenticated"] is False and ended["prior_session"] is True
+    assert anon.get("/memory").json()["prior_session"] is True
+
+
 def test_browser_session_with_one_time_login_code(app, anon):
     code = anon.post("/auth/login-code", headers=_bearer(app)).json()["code"]
     assert anon.get("/auth/session").json()["authenticated"] is False
@@ -160,7 +171,8 @@ def test_rotating_the_token_signs_everyone_out(app, anon):
     assert anon.post("/auth/session", json={"token": old}).status_code == 200
     assert anon.get("/auth/session").json()["authenticated"] is True
     TokenStore(app.state.auth.tokens.path.parent).rotate()
-    assert anon.get("/auth/session").json()["authenticated"] is False
+    ended = anon.get("/auth/session").json()
+    assert ended["authenticated"] is False and ended["prior_session"] is True
     assert anon.get("/memory", headers={"Authorization": f"Bearer {old}"}).status_code == 401
     assert anon.get("/memory", headers=_bearer(app)).status_code == 200
 
