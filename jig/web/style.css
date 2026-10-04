@@ -603,6 +603,7 @@ html[data-jig-state="error"] .say { color: var(--bad); border-color: var(--bad);
 .choice-name { color: var(--text); font-size: 16px; font-weight: 800; }
 .choice select { width: auto; min-width: 190px; }
 .saved { margin: 0; min-height: 1.4em; color: var(--ok); font-weight: 700; font-size: 14px; }
+.saved.error-text, .hint.error-text { color: var(--bad); }
 .core-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 15px; }
 .core-list li { padding: 8px 12px; border-radius: 12px; background: var(--surface-2); }
 
