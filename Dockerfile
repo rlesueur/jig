@@ -16,7 +16,7 @@ RUN python -m venv /opt/venv \
     && find /opt/venv -name '__pycache__' -prune -exec rm -rf {} +
 
 FROM ${PYTHON_IMAGE}
-ARG VERSION=0.1.0b1
+ARG VERSION=0.1.0b2
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Jig" \
       org.opencontainers.image.description="Open-source, always-on personal AI agent that runs on your own local model" \

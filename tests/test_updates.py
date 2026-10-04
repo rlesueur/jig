@@ -1,8 +1,8 @@
 """User-initiated updates. Version comparison is local. The GitHub calls are the real API, not a stand-in.
 
 The download test uses the private repository rlesueur/jig-update-test (a real installer release). It checks
-the file and stops. It does not run the installer: that installer shares the published AppId and the
-HKCU\\Software\\Jig install record with a normal Jig install, so running it here would not stay isolated.
+the file and stops. It does not run the installer. The isolated end-to-end run uses a separate test
+identity and is not this test.
 """
 
 from __future__ import annotations
@@ -186,7 +186,7 @@ def test_a_normal_build_cannot_produce_the_test_installer():
 @pytest.mark.network
 def test_public_github_release_is_the_current_beta():
     offer = check_for_update("rlesueur/jig", __version__)
-    assert offer.current == "0.1.0b1"
+    assert offer.current == __version__
     assert offer.up_to_date
     assert offer.release is None
     assert offer.includes_prereleases
@@ -270,7 +270,7 @@ def test_check_for_updates_uses_the_real_github_api(tmp_path: Path):
         checked = httpx.post(f"{base}/updates/check", headers=auth, timeout=60)
         assert checked.status_code == 200, checked.text
         body = checked.json()
-        assert body["current"] == "0.1.0b1"
+        assert body["current"] == __version__
         assert body["up_to_date"] is True
         assert body["update"] is None
         assert body["includes_prereleases"] is True

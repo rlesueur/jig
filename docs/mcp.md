@@ -2,7 +2,7 @@
 
 MCP is how you add tools Jig does not ship. An MCP server is a program on this computer. In **Settings > MCP servers** you name that program and, if it needs them, its arguments, one per line. Jig starts the program itself. It does not use a shell, and it does not connect to an MCP server over the internet. A host chosen by the model, a tool or the server would sit outside the allow-list every other outbound call uses.
 
-This is a beta (version 0.1.0b1). The same steps are on **Settings > MCP servers**. Adding a server, storing a secret, refreshing the tool list and removing a server only work on the computer Jig runs on. From another device Jig answers that the change only works on the host computer itself, not over the tailnet.
+This is a beta (version 0.1.0b2). The same steps are on **Settings > MCP servers**. Adding a server, storing a secret, refreshing the tool list and removing a server only work on the computer Jig runs on. From another device Jig answers that the change only works on the host computer itself, not over the tailnet.
 
 The safety rules for these tools are in the README under [MCP servers](../README.md#mcp-servers). This page is how to set one up.
 

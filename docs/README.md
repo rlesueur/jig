@@ -1,6 +1,6 @@
 # Guides
 
-These are the user guides for this beta (version 0.1.0b1). The [README](../README.md) is the full reference: install details, model requirements, the safety model and the API. These pages walk through the parts you set up yourself, and link back there instead of repeating it.
+These are the user guides for this beta (version 0.1.0b2). The [README](../README.md) is the full reference: install details, model requirements, the safety model and the API. These pages walk through the parts you set up yourself, and link back there instead of repeating it.
 
 - [Getting started](getting-started.md): install Jig, first run, a local model server or a cloud model.
 - [Updates](updates.md): check for a new version when you ask, and install it on Windows.

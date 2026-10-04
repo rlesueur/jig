@@ -4,7 +4,7 @@ Connectors let Jig work with your own accounts. Jig talks to each provider from 
 
 The steps for each provider, with the permissions and why, are in [connectors-setup.md](connectors-setup.md). This page is how to start, and where each account is documented. Settings shows the same steps.
 
-This is a beta (version 0.1.0b1). Each connector is built and has been tested against the provider's real service without an account. A live test against a connected account is recorded per connector in [connectors-setup.md](connectors-setup.md#status). Discord's live test is still waiting for a connected account. WhatsApp's live test stays skipped until a token is in the vault.
+This is a beta (version 0.1.0b2). Each connector is built and has been tested against the provider's real service without an account. A live test against a connected account is recorded per connector in [connectors-setup.md](connectors-setup.md#status). Discord's live test is still waiting for a connected account. WhatsApp's live test stays skipped until a token is in the vault.
 
 ## Where you connect
 

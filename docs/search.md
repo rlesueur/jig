@@ -2,7 +2,7 @@
 
 Jig can look things up on the web through [SearXNG](https://docs.searxng.org/), a separate program. SearXNG is **not part of Jig** and is not in the installer. It is free software under the GNU Affero General Public License (AGPL-3.0-or-later). Jig itself is Apache-2.0. Jig downloads a pinned upstream release only when you choose **Install search**, into its own folder and its own Python environment, never into this repository.
 
-This is a beta (version 0.1.0b1). Search is optional. Without it, Jig says search is not available. It does not scrape DuckDuckGo or any other engine, and it does not invent results.
+This is a beta (version 0.1.0b2). Search is optional. Without it, Jig says search is not available. It does not scrape DuckDuckGo or any other engine, and it does not invent results.
 
 The same steps are on **Settings > Search**. Installing, removing and the **Use search** switch only work on the computer Jig runs on. From another device Jig answers that the change only works on the host computer itself, not over the tailnet.
 

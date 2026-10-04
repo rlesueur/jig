@@ -24,7 +24,7 @@ def test_version_is_one_pep440_string():
     assert "type=raw,value=${{ needs.version.outputs.version }}" in workflow
     publish = (ROOT / "scripts" / "publish.ps1").read_text(encoding="utf-8")
     assert "X.Y.ZbN" in publish and "--prerelease" in publish
-    # This first public release is a beta.
-    assert version == "0.1.0b1"
+    # This public beta.
+    assert version == "0.1.0b2"
     html = (ROOT / "jig" / "web" / "index.html").read_text(encoding="utf-8")
     assert 'class="beta-badge">Beta<' in html

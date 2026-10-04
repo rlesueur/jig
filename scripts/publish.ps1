@@ -48,7 +48,8 @@
 param(
     [string]$Repo = 'jig',
     [string]$InnoSetup,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Subsequent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -262,33 +263,40 @@ function Assert-NoAttackContent([string]$RepoPath) {
 }
 
 # --- (d) Secret and privacy scan ------------------------------------------------------------
-function Invoke-Scan([string]$RepoPath) {
-    Step "(d) Scanning the history of $RepoPath"
+function Invoke-Scan([string]$RepoPath, [string]$RevRange = '') {
+    # A later release passes origin/main..HEAD. The first publish leaves this empty and scans every commit.
+    $scope = if ($RevRange) { $RevRange } else { 'every commit' }
+    Step "(d) Scanning $scope in $RepoPath"
     $report = Join-Path ([IO.Path]::GetTempPath()) "jig-gitleaks-$([guid]::NewGuid().ToString('N').Substring(0, 8)).json"
-    $scan = Try-Run $script:Gitleaks git $RepoPath --log-opts=--all --redact --no-banner --report-format json --report-path $report --exit-code 3
+    $logOpts = if ($RevRange) { $RevRange } else { '--all' }
+    $scan = Try-Run $script:Gitleaks git $RepoPath "--log-opts=$logOpts" --redact --no-banner --report-format json --report-path $report --exit-code 3
     if ($scan.Code -eq 3) {
         Write-Host $scan.Output
         Fail "gitleaks found possible secrets. Redacted report: $report"
     }
     if ($scan.Code -ne 0) { Fail "gitleaks failed (exit code $($scan.Code)): $($scan.Output)" }
     Remove-Item $report -ErrorAction SilentlyContinue
-    Ok 'gitleaks: no leaks in any commit'
+    Ok "gitleaks: no leaks in $scope"
 
     $problems = @()
 
     $forbidden = '(^|/)(\.env(\..*)?|api-token|[^/]*\.token|[^/]*\.(db|db-wal|db-shm|sqlite3?|pem|key|gguf|safetensors|onnx|pt|pth|ckpt))$|(^|/)(data|sandbox|demo-output|promo|\.venv|venv|models|workspace)/'
-    $paths = Run git -C $RepoPath log --all --name-only --format= | Where-Object { $_ } | Sort-Object -Unique
+    $logArgs = if ($RevRange) { @('log', $RevRange, '--name-only', '--format=') } else { @('log', '--all', '--name-only', '--format=') }
+    $paths = @(Run git -C $RepoPath @logArgs | Where-Object { $_ } | Sort-Object -Unique)
     # research/models is the model catalogue (a script, a toml and a lock file), not a directory of weights.
-    $bad = $paths | Where-Object { $_ -match $forbidden -and $_ -notmatch '^research/models/' }
-    if ($bad) { $problems += "sensitive paths in history: $($bad -join ', ')" } else { Ok "no data, token, database, env, vault, sandbox, promo or model files in $($paths.Count) paths ever committed" }
+    $bad = @($paths | Where-Object { $_ -match $forbidden -and $_ -notmatch '^research/models/' })
+    if ($bad) { $problems += "sensitive paths: $($bad -join ', ')" } else { Ok "no data, token, database, env, vault, sandbox, promo or model files in $($paths.Count) paths" }
 
-    $revs = Run git -C $RepoPath rev-list --all
+    $revArgs = if ($RevRange) { @('rev-list', $RevRange) } else { @('rev-list', '--all') }
+    $revs = @(Run git -C $RepoPath @revArgs)
+    if ($RevRange -and -not $revs) { Fail "there are no commits in $RevRange." }
     $hits = Try-Run git -C $RepoPath grep -I -n -E '[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z]' @revs
     if ($hits.Code -gt 1) { Fail "git grep failed (exit code $($hits.Code)): $($hits.Output)" }
     $userPaths = ($hits.Output -split "`n") | Where-Object { $_ -and $_ -notmatch 'C:[\\/]+Users[\\/]+you\b' }
-    if ($userPaths) { $problems += "local profile paths in history:`n      $($userPaths -join "`n      ")" } else { Ok 'no local profile paths in any commit' }
+    if ($userPaths) { $problems += "local profile paths:`n      $($userPaths -join "`n      ")" } else { Ok 'no local profile paths' }
 
-    $objects = Run git -C $RepoPath rev-list --all --objects
+    $objectArgs = if ($RevRange) { @('rev-list', $RevRange, '--objects') } else { @('rev-list', '--all', '--objects') }
+    $objects = Run git -C $RepoPath @objectArgs
     $sizes = $objects | git -C $RepoPath cat-file '--batch-check=%(objecttype) %(objectsize) %(rest)'
     if ($LASTEXITCODE -ne 0) { Fail "git cat-file exited with code $LASTEXITCODE" }
     $big = $sizes | Where-Object { $_ -match '^blob (\d+) ' -and [int64]$Matches[1] -gt $MaxBlobBytes }
@@ -381,6 +389,8 @@ Jig $Version for Windows (64-bit).$beta
 
 Download **$name** and run it. It needs no administrator rights, and no Python, Git or terminal. At the end, Jig opens in your browser on its set-up page, where you choose a model.
 
+When a newer release is published, open **Settings**, then **About and updates**, and choose **Check for updates**. The same check is on the tray icon. Jig checks only when you ask. On Windows it can then download that release's installer, check the file against the SHA-256 published beside it, turn itself off, and run the installer. Your settings and data stay on this computer. A checkout or a container is not updated this way: use ``git pull`` and ``pip install -e .``, or pull the new image tag.
+
 The installer isn't code-signed yet, so Windows will probably warn you. If your browser says the file isn't commonly downloaded, choose **Keep**. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. Only do this for the file from this page.
 
 SHA-256 of $($name):
@@ -423,6 +433,144 @@ function Publish-Release([string]$Version, $Installer) {
     Ok "https://github.com/$Owner/$Repo/releases/tag/$tag has $($assets -join ' and '); the download matches"
 }
 
+# A later release of the repository that already exists. No history rewrite and no force-push.
+# Scans only the commits that origin/main does not have yet, then pushes main and the new tag.
+function Assert-Subsequent {
+    Step 'Checking this is a later release of the existing repository'
+    $branch = (Run git rev-parse --abbrev-ref HEAD).Trim()
+    if ($branch -ne 'main') { Fail "the current branch is '$branch', not main." }
+    $status = Run git status --porcelain --untracked-files=all
+    if ($status) {
+        $status | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+        Fail 'the working tree has uncommitted or untracked changes (listed above). Commit or remove them first.'
+    }
+    Ok 'working tree is clean on main'
+    $url = (Run git remote get-url origin).Trim()
+    if ($url -notmatch 'github\.com[:/]rlesueur/jig(\.git)?$') { Fail "origin is '$url', not github.com/rlesueur/jig." }
+    Ok "origin is $url"
+    Run git fetch --quiet origin main | Out-Null
+    $remote = (Run git rev-parse origin/main).Trim()
+    $head = (Run git rev-parse HEAD).Trim()
+    Run git merge-base --is-ancestor $remote $head | Out-Null
+    if ($remote -eq $head) { Fail 'HEAD is already origin/main, so there is nothing new to publish.' }
+    Ok "origin/main ($remote) is an ancestor of HEAD ($head). The push is a fast-forward."
+}
+
+function Wait-Workflow([string]$Workflow, [string]$Head, [string]$Label) {
+    $runId = $null
+    for ($i = 0; $i -lt 36 -and -not $runId; $i++) {
+        $listed = (Run $script:Gh run list --repo "$Owner/$Repo" --workflow $Workflow --commit $Head --limit 1 --json databaseId --jq '.[0].databaseId')
+        $text = if ($listed -is [array]) { "$($listed[0])" } else { "$listed" }
+        $text = $text.Trim()
+        if ($text -and $text -ne 'null') { $runId = $text }
+        if (-not $runId) { Start-Sleep -Seconds 5 }
+    }
+    if (-not $runId) { Fail "$Label did not start within three minutes. Check the Actions tab." }
+    Run $script:Gh run watch $runId --repo "$Owner/$Repo" --exit-status | Out-Null
+    Ok "$Label run $runId succeeded"
+    return $runId
+}
+
+function Test-AnonymousDownload([string]$Version, $Installer) {
+    Step 'Downloading the installer with no GitHub credentials'
+    $url = "https://github.com/$Owner/$Repo/releases/download/v$Version/$($Installer.Name)"
+    $dest = Join-Path $Installer.Dir "anonymous-$($Installer.Name)"
+    $previous = $env:GH_TOKEN
+    $hadGh = Test-Path Env:GH_TOKEN
+    $hadHub = Test-Path Env:GITHUB_TOKEN
+    $previousHub = $env:GITHUB_TOKEN
+    Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $dest
+    } finally {
+        if ($hadGh) { $env:GH_TOKEN = $previous }
+        if ($hadHub) { $env:GITHUB_TOKEN = $previousHub }
+    }
+    $got = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $Installer.Hash) { Fail "the anonymous download has SHA-256 $got, not $($Installer.Hash)." }
+    Ok "anonymous download of $($Installer.Name) matches $got"
+}
+
+function Test-AnonymousImages([string]$Version) {
+    Step 'Pulling the container images with no registry credentials'
+    $config = Join-Path ([IO.Path]::GetTempPath()) "jig-docker-anon-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    New-Item -ItemType Directory -Path $config | Out-Null
+    $previous = $env:DOCKER_CONFIG
+    $had = Test-Path Env:DOCKER_CONFIG
+    $env:DOCKER_CONFIG = $config
+    try {
+        foreach ($image in 'jig', 'jig-sandbox') {
+            $ref = "ghcr.io/$Owner/${image}:$Version"
+            Run docker pull $ref | Out-Null
+            Ok "pulled $ref with an empty Docker config"
+        }
+    } finally {
+        if ($had) { $env:DOCKER_CONFIG = $previous } else { Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue }
+        Remove-Item -Recurse -Force $config
+    }
+}
+
+function Publish-Subsequent([string]$RepoPath) {
+    Assert-Subsequent
+    $inno = Find-InnoSetup $InnoSetup
+    Ok "Inno Setup: $inno"
+    $python = Get-FilterRepo
+    $version = Get-Version $python $RepoPath
+    $tag = "v$version"
+    if (Run git tag --list $tag) { Fail "the tag $tag already exists in this repository." }
+    $remoteTag = Try-Run git ls-remote --tags origin "refs/tags/$tag"
+    if ($remoteTag.Code -ne 0) { Fail "could not check origin for tag ${tag}: $($remoteTag.Output)" }
+    if ($remoteTag.Output.Trim()) { Fail "the tag $tag already exists on origin." }
+    Ok "version $version agrees in pyproject.toml, jig/__init__.py and compose.yaml; tag $tag is free"
+
+    $range = 'origin/main..HEAD'
+    $problems = @(Invoke-Scan $RepoPath $range)
+    if ($problems) {
+        $problems | ForEach-Object { Write-Host "    FOUND  $_" -ForegroundColor Red }
+        Fail 'the scan of the new commits found problems (listed above). Nothing was pushed.'
+    }
+    $installer = Build-Installer $RepoPath $version $python $inno
+    if ($DryRun) {
+        Step 'Dry run: the installer is built. Nothing will be pushed.'
+        Write-Host "    SHA-256: $($installer.Hash)"
+        Write-Host "    Built files, kept for testing: $($installer.Dir)"
+        return
+    }
+
+    Step '(f) Pushing main. This is a normal push, not a force-push.'
+    Run git push origin HEAD:main | Out-Null
+    $pushed = (Run git rev-parse origin/main).Trim()
+    if ($pushed -ne $installer.Commit) { Fail "origin/main is $pushed after the push, not $($installer.Commit)." }
+    Ok "origin/main is $($installer.Commit)"
+
+    Publish-Release $version $installer
+    Test-AnonymousDownload $version $installer
+
+    Step 'Waiting for Pages and the container images'
+    $pages = Wait-Workflow 'pages.yml' $installer.Commit 'Pages'
+    $containers = Wait-Workflow 'container.yml' $installer.Commit 'Container images'
+    $live = (Run $script:Gh api "repos/$Owner/$Repo/pages" --jq '.html_url').Trim()
+    $linked = $false
+    for ($i = 0; $i -lt 24 -and -not $linked; $i++) {
+        try {
+            $page = Invoke-WebRequest -UseBasicParsing -Uri $live
+            $linked = ($page.StatusCode -eq 200 -and $page.Content -match [regex]::Escape("releases/tag/$tag"))
+        } catch { $linked = $false }
+        if (-not $linked) { Start-Sleep -Seconds 5 }
+    }
+    if (-not $linked) { Fail "$live did not return HTTP 200 with a link to $tag within two minutes." }
+    Ok "$live is HTTP 200 and links to $tag"
+    Test-AnonymousImages $version
+
+    Write-Host "`nPublished $tag."
+    Write-Host "  Release:    https://github.com/$Owner/$Repo/releases/tag/$tag"
+    Write-Host "  Installer:  $($installer.Name)"
+    Write-Host "  SHA-256:    $($installer.Hash)"
+    Write-Host "  Pages run:  $pages"
+    Write-Host "  Images run: $containers"
+}
+
 # --- Main -----------------------------------------------------------------------------------
 $repoRoot = (Run git rev-parse --show-toplevel).Trim()
 $script:RepoRoot = $repoRoot
@@ -435,6 +583,10 @@ $script:Gh = Find-Tool 'gh' 'GitHub.cli' 'Install it with: winget install GitHub
 $script:Gitleaks = Find-Tool 'gitleaks' 'Gitleaks.Gitleaks' 'Install it with: winget install Gitleaks.Gitleaks'
 
 Assert-Account
+if ($Subsequent) {
+    Publish-Subsequent $repoRoot
+    return
+}
 Assert-Clean
 $inno = Find-InnoSetup $InnoSetup
 Ok "Inno Setup: $inno"

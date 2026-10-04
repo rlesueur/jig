@@ -11,7 +11,7 @@
 name: jig
 
 x-sandbox: &sandbox
-  image: ${JIG_SANDBOX_IMAGE:-ghcr.io/rlesueur/jig-sandbox:0.1.0b1}
+  image: ${JIG_SANDBOX_IMAGE:-ghcr.io/rlesueur/jig-sandbox:0.1.0b2}
   build:
     context: ./jig/sandbox_container/image
   user: "10001:10001"
@@ -45,7 +45,7 @@ x-sandbox: &sandbox
 
 services:
   jig:
-    image: ${JIG_IMAGE:-ghcr.io/rlesueur/jig:0.1.0b1}
+    image: ${JIG_IMAGE:-ghcr.io/rlesueur/jig:0.1.0b2}
     build:
       context: .
     init: true

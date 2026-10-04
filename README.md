@@ -6,7 +6,7 @@
 
 <p align="center"><strong>An open-source, always-on personal AI agent. Built for local models. Bring a cloud model if you want one.</strong></p>
 
-<p align="center">This release is a <strong>beta</strong> (version 0.1.0b1).</p>
+<p align="center">This release is a <strong>beta</strong> (version 0.1.0b2).</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-9a54ff" alt="Licence: Apache-2.0"></a>
@@ -38,7 +38,7 @@ Jig needs two things: Jig itself, and a model to think with. The model can run o
 
 ### On Windows: the installer
 
-1. Download `JigSetup-<version>.exe` from the [v0.1.0b1 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b1).
+1. Download `JigSetup-<version>.exe` from the [v0.1.0b2 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b2).
 2. Open it. **Windows will probably warn you**, because the installer isn't code-signed (a signing certificate is expensive and Jig is a free project):
    - your browser may say the file "isn't commonly downloaded": choose **Keep**;
    - Windows may show **"Windows protected your PC"** (SmartScreen): click **More info**, then **Run anyway**.

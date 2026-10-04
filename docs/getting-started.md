@@ -1,6 +1,6 @@
 # Getting started
 
-This release is a **beta** (version 0.1.0b1). Voice is on the roadmap and is not in this version.
+This release is a **beta** (version 0.1.0b2). Voice is on the roadmap and is not in this version.
 
 Jig needs two things: Jig itself, and a model that can call tools through an OpenAI-compatible endpoint. The model can run on your computer (llama.cpp, including forks, Ollama, LM Studio or vLLM) or you can bring a cloud model. Jig checks the model for real before the agent starts, and it never falls back to another one.
 
@@ -10,7 +10,7 @@ The installer clicks, the SmartScreen warning, the measured model and the long t
 
 **Do not run `pip install jig`.** That name on PyPI is an unrelated project. Use the installer, or install from this repository.
 
-**Windows installer.** Download `JigSetup-<version>.exe` from the [v0.1.0b1 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b1) and open it. It needs no administrator rights and no Python. The exact clicks when Windows warns you, because the installer is not code-signed, are in the README under [On Windows: the installer](../README.md#on-windows-the-installer). Only do that for a file from this repository's releases page. At the end, Jig opens on its set-up page.
+**Windows installer.** Download `JigSetup-<version>.exe` from the [v0.1.0b2 release](https://github.com/rlesueur/jig/releases/tag/v0.1.0b2) and open it. It needs no administrator rights and no Python. The exact clicks when Windows warns you, because the installer is not code-signed, are in the README under [On Windows: the installer](../README.md#on-windows-the-installer). Only do that for a file from this repository's releases page. At the end, Jig opens on its set-up page.
 
 Jig keeps its settings, memories and notes in `%LOCALAPPDATA%\Jig`. Closing the window leaves Jig running. To turn it off, use **Turn Jig off** on the icon by the clock. To remove it: **Settings > Apps > Installed apps > Jig > Uninstall**.
 

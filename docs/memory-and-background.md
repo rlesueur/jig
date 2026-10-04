@@ -1,6 +1,6 @@
 # Memory, notes and background jobs
 
-Jig keeps what it knows about you on this computer, in its own database. You can read it, change it and delete it. This is a beta (version 0.1.0b1). Memory search is a word index (SQLite FTS5). Embeddings are not in this version.
+Jig keeps what it knows about you on this computer, in its own database. You can read it, change it and delete it. This is a beta (version 0.1.0b2). Memory search is a word index (SQLite FTS5). Embeddings are not in this version.
 
 The rules for what is sent to a cloud model, and how deletion is done on disk, are in the README under [Safety model](../README.md#safety-model) (the part headed "Memory and notes") and [Using a cloud model](../README.md#using-a-cloud-model). This page is how you use them.
 

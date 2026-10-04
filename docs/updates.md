@@ -6,7 +6,7 @@ Open **Settings**, then **About and updates**. That page shows the version you a
 
 Jig asks GitHub, over HTTPS, for the releases of [rlesueur/jig](https://github.com/rlesueur/jig). It is not signed in. If GitHub's limit on unsigned-in requests has been reached, or this computer is offline, Jig says so and stops. Try again later, or when you are back online.
 
-While this copy is a beta (a version such as `0.1.0b1`), the check includes other beta releases. A full release does not offer a beta. Jig never offers an older version than the one you are running. When a newer release exists, the page shows its version, the date GitHub published it, the release notes, and a link to the release page. The notes are shown as text. They are not treated as a web page.
+While this copy is a beta (a version such as `0.1.0b2`), the check includes other beta releases. A full release does not offer a beta. Jig never offers an older version than the one you are running. When a newer release exists, the page shows its version, the date GitHub published it, the release notes, and a link to the release page. The notes are shown as text. They are not treated as a web page.
 
 ## The Windows installer
 

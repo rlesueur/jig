@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jig"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Jig: an open-source, always-on personal AI agent. Built for local models; bring a cloud model if you want one."
 readme = "README.md"
 license = { text = "Apache-2.0" }

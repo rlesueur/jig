@@ -2,7 +2,7 @@
 
 Jig asks before it does something that could send, change or delete. You see the question in Jig's corner, with **Yes** and **No**. This page is what that looks like. The full gate (schema, mode, core rules, your rules, the Sentinel, then the approval) is in the README under [Safety model](../README.md#safety-model).
 
-This is a beta (version 0.1.0b1). The checks below are in this version. They are not a promise that a model will always ask for the right thing: read the card, and say no when it is wrong.
+This is a beta (version 0.1.0b2). The checks below are in this version. They are not a promise that a model will always ask for the right thing: read the card, and say no when it is wrong.
 
 ## What you are asked
 
